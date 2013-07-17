@@ -78,10 +78,10 @@ int RGWValidateSwiftToken::read_header(void *ptr, size_t len)
 
 int RGWSwift::validate_token(const char *token, struct rgw_swift_auth_info *info)
 {
-  if (g_conf->rgw_swift_auth_url.empty())
+  if (cct->_conf->rgw_swift_auth_url.empty())
     return -EINVAL;
 
-  string auth_url = g_conf->rgw_swift_auth_url;
+  string auth_url = cct->_conf->rgw_swift_auth_url;
   if (auth_url[auth_url.size() - 1] != '/')
     auth_url.append("/");
   auth_url.append("token");
@@ -591,7 +591,7 @@ int RGWSwift::parse_keystone_token_response(const string& token, bufferlist& bl,
   }
 
   if (!found) {
-    ldout(cct, 0) << "user does not hold a matching role; required roles: " << g_conf->rgw_keystone_accepted_roles << dendl;
+    ldout(cct, 0) << "user does not hold a matching role; required roles: " << cct->_conf->rgw_keystone_accepted_roles << dendl;
     return -EPERM;
   }
 
