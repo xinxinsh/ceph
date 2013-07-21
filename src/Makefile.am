@@ -74,6 +74,12 @@ endif
 # use system leveldb
 LIBOS_LDA += -lleveldb -lsnappy
 
+if DARWIN
+AM_LDFLAGS = -undefined dynamic_lookup -flat_namespace
+else
+AM_LDFLAGS =
+endif
+
 # monitor
 ceph_mon_SOURCES = ceph_mon.cc common/TextTable.cc
 ceph_mon_LDFLAGS = $(AM_LDFLAGS)
@@ -1332,7 +1338,9 @@ AM_CXXFLAGS = \
 # http://www.gentoo.org/proj/en/qa/asneeded.xml
 # http://gcc.gnu.org/ml/gcc-help/2010-12/msg00338.html
 # http://sigquit.wordpress.com/2011/02/16/why-asneeded-doesnt-work-as-expected-for-your-libraries-on-your-autotools-project/
-AM_LDFLAGS = -Wl,--as-needed
+if LINUX
+AM_LDFLAGS += -Wl,--as-needed
+endif
 
 if USE_BOOST_SPIRIT_OLD_HDR
 AM_CXXFLAGS += -DUSE_BOOST_SPIRIT_OLD_HDR
@@ -1466,7 +1474,9 @@ clean-local:
 libcommon_la_SOURCES = $(libcommon_files)
 libcommon_la_CFLAGS= ${CRYPTO_CFLAGS} ${AM_CFLAGS}
 libcommon_la_CXXFLAGS= ${AM_CXXFLAGS}
+if LINUX
 libcommon_la_LDFLAGS = -lrt
+endif
 noinst_LTLIBRARIES += libcommon.la
 
 libglobal_la_SOURCES = \
