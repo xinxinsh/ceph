@@ -1937,6 +1937,7 @@ noinst_HEADERS = \
 	include/rbd/librbd.h\
 	include/rbd/librbd.hpp\
         include/util.h\
+	include/stat.h\
 	librados/snap_set_diff.h\
 	librados/AioCompletionImpl.h\
 	librados/IoCtxImpl.h\
