@@ -1,12 +1,16 @@
 #ifndef FS_CEPH_IOCTL_H
 #define FS_CEPH_IOCTL_H
 
+#include "acconfig.h"
+
 #if defined(__linux__)
 #include <linux/ioctl.h>
 #include <linux/types.h>
 #elif defined(__FreeBSD__)
 #include <sys/ioctl.h>
 #include <sys/types.h>
+#include "include/inttypes.h"
+#elif defined(DARWIN)
 #include "include/inttypes.h"
 #endif
 
