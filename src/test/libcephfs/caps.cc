@@ -14,7 +14,9 @@
 
 #include "gtest/gtest.h"
 #include "include/cephfs/libcephfs.h"
+#ifdef __linux__
 #include <linux/types.h>
+#endif
 #include <inttypes.h>
 #include "include/ceph_fs.h"
 #include <errno.h>

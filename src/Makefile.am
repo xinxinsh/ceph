@@ -276,10 +276,12 @@ ceph_smalliobenchfs_LDADD = librados.la $(LIBOS_LDA) $(LIBGLOBAL_LDA)
 ceph_smalliobenchfs_CXXFLAGS = ${CRYPTO_CXXFLAGS} ${AM_CXXFLAGS}
 bin_DEBUGPROGRAMS += ceph_smalliobenchfs
 
+if LINUX
 ceph_smalliobenchdumb_SOURCES = test/bench/small_io_bench_dumb.cc test/bench/dumb_backend.cc test/bench/detailed_stat_collector.cc test/bench/bencher.cc
 ceph_smalliobenchdumb_LDADD = librados.la $(LIBOS_LDA) $(LIBGLOBAL_LDA)
 ceph_smalliobenchdumb_CXXFLAGS = ${CRYPTO_CXXFLAGS} ${AM_CXXFLAGS}
 bin_DEBUGPROGRAMS += ceph_smalliobenchdumb
+endif
 
 ceph_smalliobenchrbd_SOURCES = test/bench/small_io_bench_rbd.cc test/bench/rbd_backend.cc test/bench/detailed_stat_collector.cc test/bench/bencher.cc
 ceph_smalliobenchrbd_LDADD = librados.la librbd.la $(LIBGLOBAL_LDA)
@@ -293,9 +295,11 @@ ceph_omapbench_SOURCES = test/omap_bench.cc
 ceph_omapbench_LDADD = librados.la $(LIBGLOBAL_LDA)
 bin_DEBUGPROGRAMS += ceph_omapbench
 
+if LINUX
 ceph_kvstorebench_SOURCES = test/kv_store_bench.cc key_value_store/kv_flat_btree_async.cc
 ceph_kvstorebench_LDADD = librados.la $(LIBGLOBAL_LDA)
 bin_DEBUGPROGRAMS += ceph_kvstorebench
+endif
 
 ceph_multi_stress_watch_SOURCES = test/multi_stress_watch.cc test/librados/test.cc
 ceph_multi_stress_watch_LDADD = librados.la $(LIBGLOBAL_LDA)
@@ -1037,10 +1041,12 @@ ceph_test_librbd_LDADD =  librbd.la librados.la ${UNITTEST_STATIC_LDADD}
 ceph_test_librbd_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
 bin_DEBUGPROGRAMS += ceph_test_librbd
 
+if LINUX
 ceph_test_librbd_fsx_SOURCES = test/librbd/fsx.c
 ceph_test_librbd_fsx_LDADD =  librbd.la librados.la -lm
 ceph_test_librbd_fsx_CFLAGS = ${AM_CFLAGS} -Wno-format
 bin_DEBUGPROGRAMS += ceph_test_librbd_fsx
+endif
 
 ceph_test_cls_rbd_SOURCES = test/cls_rbd/test_cls_rbd.cc \
 	test/librados/test.cc \
@@ -1179,11 +1185,13 @@ ceph_test_libcephfs_LDADD =  ${UNITTEST_STATIC_LDADD} libcephfs.la
 ceph_test_libcephfs_CXXFLAGS = $(AM_CXXFLAGS) ${UNITTEST_CXXFLAGS}
 bin_DEBUGPROGRAMS += ceph_test_libcephfs
 
+if LINUX
 ceph_test_filestore_SOURCES = test/filestore/store_test.cc
 ceph_test_filestore_LDFLAGS = ${AM_LDFLAGS}
 ceph_test_filestore_LDADD =  ${UNITTEST_STATIC_LDADD} $(LIBOS_LDA) $(LIBGLOBAL_LDA)
 ceph_test_filestore_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS} ${CRYPTO_CXXFLAGS}
 bin_DEBUGPROGRAMS += ceph_test_filestore
+endif
 
 ceph_test_filestore_workloadgen_SOURCES = \
      test/filestore/workload_generator.cc \

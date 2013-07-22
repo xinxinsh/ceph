@@ -8,8 +8,9 @@ extern "C" {
 #include <netinet/in.h>
 #if defined(__linux__)
 #include <linux/types.h>
-#elif defined(__FreeBSD__)
+#elif defined(__FreeBSD__) || defined(__APPLE__)
 #include <sys/types.h>
+#include <sys/stat.h>
 #include "include/inttypes.h"
 #endif
 #include <string.h>
