@@ -25,6 +25,8 @@
 #include "include/inttypes.h"
 #endif
 
+#include "include/compat.h"
+
 #include "common/xattr.h"
 
 /*
