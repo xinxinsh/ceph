@@ -23,8 +23,13 @@
 #include <dirent.h>
 #include <sys/ioctl.h>
 
-#if defined(__linux__)
+#include "acconfig.h"
+
+#ifdef HAVE_LINUX_FS_H
 #include <linux/fs.h>
+#endif
+
+#ifdef HAVE_SYSCALL_H
 #include <syscall.h>
 #endif
 
@@ -508,6 +513,12 @@ bool parse_attrname(char **name)
   return false;
 }
 
+#ifndef FS_IOC_FIEMAP
+static int do_fiemap(int fd, off_t start, size_t len, struct fiemap **pfiemap)
+{
+  return -EOPNOTSUPP;
+}
+#else
 static int do_fiemap(int fd, off_t start, size_t len, struct fiemap **pfiemap)
 {
   struct fiemap *fiemap = NULL;
@@ -558,6 +569,7 @@ done_err:
   free(fiemap);
   return ret;
 }
+#endif
 
 int FileStore::statfs(struct statfs *buf)
 {
