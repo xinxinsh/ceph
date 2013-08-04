@@ -1009,28 +1009,25 @@ check_PROGRAMS += unittest_texttable
 
 if WITH_RADOSGW
 ceph_test_cors_SOURCES = test/test_cors.cc
-ceph_test_cors_LDADD = librados.la librgw.a $(LIBGLOBAL_LDA) ${UNITTEST_LDADD} ${UNITTEST_STATIC_LDADD} -lcurl -luuid -lexpat
+ceph_test_cors_LDADD = librados.la librgw.a $(LIBGLOBAL_LDA) ${UNITTEST_LDADD} ${UNITTEST_STATIC_LDADD} -lcurl -lexpat
 ceph_test_cors_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
 bin_DEBUGPROGRAMS += ceph_test_cors
 
 ceph_test_cls_rgw_meta_SOURCES = test/test_rgw_admin_meta.cc
-ceph_test_cls_rgw_meta_LDFLAGS = libglobal.la 
-ceph_test_cls_rgw_meta_LDADD = librgw.a ${UNITTEST_LDADD} ${UNITTEST_STATIC_LDADD} $(CRYPTO_LIBS) -lcurl -luuid -lexpat  librados.la libcls_version_client.a \
- libcls_log_client.a libcls_statelog_client.a libcls_refcount_client.a libcls_rgw_client.a libcls_lock_client.a
+ceph_test_cls_rgw_meta_LDADD = librgw.a ${UNITTEST_LDADD} ${UNITTEST_STATIC_LDADD} $(CRYPTO_LIBS) -lcurl -lexpat  librados.la libcls_version_client.a \
+ libcls_log_client.a libcls_statelog_client.a libcls_refcount_client.a libcls_rgw_client.a libcls_lock_client.a libglobal.la
 ceph_test_cls_rgw_meta_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
 bin_DEBUGPROGRAMS += ceph_test_cls_rgw_meta
 
 ceph_test_cls_rgw_log_SOURCES = test/test_rgw_admin_log.cc
-ceph_test_cls_rgw_log_LDFLAGS = libglobal.la 
-ceph_test_cls_rgw_log_LDADD = librgw.a ${UNITTEST_LDADD} ${UNITTEST_STATIC_LDADD} $(CRYPTO_LIBS) -lcurl -luuid -lexpat  librados.la libcls_version_client.a \
- libcls_log_client.a libcls_statelog_client.a libcls_refcount_client.a libcls_rgw_client.a libcls_lock_client.a
+ceph_test_cls_rgw_log_LDADD = librgw.a ${UNITTEST_LDADD} ${UNITTEST_STATIC_LDADD} $(CRYPTO_LIBS) -lcurl -lexpat  librados.la libcls_version_client.a \
+ libcls_log_client.a libcls_statelog_client.a libcls_refcount_client.a libcls_rgw_client.a libcls_lock_client.a libglobal.la
 ceph_test_cls_rgw_log_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
 bin_DEBUGPROGRAMS += ceph_test_cls_rgw_log
 
 ceph_test_cls_rgw_opstate_SOURCES = test/test_rgw_admin_opstate.cc
-ceph_test_cls_rgw_opstate_LDFLAGS = libglobal.la 
-ceph_test_cls_rgw_opstate_LDADD = librgw.a ${UNITTEST_LDADD} ${UNITTEST_STATIC_LDADD} $(CRYPTO_LIBS) -lcurl -luuid -lexpat  librados.la libcls_version_client.a \
- libcls_log_client.a libcls_statelog_client.a libcls_refcount_client.a libcls_rgw_client.a libcls_lock_client.a
+ceph_test_cls_rgw_opstate_LDADD = librgw.a ${UNITTEST_LDADD} ${UNITTEST_STATIC_LDADD} $(CRYPTO_LIBS) -lcurl -lexpat  librados.la libcls_version_client.a \
+ libcls_log_client.a libcls_statelog_client.a libcls_refcount_client.a libcls_rgw_client.a libcls_lock_client.a libglobal.la
 ceph_test_cls_rgw_opstate_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
 bin_DEBUGPROGRAMS += ceph_test_cls_rgw_opstate
 endif
