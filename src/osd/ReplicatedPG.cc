@@ -751,7 +751,6 @@ void ReplicatedPG::do_op(OpRequestRef op)
   
   bool ok;
   dout(10) << "do_op mode is " << mode << dendl;
-  assert(!mode.wake);   // we should never have woken waiters here.
   if ((op->may_read() && op->may_write()) ||
       (m->get_flags() & CEPH_OSD_FLAG_RWORDERED))
     ok = mode.try_rmw(client);
@@ -4770,13 +4769,6 @@ void ReplicatedPG::put_object_context(ObjectContext *obc)
 {
   dout(10) << "put_object_context " << obc << " " << obc->obs.oi.soid << " "
 	   << obc->ref << " -> " << (obc->ref-1) << dendl;
-
-  if (mode.wake) {
-    requeue_ops(mode.waiting);
-    for (list<Cond*>::iterator p = mode.waiting_cond.begin(); p != mode.waiting_cond.end(); ++p)
-      (*p)->Signal();
-    mode.wake = false;
-  }
 
   --obc->ref;
   if (obc->ref == 0) {
