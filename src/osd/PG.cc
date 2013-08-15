@@ -4525,9 +4525,6 @@ void PG::start_peering_interval(const OSDMapRef lastmap,
 {
   const OSDMapRef osdmap = get_osdmap();
 
-  // -- there was a change! --
-  kick();
-
   set_last_peering_reset();
 
   vector<int> oldacting, oldup;
