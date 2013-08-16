@@ -1519,6 +1519,7 @@ libcommon_files = \
 	common/environment.cc\
 	common/sctp_crc32.c\
 	common/crc32c-intel.c\
+	common/crc32c-neon.c\
 	common/assert.cc \
         common/run_cmd.cc \
 	common/WorkQueue.cc \

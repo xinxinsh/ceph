@@ -7,13 +7,19 @@ extern "C" {
 
 #include <string.h>
 
-extern int ceph_have_crc32c_intel(void);
 extern uint32_t ceph_crc32c_le_generic(uint32_t crc, unsigned char const *data, unsigned length);
+
+extern int ceph_have_crc32c_intel(void);
 extern uint32_t ceph_crc32c_le_intel(uint32_t crc, unsigned char const *data, unsigned length);
+
+extern int ceph_have_crc32c_neon(void);
+extern uint32_t ceph_crc32c_le_neon(uint32_t crc, unsigned char const *data, unsigned length);
 
 static inline uint32_t ceph_crc32c_le(uint32_t crc, unsigned char const *data, unsigned length) {
 	if (ceph_have_crc32c_intel()) //__builtin_cpu_supports("sse4.2"))
 		return ceph_crc32c_le_intel(crc, data, length);
+	else if (ceph_have_crc32c_neon())
+		return ceph_crc32c_le_neon(crc, data, length);
 	else
 		return ceph_crc32c_le_generic(crc, data, length);
 }
