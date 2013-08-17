@@ -908,6 +908,7 @@ OSD::OSD(int id, Messenger *internal_messenger, Messenger *external_messenger,
   objecter_timer(external_messenger->cct, objecter_lock),
   objecter(new Objecter(external_messenger->cct, objecter_messenger, mc, &objecter_osdmap,
 			objecter_lock, objecter_timer)),
+  objecter_dispatcher(this),
   clog(external_messenger->cct, client_messenger, &mc->monmap, LogClient::NO_FLAGS),
   whoami(id),
   dev_path(dev), journal_path(jdev),
@@ -4397,6 +4398,26 @@ bool OSD::heartbeat_dispatch(Message *m)
   }
 
   return true;
+}
+
+bool OSD::ObjecterDispatcher::ms_dispatch(Message *m)
+{
+  Mutex::Locker l(osd->objecter_lock);
+  osd->objecter->dispatch(m);
+  return true;
+}
+
+bool OSD::ObjecterDispatcher::ms_handle_reset(Connection *con)
+{
+  Mutex::Locker l(osd->objecter_lock);
+  osd->objecter->ms_handle_reset(con);
+  return true;
+}
+
+void OSD::ObjecterDispatcher::ms_handle_connect(Connection *con)
+{
+  Mutex::Locker l(osd->objecter_lock);
+  return osd->objecter->ms_handle_connect(con);
 }
 
 bool OSD::ms_dispatch(Message *m)

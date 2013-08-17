@@ -639,6 +639,15 @@ protected:
   SafeTimer objecter_timer;
   OSDMap objecter_osdmap;
   Objecter *objecter;
+  struct ObjecterDispatcher : public Dispatcher {
+    OSD *osd;
+    bool ms_dispatch(Message *m);
+    bool ms_handle_reset(Connection *con);
+    void ms_handle_remote_reset(Connection *con) {}
+    void ms_handle_connect(Connection *con);
+    ObjecterDispatcher(OSD *o) : Dispatcher(g_ceph_context), osd(o) {}
+  } objecter_dispatcher;
+  friend class ObjecterDispatcher;
 
   LogClient clog;
 
