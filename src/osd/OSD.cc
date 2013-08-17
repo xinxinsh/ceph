@@ -4992,6 +4992,13 @@ void OSD::handle_osd_map(MOSDMap *m)
   if (session)
     session->put();
 
+  // share with the objecter
+  {
+    Mutex::Locker l(objecter_lock);
+    m->get();
+    objecter->handle_osd_map(m);
+  }
+
   epoch_t first = m->get_first();
   epoch_t last = m->get_last();
   dout(3) << "handle_osd_map epochs [" << first << "," << last << "], i have "
