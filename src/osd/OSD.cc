@@ -33,6 +33,7 @@
 #include "OSD.h"
 #include "OSDMap.h"
 #include "Watch.h"
+#include "osdc/Objecter.h"
 
 #include "common/ceph_argparse.h"
 #include "common/version.h"
@@ -903,6 +904,10 @@ OSD::OSD(int id, Messenger *internal_messenger, Messenger *external_messenger,
   logger(NULL),
   recoverystate_perf(NULL),
   store(NULL),
+  objecter_lock("OSD::objecter_lock"),
+  objecter_timer(external_messenger->cct, objecter_lock),
+  objecter(new Objecter(external_messenger->cct, objecter_messenger, mc, &objecter_osdmap,
+			objecter_lock, objecter_timer)),
   clog(external_messenger->cct, client_messenger, &mc->monmap, LogClient::NO_FLAGS),
   whoami(id),
   dev_path(dev), journal_path(jdev),
@@ -962,6 +967,7 @@ OSD::~OSD()
   delete recoverystate_perf;
   delete logger;
   delete store;
+  delete objecter;
 }
 
 void cls_initialize(ClassHandler *ch);
@@ -1214,6 +1220,8 @@ int OSD::init()
   hb_front_server_messenger->add_dispatcher_head(&heartbeat_dispatcher);
   hb_back_server_messenger->add_dispatcher_head(&heartbeat_dispatcher);
 
+  objecter_messenger->add_dispatcher_head(this);
+
   monc->set_want_keys(CEPH_ENTITY_TYPE_MON | CEPH_ENTITY_TYPE_OSD);
   r = monc->init();
   if (r < 0)
@@ -1232,6 +1240,14 @@ int OSD::init()
 
   // tick
   tick_timer.add_event_after(g_conf->osd_heartbeat_interval, new C_Tick(this));
+
+  // objecter
+  {
+    objecter->init_unlocked();
+    Mutex::Locker l(objecter_lock);
+    objecter_timer.init();
+    objecter->init_locked();
+  }
 
   AdminSocket *admin_socket = cct->get_admin_socket();
   asok_hook = new OSDSocketHook(this);
@@ -1584,6 +1600,13 @@ int OSD::shutdown()
   reset_heartbeat_peers();
 
   tick_timer.shutdown();
+
+  {
+    Mutex::Locker l(objecter_lock);
+    objecter_timer.shutdown();
+    objecter->shutdown_locked();
+  }
+  objecter->shutdown_unlocked();
 
   // note unmount epoch
   dout(10) << "noting clean unmount in epoch " << osdmap->get_epoch() << dendl;

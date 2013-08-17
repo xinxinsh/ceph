@@ -161,6 +161,7 @@ class OSDMap;
 class MLog;
 class MClass;
 class MOSDPGMissing;
+class Objecter;
 
 class Watch;
 class Notification;
@@ -632,6 +633,12 @@ protected:
   PerfCounters      *logger;
   PerfCounters      *recoverystate_perf;
   ObjectStore *store;
+
+  // for tiering reads/writes from/to other osds
+  Mutex objecter_lock;
+  SafeTimer objecter_timer;
+  OSDMap objecter_osdmap;
+  Objecter *objecter;
 
   LogClient clog;
 
