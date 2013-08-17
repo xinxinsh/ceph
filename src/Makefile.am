@@ -511,6 +511,18 @@ if LINUX
 bin_PROGRAMS += rbd
 endif
 
+erasure_codelibdir = $(libdir)/erasure-code
+erasure_codelib_LTLIBRARIES = 
+
+# lock class
+libec_example_la_SOURCES = osd/ErasureCodePluginExample.cc
+libec_example_la_CFLAGS = ${AM_CFLAGS}
+libec_example_la_CXXFLAGS= ${AM_CXXFLAGS}
+libec_example_la_LIBADD = $(PTHREAD_LIBS) $(EXTRALIBS)
+libec_example_la_LDFLAGS = ${AM_LDFLAGS} -version-info 1:0:0 -export-symbols-regex '.*__erasure_code_.*'
+
+erasure_codelib_LTLIBRARIES += libec_example.la
+
 
 ceph_test_crypto_SOURCES = testcrypto.cc
 ceph_test_crypto_LDADD =  $(LIBGLOBAL_LDA)
@@ -820,6 +832,15 @@ unittest_osd_types_SOURCES = test/test_osd_types.cc
 unittest_osd_types_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
 unittest_osd_types_LDADD = $(LIBGLOBAL_LDA) libcommon.la ${UNITTEST_LDADD} 
 check_PROGRAMS += unittest_osd_types
+
+unittest_erasure_code_SOURCES = test/osd/TestErasureCode.cc 
+unittest_erasure_code_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
+unittest_erasure_code_LDADD = libosd.a $(LIBGLOBAL_LDA) libcommon.la ${UNITTEST_LDADD} 
+if LINUX
+unittest_erasure_code_LDADD += -ldl
+endif
+check_PROGRAMS += unittest_erasure_code
+
 
 unittest_pglog_SOURCES = test/osd/TestPGLog.cc objclass/class_api.cc perfglue/disabled_heap_profiler.cc
 unittest_pglog_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
@@ -1675,6 +1696,7 @@ libosd_a_SOURCES = \
 	osd/PGLog.cc \
 	osd/ReplicatedPG.cc \
 	osd/Ager.cc \
+	osd/ErasureCodePlugin.cc \
 	osd/OSD.cc \
 	osd/OSDCap.cc \
 	osd/Watch.cc \
@@ -2181,6 +2203,8 @@ noinst_HEADERS = \
 	os/SequencerPosition.h\
         osd/Ager.h\
 	osd/ClassHandler.h\
+	osd/ErasureCodeInterface.h\
+	osd/ErasureCodePlugin.h\
         osd/OSD.h\
         osd/OSDCap.h\
         osd/OSDMap.h\
