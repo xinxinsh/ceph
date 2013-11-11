@@ -1156,7 +1156,12 @@ void FileJournal::write_thread_entry()
 	dout(20) << "write_thread_entry deferring until more aios complete: "
 		 << aio_num << " aios with " << aio_bytes << " bytes needs " << min_new
 		 << " bytes to start a new aio (currently " << cur << " pending)" << dendl;
+        // add by shuxinxin
+        utime_t aio_start = ceph_clock_now(g_ceph_clock);
 	aio_cond.Wait(aio_lock);
+        utime_t aio_end = ceph_clock_now(g_ceph_clock);
+        utime_t wait_aio = aio_end - aio_start;
+        dout(1) << "latency for waiting aio_cond = " << wait_aio << dendl;
 	dout(20) << "write_thread_entry woke up" << dendl;
       }
     }
@@ -1170,7 +1175,12 @@ void FileJournal::write_thread_entry()
     int r = prepare_multi_write(bl, orig_ops, orig_bytes);
     if (r == -ENOSPC) {
       dout(20) << "write_thread_entry full, going to sleep (waiting for commit)" << dendl;
+      // add by shuxinxin
+      utime_t commit_start = ceph_clock_now(g_ceph_clock);
       commit_cond.Wait(write_lock);
+      utime_t commit_end = ceph_clock_now(g_ceph_clock);
+      utime_t wait_commit = commit_end - commit_start;
+      dout(1) << "latency for waiting commit_cond = " << wait_commit << dendl;
       dout(20) << "write_thread_entry woke up" << dendl;
       continue;
     }

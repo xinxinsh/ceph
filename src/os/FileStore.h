@@ -122,6 +122,9 @@ private:
   // -- op workqueue --
   struct Op {
     utime_t start;
+    // add by shuxinxin
+    utime_t queue,dequeue,process,finish;
+
     uint64_t op;
     list<Transaction*> tls;
     Context *onreadable, *onreadable_sync;

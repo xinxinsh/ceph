@@ -1918,6 +1918,9 @@ void FileStore::queue_op(OpSequencer *osr, Op *o)
 	  << " " << o->bytes << " bytes"
 	  << "   (queue has " << op_queue_len << " ops and " << op_queue_bytes << " bytes)"
 	  << dendl;
+  // add by shuxinxin
+  o->queue=ceph_clock_now(g_ceph_context);
+
   op_wq.queue(osr);
 }
 
@@ -1980,6 +1983,12 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
 
   osr->apply_lock.Lock();
   Op *o = osr->peek_queue();
+
+  // add by shuxinxn
+  o->dequeue=ceph_clock_now(g_ceph_context);
+  utime_t lat = o->dequeue - o->queue;
+  dout(1) << "op " << o << " in FileStore::op_wq latency = " << lat << dendl;
+
   apply_manager.op_apply_start(o->op);
   dout(5) << "_do_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << " start" << dendl;
   int r = _do_transactions(o->tls, o->op, &handle);
@@ -1994,6 +2003,11 @@ void FileStore::_finish_op(OpSequencer *osr)
   
   dout(10) << "_finish_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << dendl;
   osr->apply_lock.Unlock();  // locked in _do_op
+
+  // add by shuxinxin
+  o->process = ceph_clock_now(g_ceph_context);
+  utime_t proc = o->process - o->dequeue;
+  dout(1) << "op " << o << " FileStore process latency = " << proc << dendl;
 
   // called with tp lock held
   op_queue_release_throttle(o);
@@ -2117,6 +2131,10 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
   dout(5) << "_journaled_ahead " << o << " seq " << o->op << " " << *osr << " " << o->tls << dendl;
 
   // this should queue in order because the journal does it's completions in order.
+  // add by shuxinxin
+  utime_t  journal_proc = ceph_clock_now(g_ceph_context) - o->start;
+  dout(1) << "op " << o << " journaled latency = " << journal_proc << dendl;
+ 
   queue_op(osr, o);
 
   osr->dequeue_journal();

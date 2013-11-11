@@ -3836,6 +3836,10 @@ void ReplicatedPG::op_applied(RepGather *repop)
   if (!repop->aborted)
     eval_repop(repop);
 
+  // add by shuxinxin
+  utime_t apply_lat = ceph_clock_now(g_ceph_context) - repop->start;
+  dout(1) << "repop " << repop << " apply to local disk latency = " << apply_lat << " repop waitfor_ack = " << repop->waitfor_ack.size() <<" repop waitfor_disk = "<< repop->waitfor_disk.size() <<  dendl;
+
   repop->put();
   unlock();
 }
@@ -3866,6 +3870,10 @@ void ReplicatedPG::op_commit(RepGather *repop)
     last_complete_ondisk = repop->pg_local_last_complete;
     eval_repop(repop);
   }
+
+  // add by shuxinxin
+  utime_t commit_lat = ceph_clock_now(g_ceph_context) - repop->start;
+  dout(1) << "repop " << repop << " commit to journal disk latency = " << commit_lat << " repop waitfor_ack = " << repop->waitfor_ack.size() <<" repop waitfor_disk = "<< repop->waitfor_disk.size() <<  dendl;
 
   repop->put();
   unlock();
