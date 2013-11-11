@@ -6414,11 +6414,15 @@ bool OSD::op_is_discardable(MOSDOp *op)
  */
 void OSD::enqueue_op(PG *pg, OpRequestRef op)
 {
+  // add by shuxinxin
+  op->queue = ceph_clock_now(g_ceph_context);
   utime_t latency = ceph_clock_now(g_ceph_context) - op->request->get_recv_stamp();
   dout(15) << "enqueue_op " << op << " prio " << op->request->get_priority()
 	   << " cost " << op->request->get_cost()
 	   << " latency " << latency
 	   << " " << *(op->request) << dendl;
+  // add by shuxinxin
+  dout(1) << "latency before enqueue op to OSD::op_wq = " << latency << dendl;
   op_wq.queue(make_pair(PGRef(pg), op));
 }
 
@@ -6467,8 +6471,11 @@ PGRef OSD::OpWQ::_dequeue()
     pair<PGRef, OpRequestRef> ret = pqueue.dequeue();
     pg = ret.first;
     pg_for_processing[&*pg].push_back(ret.second);
+    // add by shuxinxin
+    ret.second->process = ceph_clock_now(g_ceph_context);
   }
   osd->logger->set(l_osd_opq, pqueue.length());
+  
   return pg;
 }
 
@@ -6503,6 +6510,10 @@ void OSDService::dequeue_pg(PG *pg, list<OpRequestRef> *dequeued)
  */
 void OSD::dequeue_op(PGRef pg, OpRequestRef op)
 {
+  // add by shuxinxin
+  utime_t lat = op->process - op->queue;
+  dout(1) << "latency of queue in OSD::op_wq = " << lat << dendl;
+ 
   utime_t latency = ceph_clock_now(g_ceph_context) - op->request->get_recv_stamp();
   dout(10) << "dequeue_op " << op << " prio " << op->request->get_priority()
 	   << " cost " << op->request->get_cost()

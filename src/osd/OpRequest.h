@@ -126,6 +126,10 @@ struct OpRequest : public TrackedOp {
   void set_pg_op() { rmw_flags |= CEPH_OSD_RMW_FLAG_PGOP; }
 
   utime_t received_time;
+
+  // add by shuxinxin
+  utime_t queue,process,finish;
+
   uint8_t warn_interval_multiplier;
   utime_t get_arrived() const {
     return received_time;
