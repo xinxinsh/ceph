@@ -1808,7 +1808,7 @@ void FileJournal::throttle()
   // add by shuxinxin
   utime_t end = ceph_clock_now(g_ceph_context);
   utime_t lat = end - start;
-  dout(1) << "latency of waiting on FileJournal throttle = " << lat << "cur ops : " << throttle_ops.get_current() << "cur bytes : " << throttle_bytes.get_current() << dendl;
+  dout(1) << "latency of waiting on FileJournal throttle = " << lat << " cur ops : " << throttle_ops.get_current() << " cur bytes : " << throttle_bytes.get_current() << dendl;
 }
 
 void FileJournal::get_header(

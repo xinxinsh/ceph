@@ -1956,7 +1956,7 @@ void FileStore::op_queue_reserve_throttle(Op *o)
   // add by shuxinxin
   utime_t end = ceph_clock_now(g_ceph_context);
   utime_t lat = end -start;
-  dout(1) << "latency of waiting on op_throttle_cond = " << lat << op_queue_len + 1 << " > " << max_ops << " ops || "<< op_queue_bytes + o->bytes << " > " << max_bytes << dendl;
+  dout(1) << "latency of waiting on op_throttle_cond = " << lat << " " << op_queue_len + 1 << " > " << max_ops << " ops || "<< op_queue_bytes + o->bytes << " > " << max_bytes << dendl;
 
   logger->set(l_os_oq_ops, op_queue_len);
   logger->set(l_os_oq_bytes, op_queue_bytes);
