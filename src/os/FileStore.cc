@@ -1939,6 +1939,7 @@ void FileStore::op_queue_reserve_throttle(Op *o)
   logger->set(l_os_oq_max_bytes, max_bytes);
   // add by shuxinxin
   utime_t start = ceph_clock_now(g_ceph_context);
+  bool wait = false;
 
   {
     Mutex::Locker l(op_throttle_lock);
@@ -1947,17 +1948,22 @@ void FileStore::op_queue_reserve_throttle(Op *o)
 	      && (op_queue_bytes + o->bytes) > max_bytes)) {
       dout(2) << "waiting " << op_queue_len + 1 << " > " << max_ops << " ops || "
 	      << op_queue_bytes + o->bytes << " > " << max_bytes << dendl;
+      // add by shuxinxin
+      wait = true;
       op_throttle_cond.Wait(op_throttle_lock);
     }
 
     op_queue_len++;
     op_queue_bytes += o->bytes;
   }
+ 
   // add by shuxinxin
-  utime_t end = ceph_clock_now(g_ceph_context);
-  utime_t lat = end -start;
-  dout(1) << "latency of waiting on op_throttle_cond = " << lat << " " << op_queue_len + 1 << " > " << max_ops << " ops || "<< op_queue_bytes + o->bytes << " > " << max_bytes << dendl;
-
+  if (wait)
+  {
+      utime_t end = ceph_clock_now(g_ceph_context);
+      utime_t lat = end -start;
+      dout(1) << "latency of waiting on op_throttle_cond = " << lat << " " << op_queue_len + 1 << " > " << max_ops << " ops || "<< op_queue_bytes + o->bytes << " > " << max_bytes << dendl;
+  }
   logger->set(l_os_oq_ops, op_queue_len);
   logger->set(l_os_oq_bytes, op_queue_bytes);
 }

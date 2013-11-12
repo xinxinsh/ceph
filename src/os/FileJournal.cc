@@ -1801,14 +1801,24 @@ FileJournal::read_entry_result FileJournal::do_read_entry(
 void FileJournal::throttle()
 {
   utime_t start = ceph_clock_now(g_ceph_context);
+  bool wait=false;
   if (throttle_ops.wait(g_conf->journal_queue_max_ops))
+  {
     dout(2) << "throttle: waited for ops" << dendl;
+    wait = true;
+  }  
   if (throttle_bytes.wait(g_conf->journal_queue_max_bytes))
+  {
     dout(2) << "throttle: waited for bytes" << dendl;
+    wait = true;
+  }
   // add by shuxinxin
-  utime_t end = ceph_clock_now(g_ceph_context);
-  utime_t lat = end - start;
-  dout(1) << "latency of waiting on FileJournal throttle = " << lat << " cur ops : " << throttle_ops.get_current() << " cur bytes : " << throttle_bytes.get_current() << dendl;
+  if (wait)
+  {
+     utime_t end = ceph_clock_now(g_ceph_context);
+     utime_t lat = end - start;
+     dout(1) << "latency of waiting on FileJournal throttle = " << lat << " cur ops : " << throttle_ops.get_current() << " cur bytes : " << throttle_bytes.get_current() << dendl;
+  }
 }
 
 void FileJournal::get_header(
