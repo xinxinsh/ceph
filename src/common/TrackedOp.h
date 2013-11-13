@@ -25,6 +25,8 @@ class TrackedOp {
 public:
   virtual void mark_event(const string &event) = 0;
   virtual ~TrackedOp() {}
+  // add by shuxinxin
+  utime_t dequeue;
 };
 typedef std::tr1::shared_ptr<TrackedOp> TrackedOpRef;
 

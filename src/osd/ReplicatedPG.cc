@@ -1086,12 +1086,12 @@ void ReplicatedPG::do_op(OpRequestRef op)
   RepGather *repop = new_repop(ctx, obc, rep_tid);  // new repop claims our obc, src_obc refs
   // note: repop now owns ctx AND ctx->op
 
-  // add by shuxinxin
-  utime_t ll = ceph_clock_now(g_ceph_context) - op->process;
-  dout(1) << "latency before submit to journal = " << ll << dendl;
 
   repop->src_obc.swap(src_obc); // and src_obc.
 
+  // add by shuxinxin
+  utime_t ll = ceph_clock_now(g_ceph_context) - op->process;
+  dout(1) << "latency before submit to journal = " << ll << dendl;
   issue_repop(repop, now, old_last_update, old_exists, old_size, old_version);
 
   eval_repop(repop);

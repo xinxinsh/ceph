@@ -2079,6 +2079,11 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
 
   if (journal && journal->is_writeable() && !m_filestore_journal_trailing) {
     Op *o = build_op(tls, onreadable, onreadable_sync, osd_op);
+
+    //add by shuxinxin
+    utime_t before = ceph_clock_now(g_ceph_context) - osd_op->dequeue;
+    dout(1) << "latency of preprocess before submit to journal = " << before << dendl;
+
     op_queue_reserve_throttle(o);
     journal->throttle();
     uint64_t op_num = submit_manager.op_submit_start();
@@ -3569,6 +3574,9 @@ void FileStore::sync_entry()
       utime_t done = ceph_clock_now(g_ceph_context);
       utime_t lat = done - start;
       utime_t dur = done - startwait;
+      // add by shuxinxin
+      dout(1) << "latency for filestore sync  = " << lat << " interval = " << dur << dendl;
+      
       dout(10) << "sync_entry commit took " << lat << ", interval was " << dur << dendl;
 
       logger->inc(l_os_commit);

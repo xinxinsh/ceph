@@ -6473,6 +6473,7 @@ PGRef OSD::OpWQ::_dequeue()
     pg_for_processing[&*pg].push_back(ret.second);
     // add by shuxinxin
     ret.second->process = ceph_clock_now(g_ceph_context);
+    ret.second->dequeue = ceph_clock_now(g_ceph_context);
   }
   osd->logger->set(l_osd_opq, pqueue.length());
   
