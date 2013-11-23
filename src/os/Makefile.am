@@ -12,6 +12,7 @@ libos_la_SOURCES = \
 	os/LevelDBStore.cc \
 	os/LFNIndex.cc \
 	os/MemStore.cc \
+	os/KeyValueStore.cc \
 	os/ObjectStore.cc \
 	os/WBThrottle.cc \
 	os/ZFSFileStoreBackend.cc \
@@ -37,6 +38,7 @@ noinst_HEADERS += \
 	os/LevelDBStore.h \
 	os/LFNIndex.h \
 	os/MemStore.h \
+	os/KeyValueStore.h \
 	os/ObjectMap.h \
 	os/ObjectStore.h \
 	os/SequencerPosition.h \
