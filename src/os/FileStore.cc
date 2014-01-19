@@ -67,7 +67,7 @@
 #include "common/fd.h"
 #include "HashIndex.h"
 #include "DBObjectMap.h"
-#include "LevelDBStore.h"
+#include "RocksDBStore.h"
 
 #include "common/ceph_crypto.h"
 using ceph::crypto::SHA1;
@@ -721,15 +721,10 @@ int FileStore::mkfs()
   }
 
   {
-    leveldb::Options options;
-    options.create_if_missing = true;
-    leveldb::DB *db;
-    leveldb::Status status = leveldb::DB::Open(options, omap_dir, &db);
-    if (status.ok()) {
-      delete db;
-      dout(1) << "leveldb db exists/created" << dendl;
+    if (RocksDBStore::check_omap_dir(omap_dir)) {
+      dout(1) << "rocksdb db exists/created" << dendl;
     } else {
-      derr << "mkfs failed to create leveldb: " << status.ToString() << dendl;
+      derr << "mkfs failed to create rocksdb: " << dendl;
       ret = -1;
       goto close_fsid_fd;
     }
@@ -1323,26 +1318,26 @@ int FileStore::mount()
   }
 
   {
-    LevelDBStore *omap_store = new LevelDBStore(g_ceph_context, omap_dir);
+    RocksDBStore *omap_store = new RocksDBStore(g_ceph_context, omap_dir);
 
-    omap_store->options.write_buffer_size = g_conf->osd_leveldb_write_buffer_size;
-    omap_store->options.cache_size = g_conf->osd_leveldb_cache_size;
-    omap_store->options.block_size = g_conf->osd_leveldb_block_size;
-    omap_store->options.bloom_size = g_conf->osd_leveldb_bloom_size;
-    omap_store->options.compression_enabled = g_conf->osd_leveldb_compression;
-    omap_store->options.paranoid_checks = g_conf->osd_leveldb_paranoid;
-    omap_store->options.max_open_files = g_conf->osd_leveldb_max_open_files;
-    omap_store->options.log_file = g_conf->osd_leveldb_log;
+    omap_store->options.write_buffer_size = g_conf->osd_rocksdb_write_buffer_size;
+    omap_store->options.cache_size = g_conf->osd_rocksdb_cache_size;
+    omap_store->options.block_size = g_conf->osd_rocksdb_block_size;
+    omap_store->options.bloom_size = g_conf->osd_rocksdb_bloom_size;
+    omap_store->options.compression_enabled = g_conf->osd_rocksdb_compression;
+    omap_store->options.paranoid_checks = g_conf->osd_rocksdb_paranoid;
+    omap_store->options.max_open_files = g_conf->osd_rocksdb_max_open_files;
+    omap_store->options.log_file = g_conf->osd_rocksdb_log;
 
     stringstream err;
     if (omap_store->create_and_open(err)) {
       delete omap_store;
-      derr << "Error initializing leveldb: " << err.str() << dendl;
+      derr << "Error initializing rocksdb: " << err.str() << dendl;
       ret = -1;
       goto close_current_fd;
     }
 
-    if (g_conf->osd_compact_leveldb_on_mount) {
+    if (g_conf->osd_compact_rocksdb_on_mount) {
       derr << "Compacting store..." << dendl;
       omap_store->compact();
       derr << "...finished compacting store" << dendl;

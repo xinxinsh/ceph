@@ -158,6 +158,10 @@ if WITH_LIBZFS
 LIBOS += libos_zfs.a -lzfs
 endif # WITH_LIBZFS
 
+if WITH_LIBROCKSDB
+LIBOS += libos_rocksdb.la
+endif # WITH_LIBROCKSDB
+
 if WITH_TCMALLOC
 LIBPERFGLUE += -ltcmalloc
 endif # WITH_TCMALLOC
@@ -175,7 +179,7 @@ LIBOSD += $(LIBPERFGLUE)
 LIBMDS += $(LIBPERFGLUE)
 
 # Always use system leveldb
-LIBOS += -lleveldb -lsnappy
+LIBOS += -lleveldb -lsnappy -lrocksdb
 
 # Use this for binaries requiring libglobal
 CEPH_GLOBAL = $(LIBGLOBAL) $(LIBCOMMON) $(PTHREAD_LIBS) -lm $(CRYPTO_LIBS) $(EXTRALIBS)

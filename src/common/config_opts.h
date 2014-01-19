@@ -371,6 +371,7 @@ OPTION(mds_standby_replay, OPT_BOOL, false)
 // If true, compact leveldb store on mount
 OPTION(osd_compact_leveldb_on_mount, OPT_BOOL, false)
 
+OPTION(osd_compact_rocksdb_on_mount, OPT_BOOL, false)
 // Maximum number of backfills to or from a single osd
 OPTION(osd_max_backfills, OPT_U64, 10)
 
@@ -514,6 +515,14 @@ OPTION(osd_leveldb_compression, OPT_BOOL, true) // OSD's leveldb uses compressio
 OPTION(osd_leveldb_paranoid, OPT_BOOL, false) // OSD's leveldb paranoid flag
 OPTION(osd_leveldb_log, OPT_STR, "/dev/null")  // enable OSD leveldb log file
 
+OPTION(osd_rocksdb_write_buffer_size, OPT_U64, 0) // OSD's rocksdb write buffer size
+OPTION(osd_rocksdb_cache_size, OPT_U64, 0) // OSD's rocksdb cache size
+OPTION(osd_rocksdb_block_size, OPT_U64, 0) // OSD's rocksdb block size
+OPTION(osd_rocksdb_bloom_size, OPT_INT, 0) // OSD's rocksdb bloom bits per entry
+OPTION(osd_rocksdb_max_open_files, OPT_INT, 0) // OSD's rocksdb max open files
+OPTION(osd_rocksdb_compression, OPT_BOOL, true) // OSD's rocksdb uses compression
+OPTION(osd_rocksdb_paranoid, OPT_BOOL, false) // OSD's rocksdb paranoid flag
+OPTION(osd_rocksdb_log, OPT_STR, "/dev/null")  // enable OSD rocksdb log file
 // determines whether PGLog::check() compares written out log to stored log
 OPTION(osd_debug_pg_log_writeout, OPT_BOOL, false)
 
