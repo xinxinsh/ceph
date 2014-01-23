@@ -1,7 +1,7 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
-#ifndef LEVEL_DB_STORE_H
-#define LEVEL_DB_STORE_H
+#ifndef ROCKS_DB_STORE_H
+#define ROCKS_DB_STORE_H
 
 #include "include/types.h"
 #include "include/buffer.h"
@@ -19,6 +19,7 @@
 #include "common/Formatter.h"
 
 #include "common/ceph_context.h"
+#include "RocksDB.h"
 
 class PerfCounters;
 
@@ -42,10 +43,7 @@ class RocksDBStore : public KeyValueDB {
   string path;
   //boost::scoped_ptr<rocksdb::Cache> db_cache;
   //boost::scoped_ptr<const rocksdb::FilterPolicy> filterpolicy;
-  //boost::scoped_ptr<rocksdb::DB> db;
-  boost::scoped_ptr<void *> db_cache;
-  boost::scoped_ptr<void *> filterpolicy;
-  boost::scoped_ptr<void *> db;
+  RocksDB_DB *db;
 
   int init(ostream &out, bool create_if_missing);
 
@@ -131,8 +129,6 @@ public:
     cct(c),
     logger(NULL),
     path(path),
-    db_cache(NULL),
-    filterpolicy(NULL),
     compact_queue_lock("RocksDBStore::compact_thread_lock"),
     compact_queue_stop(false),
     compact_thread(this),
@@ -156,7 +152,7 @@ public:
   class RocksDBTransactionImpl : public KeyValueDB::TransactionImpl {
   public:
     //rocksdb::WriteBatch bat;
-    void * bat;
+    RocksDB_WriteBatch bat;
     list<bufferlist> buffers;
     list<string> keys;
     RocksDBStore *db;
@@ -190,10 +186,10 @@ public:
   class RocksDBWholeSpaceIteratorImpl :
     public KeyValueDB::WholeSpaceIteratorImpl {
   protected:
-    boost::scoped_ptr<void *> dbiter;
+    RocksDB_Iterator *dbiter;
   public:
-    RocksDBWholeSpaceIteratorImpl(void *iter) :
-      dbiter(&iter) { }
+    RocksDBWholeSpaceIteratorImpl(RocksDB_Iterator *iter) :
+      dbiter(iter) { }
     virtual ~RocksDBWholeSpaceIteratorImpl() { }
 
     int seek_to_first(); 
@@ -212,11 +208,11 @@ public:
   };
 
   class RocksDBSnapshotIteratorImpl : public RocksDBWholeSpaceIteratorImpl {
-    void *db;
-    const void *snapshot;
+    RocksDB_DB *db;
+    RocksDB_Snapshot *snapshot;
   public:
-    RocksDBSnapshotIteratorImpl(void *db, const void *s,
-				void *iter) :
+    RocksDBSnapshotIteratorImpl(RocksDB_DB *db, RocksDB_Snapshot *s,
+				RocksDB_Iterator *iter) :
       RocksDBWholeSpaceIteratorImpl(iter), db(db), snapshot(s) { }
 
     ~RocksDBSnapshotIteratorImpl();
@@ -224,10 +220,9 @@ public:
 
   /// Utility
   static string combine_strings(const string &prefix, const string &value);
-  static int split_key(void *in, string *prefix, string *key);
-  static bufferlist to_bufferlist(void *in);
-  static bool in_prefix(const string &prefix, void *key);
   static string past_prefix(const string &prefix);
+  static bufferlist to_bufferlist(RocksDB_Slice *in);
+  static int split_key(RocksDB_Slice *in, string *prefix, string *key);
 
   virtual uint64_t get_estimated_size(map<string,uint64_t> &extra) {
     DIR *store_dir = opendir(path.c_str());

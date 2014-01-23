@@ -1318,7 +1318,9 @@ int FileStore::mount()
   }
 
   {
+    dout(0) << " start new rocksdb store " << dendl;
     RocksDBStore *omap_store = new RocksDBStore(g_ceph_context, omap_dir);
+    dout(0) << " finish new rocksdb store " << dendl;
 
     omap_store->options.write_buffer_size = g_conf->osd_rocksdb_write_buffer_size;
     omap_store->options.cache_size = g_conf->osd_rocksdb_cache_size;
@@ -1329,6 +1331,7 @@ int FileStore::mount()
     omap_store->options.max_open_files = g_conf->osd_rocksdb_max_open_files;
     omap_store->options.log_file = g_conf->osd_rocksdb_log;
 
+    dout(0) << " init rocksdb store options " << dendl;
     stringstream err;
     if (omap_store->create_and_open(err)) {
       delete omap_store;
@@ -1337,12 +1340,14 @@ int FileStore::mount()
       goto close_current_fd;
     }
 
+    dout(0) << " finish create and open rocksdb store " << dendl;
     if (g_conf->osd_compact_rocksdb_on_mount) {
       derr << "Compacting store..." << dendl;
       omap_store->compact();
       derr << "...finished compacting store" << dendl;
     }
 
+    dout(0) << "  create db object map " << dendl;
     DBObjectMap *dbomap = new DBObjectMap(omap_store);
     ret = dbomap->init(do_update);
     if (ret < 0) {
@@ -1361,6 +1366,7 @@ int FileStore::mount()
     object_map.reset(dbomap);
   }
 
+    dout(0) << " start open journal " << dendl;
   // journal
   open_journal();
 
