@@ -14,7 +14,7 @@ set -e
 [ -z "$CEPH_NUM_RGW" ] && CEPH_NUM_RGW="$RGW"
 
 [ -z "$CEPH_NUM_MON" ] && CEPH_NUM_MON=3
-[ -z "$CEPH_NUM_OSD" ] && CEPH_NUM_OSD=1
+[ -z "$CEPH_NUM_OSD" ] && CEPH_NUM_OSD=2
 [ -z "$CEPH_NUM_MDS" ] && CEPH_NUM_MDS=3
 [ -z "$CEPH_NUM_RGW" ] && CEPH_NUM_RGW=1
 
@@ -326,6 +326,7 @@ if [ "$start_mon" -eq 1 ]; then
         osd pg bits = 3
         osd pgp bits = 5  ; (invalid, but ceph should cope!)
         osd crush chooseleaf type = 0
+        osd pool default size = 2
         osd pool default min size = 1
         run dir = $CEPH_OUT_DIR
 EOF
