@@ -721,15 +721,19 @@ int FileStore::mkfs()
   }
 
   {
+    std::cout << "start check rocksdb" << std::endl;
     if (RocksDBStore::check_omap_dir(omap_dir)) {
       dout(1) << "rocksdb db exists/created" << dendl;
+      std::cout << "rocksdb db exists/created" << std::endl;
     } else {
       derr << "mkfs failed to create rocksdb: " << dendl;
+      std::cout << "mkfs failed to create rocksdb" << std::endl;
       ret = -1;
       goto close_fsid_fd;
     }
   }
 
+  std::cout << "finish check rocksdb" << std::endl;
   // journal?
   ret = mkjournal();
   if (ret)
