@@ -379,6 +379,7 @@ OPTION(mds_standby_replay, OPT_BOOL, false)
 // If true, compact leveldb store on mount
 OPTION(osd_compact_leveldb_on_mount, OPT_BOOL, false)
 
+OPTION(osd_compact_rocksdb_on_mount, OPT_BOOL, false)
 // Maximum number of backfills to or from a single osd
 OPTION(osd_max_backfills, OPT_U64, 10)
 
@@ -534,8 +535,25 @@ OPTION(osd_leveldb_compression, OPT_BOOL, true) // OSD's leveldb uses compressio
 OPTION(osd_leveldb_paranoid, OPT_BOOL, false) // OSD's leveldb paranoid flag
 OPTION(osd_leveldb_log, OPT_STR, "")  // enable OSD leveldb log file
 
+OPTION(osd_rocksdb_write_buffer_size, OPT_U64, 0) // OSD's rocksdb write buffer size
+OPTION(osd_rocksdb_cache_size, OPT_U64, 0) // OSD's rocksdb cache size
+OPTION(osd_rocksdb_block_size, OPT_U64, 0) // OSD's rocksdb block size
+OPTION(osd_rocksdb_bloom_size, OPT_INT, 0) // OSD's rocksdb bloom bits per entry
+OPTION(osd_rocksdb_max_open_files, OPT_INT, 0) // OSD's rocksdb max open files
+OPTION(osd_rocksdb_compression, OPT_STR, "none") // OSD's rocksdb uses compression : none, snappy, zlib, bzip2
+OPTION(osd_rocksdb_paranoid, OPT_BOOL, false) // OSD's rocksdb paranoid flag
+OPTION(osd_rocksdb_log, OPT_STR, "/dev/null")  // enable OSD rocksdb log file
 // determines whether PGLog::check() compares written out log to stored log
 OPTION(osd_debug_pg_log_writeout, OPT_BOOL, false)
+
+OPTION(rocksdb_write_buffer_size, OPT_U64, 0) // rocksdb write buffer size
+OPTION(rocksdb_cache_size, OPT_U64, 0) // rocksdb cache size
+OPTION(rocksdb_block_size, OPT_U64, 0) // rocksdb block size
+OPTION(rocksdb_bloom_size, OPT_INT, 0) // rocksdb bloom bits per entry
+OPTION(rocksdb_max_open_files, OPT_INT, 0) // rocksdb max open files
+OPTION(rocksdb_compression, OPT_STR, "none") // rocksdb uses compression : none, snappy, zlib, bzip2
+OPTION(rocksdb_paranoid, OPT_BOOL, false) // rocksdb paranoid flag
+OPTION(rocksdb_log, OPT_STR, "/dev/null")  // enable rocksdb log file
 
 OPTION(leveldb_write_buffer_size, OPT_U64, 0) // leveldb write buffer size
 OPTION(leveldb_cache_size, OPT_U64, 0) // leveldb cache size

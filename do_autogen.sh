@@ -123,6 +123,6 @@ export CXXFLAGS
 
 ./configure \
 --prefix=/usr --sbindir=/sbin --localstatedir=/var --sysconfdir=/etc \
---with-debug $with_profiler --with-cryptopp --with-radosgw \
+--with-debug $with_profiler --with-cryptopp --with-radosgw --with-librocksdb\
 $CONFIGURE_FLAGS \
 || die "configure failed"

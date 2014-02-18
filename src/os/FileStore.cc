@@ -68,6 +68,9 @@
 #include "HashIndex.h"
 #include "DBObjectMap.h"
 #include "LevelDBStore.h"
+#ifdef HAVE_LIBROCKSDB
+#include "RocksDBStore.h"
+#endif
 
 #include "common/ceph_crypto.h"
 using ceph::crypto::SHA1;
@@ -726,7 +729,18 @@ int FileStore::mkfs()
     }
     TEMP_FAILURE_RETRY(::close(fd));  
   }
-
+ 
+  #ifdef HAVE_LIBROCKSDB
+  {
+    if (RocksDBStore::check_omap_dir(omap_dir)) {
+      dout(1) << "rocksdb db exists/created" << dendl;
+    } else {
+      derr << "mkfs failed to create rocksdb: " << dendl;
+      ret = -1;
+      goto close_fsid_fd;
+    }
+  }
+  #else
   {
     leveldb::Options options;
     options.create_if_missing = true;
@@ -741,7 +755,7 @@ int FileStore::mkfs()
       goto close_fsid_fd;
     }
   }
-
+  #endif
   // journal?
   ret = mkjournal();
   if (ret)
@@ -1330,40 +1344,69 @@ int FileStore::mount()
   }
 
   {
-    LevelDBStore *omap_store = new LevelDBStore(g_ceph_context, omap_dir);
+    #ifdef HAVE_LIBROCKSDB
+        RocksDBStore *omap_store = new RocksDBStore(g_ceph_context, omap_dir);
 
-    omap_store->init();
-    if (g_conf->osd_leveldb_write_buffer_size)
-      omap_store->options.write_buffer_size = g_conf->osd_leveldb_write_buffer_size;
-    if (g_conf->osd_leveldb_cache_size)
-      omap_store->options.cache_size = g_conf->osd_leveldb_cache_size;
-    if (g_conf->osd_leveldb_block_size)
-      omap_store->options.block_size = g_conf->osd_leveldb_block_size;
-    if (g_conf->osd_leveldb_bloom_size)
-      omap_store->options.bloom_size = g_conf->osd_leveldb_bloom_size;
-    if (g_conf->osd_leveldb_compression)
-      omap_store->options.compression_enabled = g_conf->osd_leveldb_compression;
-    if (g_conf->osd_leveldb_paranoid)
-      omap_store->options.paranoid_checks = g_conf->osd_leveldb_paranoid;
-    if (g_conf->osd_leveldb_max_open_files)
-      omap_store->options.max_open_files = g_conf->osd_leveldb_max_open_files;
-    if (g_conf->osd_leveldb_log.length())
-      omap_store->options.log_file = g_conf->osd_leveldb_log;
+        omap_store->init();
+        omap_store->options.write_buffer_size = g_conf->osd_rocksdb_write_buffer_size;
+        omap_store->options.cache_size = g_conf->osd_rocksdb_cache_size;
+        omap_store->options.block_size = g_conf->osd_rocksdb_block_size;
+        omap_store->options.bloom_size = g_conf->osd_rocksdb_bloom_size;
+        omap_store->options.compression_type = g_conf->osd_rocksdb_compression;
+        omap_store->options.paranoid_checks = g_conf->osd_rocksdb_paranoid;
+        omap_store->options.max_open_files = g_conf->osd_rocksdb_max_open_files;
+        omap_store->options.log_file = g_conf->osd_rocksdb_log;
 
-    stringstream err;
-    if (omap_store->create_and_open(err)) {
-      delete omap_store;
-      derr << "Error initializing leveldb: " << err.str() << dendl;
-      ret = -1;
-      goto close_current_fd;
-    }
+        stringstream err;
+        if  (omap_store->create_and_open(err)) {
+          delete omap_store;
+          derr << "Error initializing rocksdb: " << err.str() << dendl;
+          ret = -1;
+          goto close_current_fd;
+        }
+        dout(1) << "Initializing rocksdb successful " << dendl;
 
-    if (g_conf->osd_compact_leveldb_on_mount) {
-      derr << "Compacting store..." << dendl;
-      omap_store->compact();
-      derr << "...finished compacting store" << dendl;
-    }
+        if  (g_conf->osd_compact_rocksdb_on_mount) {
+          derr << "Compacting store..." << dendl;
+          omap_store->compact();
+          derr << "...finished compacting store" << dendl;
+        }
+    #else
+      LevelDBStore *omap_store = new LevelDBStore(g_ceph_context, omap_dir);
 
+      omap_store->init();
+      if (g_conf->osd_leveldb_write_buffer_size)
+        omap_store->options.write_buffer_size = g_conf->osd_leveldb_write_buffer_size;
+      if (g_conf->osd_leveldb_cache_size)
+        omap_store->options.cache_size = g_conf->osd_leveldb_cache_size;
+      if (g_conf->osd_leveldb_block_size)
+        omap_store->options.block_size = g_conf->osd_leveldb_block_size;
+      if (g_conf->osd_leveldb_bloom_size)
+        omap_store->options.bloom_size = g_conf->osd_leveldb_bloom_size;
+      if (g_conf->osd_leveldb_compression)
+        omap_store->options.compression_enabled = g_conf->osd_leveldb_compression;
+      if (g_conf->osd_leveldb_paranoid)
+        omap_store->options.paranoid_checks = g_conf->osd_leveldb_paranoid;
+      if (g_conf->osd_leveldb_max_open_files)
+        omap_store->options.max_open_files = g_conf->osd_leveldb_max_open_files;
+      if (g_conf->osd_leveldb_log.length())
+        omap_store->options.log_file = g_conf->osd_leveldb_log;
+
+      stringstream err;
+      if (omap_store->create_and_open(err)) {
+        delete omap_store;
+        derr << "Error initializing leveldb: " << err.str() << dendl;
+        ret = -1;
+        goto close_current_fd;
+      }
+
+      dout(1) << "Initializing leveldb successful " << dendl;
+      if (g_conf->osd_compact_leveldb_on_mount) {
+        derr << "Compacting store..." << dendl;
+        omap_store->compact();
+        derr << "...finished compacting store" << dendl;
+      }
+    #endif
     DBObjectMap *dbomap = new DBObjectMap(omap_store);
     ret = dbomap->init(do_update);
     if (ret < 0) {
