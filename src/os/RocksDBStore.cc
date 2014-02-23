@@ -79,9 +79,11 @@ int RocksDBStore::do_open(ostream &out, bool create_if_missing)
     env->NewLogger(options.log_file, &ldoptions.info_log);
   }
 
+  //rocksdb::DB *_db = (rocksdb::DB *)db;
   rocksdb::DB *_db;
   rocksdb::Status status = rocksdb::DB::Open(ldoptions, path, &_db);
   db = _db;
+  _db = NULL;
   if (!status.ok()) {
     out << status.ToString() << std::endl;
     return -EINVAL;
@@ -107,10 +109,10 @@ RocksDBStore::~RocksDBStore()
   // Ensure db is destroyed before dependent db_cache and filterpolicy
 //  rocksdb::Cache *_db_cache = (rocksdb::Cache *)db_cache;
 //  delete _db_cache;
-  const rocksdb::FilterPolicy *_filterpolicy = (const rocksdb::FilterPolicy *)filterpolicy;
-  delete _filterpolicy;
   rocksdb::DB *_db = (rocksdb::DB *)db;
   delete _db;
+  const rocksdb::FilterPolicy *_filterpolicy = (const rocksdb::FilterPolicy *)filterpolicy;
+  delete _filterpolicy;
 }
 
 void RocksDBStore::close()

@@ -1348,14 +1348,23 @@ int FileStore::mount()
         RocksDBStore *omap_store = new RocksDBStore(g_ceph_context, omap_dir);
 
         omap_store->init();
-        omap_store->options.write_buffer_size = g_conf->osd_rocksdb_write_buffer_size;
-        omap_store->options.cache_size = g_conf->osd_rocksdb_cache_size;
-        omap_store->options.block_size = g_conf->osd_rocksdb_block_size;
-        omap_store->options.bloom_size = g_conf->osd_rocksdb_bloom_size;
-        omap_store->options.compression_type = g_conf->osd_rocksdb_compression;
-        omap_store->options.paranoid_checks = g_conf->osd_rocksdb_paranoid;
-        omap_store->options.max_open_files = g_conf->osd_rocksdb_max_open_files;
-        omap_store->options.log_file = g_conf->osd_rocksdb_log;
+        if (g_conf->osd_rocksdb_write_buffer_size)
+          omap_store->options.write_buffer_size = g_conf->osd_rocksdb_write_buffer_size;
+        if (g_conf->osd_rocksdb_cache_size)
+          omap_store->options.cache_size = g_conf->osd_rocksdb_cache_size;
+        if (g_conf->osd_rocksdb_block_size)
+          omap_store->options.block_size = g_conf->osd_rocksdb_block_size;
+        if (g_conf->osd_rocksdb_bloom_size)
+          omap_store->options.bloom_size = g_conf->osd_rocksdb_bloom_size;
+          omap_store->options.compression_type = g_conf->osd_rocksdb_compression;
+
+        if (g_conf->osd_rocksdb_paranoid)
+          omap_store->options.paranoid_checks = g_conf->osd_rocksdb_paranoid;
+        if (g_conf->osd_rocksdb_max_open_files)
+          omap_store->options.max_open_files = g_conf->osd_rocksdb_max_open_files;
+        if (g_conf->osd_rocksdb_log.length())
+          omap_store->options.log_file = g_conf->osd_rocksdb_log;
+
 
         stringstream err;
         if  (omap_store->create_and_open(err)) {
