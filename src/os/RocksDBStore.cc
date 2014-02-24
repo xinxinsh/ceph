@@ -19,10 +19,17 @@ using std::string;
 #include "common/perf_counters.h"
 #include "KeyValueDB.h"
 
-#define dout_subsys ceph_subsys_rocksdbstore
-#undef dout_prefix
-#define dout_prefix *_dout << "rocksdbstore " 
-
+ 
+/*
+using namespace rocksdb;
+class rocksdb::DB;
+class rocksdb::Iterator;
+class rocksdb::Slice;
+class rocksdb::WriteBatch;
+class rocksdb::Snapshot;
+class rocksdb::Cache;
+class rocksdb::FilterPolicy;
+*/
 int RocksDBStore::init()
 {
   options.write_buffer_size = g_conf->rocksdb_write_buffer_size;
@@ -45,9 +52,7 @@ int RocksDBStore::do_open(ostream &out, bool create_if_missing)
   if (options.max_open_files)
     ldoptions.max_open_files = options.max_open_files;
   if (options.cache_size) {
-    //ceph::shared_ptr<rocksdb::Cache> _db_cache = rocksdb::NewLRUCache(options.cache_size);
     ldoptions.block_cache = rocksdb::NewLRUCache(options.cache_size);
-   // db_cache = _db_cache;
   }
   if (options.block_size)
     ldoptions.block_size = options.block_size;
@@ -79,15 +84,13 @@ int RocksDBStore::do_open(ostream &out, bool create_if_missing)
     env->NewLogger(options.log_file, &ldoptions.info_log);
   }
 
-  //rocksdb::DB *_db = (rocksdb::DB *)db;
-  rocksdb::DB *_db;
-  rocksdb::Status status = rocksdb::DB::Open(ldoptions, path, &_db);
-  db = _db;
-  _db = NULL;
+  //rocksdb::DB *_db;
+  rocksdb::Status status = rocksdb::DB::Open(ldoptions, path, &db);
   if (!status.ok()) {
     out << status.ToString() << std::endl;
     return -EINVAL;
   }
+  //db.reset(_db);
 
   PerfCountersBuilder plb(g_ceph_context, "rocksdb", l_rocksdb_first, l_rocksdb_last);
   plb.add_u64_counter(l_rocksdb_gets, "rocksdb_get");
@@ -107,12 +110,8 @@ RocksDBStore::~RocksDBStore()
   delete logger;
 
   // Ensure db is destroyed before dependent db_cache and filterpolicy
-//  rocksdb::Cache *_db_cache = (rocksdb::Cache *)db_cache;
-//  delete _db_cache;
-  rocksdb::DB *_db = (rocksdb::DB *)db;
-  delete _db;
-  const rocksdb::FilterPolicy *_filterpolicy = (const rocksdb::FilterPolicy *)filterpolicy;
-  delete _filterpolicy;
+  delete db;
+  //db.reset();
 }
 
 void RocksDBStore::close()
@@ -136,9 +135,7 @@ int RocksDBStore::submit_transaction(KeyValueDB::Transaction t)
 {
   RocksDBTransactionImpl * _t =
     static_cast<RocksDBTransactionImpl *>(t.get());
-  rocksdb::DB *tdb = (rocksdb::DB *)db;
-  rocksdb::WriteBatch *wbat = (rocksdb::WriteBatch *)(_t->bat);
-  rocksdb::Status s = tdb->Write(rocksdb::WriteOptions(), wbat);
+  rocksdb::Status s = db->Write(rocksdb::WriteOptions(), _t->bat);
   logger->inc(l_rocksdb_txns);
   return s.ok() ? 0 : -1;
 }
@@ -149,24 +146,20 @@ int RocksDBStore::submit_transaction_sync(KeyValueDB::Transaction t)
     static_cast<RocksDBTransactionImpl *>(t.get());
   rocksdb::WriteOptions options;
   options.sync = true;
-  rocksdb::DB *tdb = (rocksdb::DB *)db;
-  rocksdb::WriteBatch *wbat = (rocksdb::WriteBatch *)(_t->bat);
-  rocksdb::Status s = tdb->Write(options, wbat);
+  rocksdb::Status s = db->Write(options, _t->bat);
   logger->inc(l_rocksdb_txns);
   return s.ok() ? 0 : -1;
 }
 
-RocksDBStore::RocksDBTransactionImpl::RocksDBTransactionImpl(RocksDBStore *db)
+RocksDBStore::RocksDBTransactionImpl::RocksDBTransactionImpl(RocksDBStore *_db)
 {
-  db = db;
+  db = _db;
   bat = new rocksdb::WriteBatch();
 }
 RocksDBStore::RocksDBTransactionImpl::~RocksDBTransactionImpl()
 {
-  rocksdb::WriteBatch *wbat = (rocksdb::WriteBatch *)bat;
-  delete wbat;
-  bat = NULL;
-//  delete db;
+  //db.reset();
+  delete bat;
 }
 void RocksDBStore::RocksDBTransactionImpl::set(
   const string &prefix,
@@ -178,38 +171,29 @@ void RocksDBStore::RocksDBTransactionImpl::set(
   bufferlist &bl = *(buffers.rbegin());
   string key = combine_strings(prefix, k);
   keys.push_back(key);
-  //rocksdb::WriteBatch *tbat = new rocksdb::WriteBatch();
-  rocksdb::WriteBatch *tbat = (rocksdb::WriteBatch *)bat;
-  tbat->Delete(rocksdb::Slice(*(keys.rbegin())));
-  tbat->Put(rocksdb::Slice(*(keys.rbegin())),
+  bat->Delete(rocksdb::Slice(*(keys.rbegin())));
+  bat->Put(rocksdb::Slice(*(keys.rbegin())),
 	  rocksdb::Slice(bl.c_str(), bl.length()));
-  //bat = tbat;
 }
 
 void RocksDBStore::RocksDBTransactionImpl::rmkey(const string &prefix,
 					         const string &k)
 {
-  //rocksdb::WriteBatch *tbat = new rocksdb::WriteBatch();
-  rocksdb::WriteBatch *tbat = (rocksdb::WriteBatch *)bat;
   string key = combine_strings(prefix, k);
   keys.push_back(key);
-  tbat->Delete(rocksdb::Slice(*(keys.rbegin())));
-//  bat = tbat;
+  bat->Delete(rocksdb::Slice(*(keys.rbegin())));
 }
 
 void RocksDBStore::RocksDBTransactionImpl::rmkeys_by_prefix(const string &prefix)
 {
-  //rocksdb::WriteBatch *tbat = new rocksdb::WriteBatch();
-  rocksdb::WriteBatch *tbat = (rocksdb::WriteBatch *)bat;
   KeyValueDB::Iterator it = db->get_iterator(prefix);
   for (it->seek_to_first();
        it->valid();
        it->next()) {
     string key = combine_strings(prefix, it->key());
     keys.push_back(key);
-    tbat->Delete(*(keys.rbegin()));
+    bat->Delete(*(keys.rbegin()));
   }
-//  bat = tbat;
 }
 
 int RocksDBStore::get(
@@ -239,18 +223,16 @@ string RocksDBStore::combine_strings(const string &prefix, const string &value)
   return out;
 }
 
-bufferlist RocksDBStore::to_bufferlist(void *in)
+bufferlist RocksDBStore::to_bufferlist(rocksdb::Slice in)
 {
   bufferlist bl;
-  rocksdb::Slice *sl = (rocksdb::Slice *)in;
-  bl.append(bufferptr(sl->data(), sl->size()));
+  bl.append(bufferptr(in.data(), in.size()));
   return bl;
 }
 
-int RocksDBStore::split_key(void *in, string *prefix, string *key)
+int RocksDBStore::split_key(rocksdb::Slice in, string *prefix, string *key)
 {
-  rocksdb::Slice *sl = (rocksdb::Slice *)in;
-  string in_prefix = sl->ToString();
+  string in_prefix = in.ToString();
   size_t prefix_len = in_prefix.find('\0');
   if (prefix_len >= in_prefix.size())
     return -EINVAL;
@@ -264,9 +246,8 @@ int RocksDBStore::split_key(void *in, string *prefix, string *key)
 
 void RocksDBStore::compact()
 {
-  rocksdb::DB *tdb = (rocksdb::DB *)db;
   logger->inc(l_rocksdb_compact);
-  tdb->CompactRange(NULL, NULL);
+  db->CompactRange(NULL, NULL);
 }
 
 
@@ -341,121 +322,99 @@ void RocksDBStore::compact_range(const string& start, const string& end)
 {
     rocksdb::Slice cstart(start);
     rocksdb::Slice cend(end);
-    rocksdb::DB *tdb = (rocksdb::DB *)db;
-    tdb->CompactRange(&cstart, &cend);
+    db->CompactRange(&cstart, &cend);
 }
 RocksDBStore::RocksDBWholeSpaceIteratorImpl::~RocksDBWholeSpaceIteratorImpl()
 {
-  rocksdb::Iterator *it = (rocksdb::Iterator *)dbiter;
-  delete it;
+  delete dbiter;
 }
 int RocksDBStore::RocksDBWholeSpaceIteratorImpl::seek_to_first() 
 {
-  rocksdb::Iterator *ldbiter = (rocksdb::Iterator *)dbiter;
-  ldbiter->SeekToFirst();
-  return ldbiter->status().ok() ? 0 : -1;
+  dbiter->SeekToFirst();
+  return dbiter->status().ok() ? 0 : -1;
 }
 int RocksDBStore::RocksDBWholeSpaceIteratorImpl::seek_to_first(const string &prefix) 
 {
-  rocksdb::Iterator *ldbiter = (rocksdb::Iterator *)dbiter;
   rocksdb::Slice slice_prefix(prefix);
-  ldbiter->Seek(slice_prefix);
-  return ldbiter->status().ok() ? 0 : -1;
+  dbiter->Seek(slice_prefix);
+  return dbiter->status().ok() ? 0 : -1;
 }
 int RocksDBStore::RocksDBWholeSpaceIteratorImpl::seek_to_last() 
 { 
-  rocksdb::Iterator *ldbiter = (rocksdb::Iterator *)dbiter;
-  ldbiter->SeekToLast();
-  return ldbiter->status().ok() ? 0 : -1;
+  dbiter->SeekToLast();
+  return dbiter->status().ok() ? 0 : -1;
 }
 int RocksDBStore::RocksDBWholeSpaceIteratorImpl::seek_to_last(const string &prefix) 
 {
-  rocksdb::Iterator *ldbiter = (rocksdb::Iterator *)dbiter;
   string limit = past_prefix(prefix);
   rocksdb::Slice slice_limit(limit);
-  ldbiter->Seek(slice_limit);
+  dbiter->Seek(slice_limit);
 
-  if (!ldbiter->Valid()) {
-    ldbiter->SeekToLast();
+  if (!dbiter->Valid()) {
+    dbiter->SeekToLast();
   } else {
-    ldbiter->Prev();
+    dbiter->Prev();
   }
-  return ldbiter->status().ok() ? 0 : -1;
+  return dbiter->status().ok() ? 0 : -1;
 }
 int RocksDBStore::RocksDBWholeSpaceIteratorImpl::upper_bound(const string &prefix, const string &after) 
 {
-  rocksdb::Iterator *ldbiter = (rocksdb::Iterator *)dbiter;
   lower_bound(prefix, after);
   if (valid()) {
   pair<string,string> key = raw_key();
     if (key.first == prefix && key.second == after)
       next();
   }
-  return ldbiter->status().ok() ? 0 : -1;
+  return dbiter->status().ok() ? 0 : -1;
 }
 int RocksDBStore::RocksDBWholeSpaceIteratorImpl::lower_bound(const string &prefix, const string &to) 
 {
-  rocksdb::Iterator *ldbiter = (rocksdb::Iterator *)dbiter;
   string bound = combine_strings(prefix, to);
   rocksdb::Slice slice_bound(bound);
-  ldbiter->Seek(slice_bound);
-  return ldbiter->status().ok() ? 0 : -1;
+  dbiter->Seek(slice_bound);
+  return dbiter->status().ok() ? 0 : -1;
 } 
 bool RocksDBStore::RocksDBWholeSpaceIteratorImpl::valid()  
 { 
-  rocksdb::Iterator *ldbiter = (rocksdb::Iterator *)dbiter;
-  return ldbiter->Valid();
+  return dbiter->Valid();
 }
 int RocksDBStore::RocksDBWholeSpaceIteratorImpl::next() 
 { 
-  rocksdb::Iterator *ldbiter = (rocksdb::Iterator *)dbiter;
   if (valid())
-  ldbiter->Next();
-  return ldbiter->status().ok() ? 0 : -1;
+  dbiter->Next();
+  return dbiter->status().ok() ? 0 : -1;
 }
 int RocksDBStore::RocksDBWholeSpaceIteratorImpl::prev() 
 { 
-  rocksdb::Iterator *ldbiter = (rocksdb::Iterator *)dbiter;
   if (valid())
-    ldbiter->Prev();
-    return ldbiter->status().ok() ? 0 : -1;
+    dbiter->Prev();
+    return dbiter->status().ok() ? 0 : -1;
 }
 string RocksDBStore::RocksDBWholeSpaceIteratorImpl::key() 
 { 
-  rocksdb::Iterator *ldbiter = (rocksdb::Iterator *)dbiter;
   string out_key;
-  rocksdb::Slice sl = ldbiter->key();
-  rocksdb::Slice *psl = &sl;
-  split_key(psl, 0, &out_key);
+  split_key(dbiter->key(), 0, &out_key);
   return out_key;
 }
 pair<string,string> RocksDBStore::RocksDBWholeSpaceIteratorImpl::raw_key() 
 {
-  rocksdb::Iterator *ldbiter = (rocksdb::Iterator *)dbiter;
   string prefix, key;
-  rocksdb::Slice sl = ldbiter->key();
-  rocksdb::Slice *psl = &sl;
-  split_key(psl, &prefix, &key);
+  split_key(dbiter->key(), &prefix, &key);
   return make_pair(prefix, key);
 } 
 bufferlist RocksDBStore::RocksDBWholeSpaceIteratorImpl::value() 
 { 
-  rocksdb::Iterator *ldbiter = (rocksdb::Iterator *)dbiter;
-  rocksdb::Slice sl = ldbiter->value();
-  rocksdb::Slice *psl = &sl;
-  return to_bufferlist(psl);
+  return to_bufferlist(dbiter->value());
 } 
 int RocksDBStore::RocksDBWholeSpaceIteratorImpl::status() 
 {
-  rocksdb::Iterator *ldbiter = (rocksdb::Iterator *)dbiter;
-  return ldbiter->status().ok() ? 0 : -1;
+  return dbiter->status().ok() ? 0 : -1;
 } 
 
-bool RocksDBStore::in_prefix(const string &prefix, void *key) 
+bool RocksDBStore::in_prefix(const string &prefix, rocksdb::Slice key) 
 {
-  rocksdb::Slice *k = (rocksdb::Slice *)key;
-  return (k->compare(rocksdb::Slice(past_prefix(prefix))) < 0) &&
-    (k->compare(rocksdb::Slice(prefix)) > 0);
+  return (key.compare(rocksdb::Slice(past_prefix(prefix))) < 0) &&
+    (key.compare(rocksdb::Slice(prefix)) > 0);
 }
 string RocksDBStore::past_prefix(const string &prefix) 
 {
@@ -467,10 +426,9 @@ string RocksDBStore::past_prefix(const string &prefix)
 
 RocksDBStore::WholeSpaceIterator RocksDBStore::_get_iterator() 
 {
-  rocksdb::DB *tdb = (rocksdb::DB *)db;
   return std::tr1::shared_ptr<KeyValueDB::WholeSpaceIteratorImpl>(
     new RocksDBWholeSpaceIteratorImpl(
-      tdb->NewIterator(rocksdb::ReadOptions())
+      db->NewIterator(rocksdb::ReadOptions())
     )
   );
 }
@@ -480,19 +438,16 @@ RocksDBStore::WholeSpaceIterator RocksDBStore::_get_snapshot_iterator()
   const rocksdb::Snapshot *snapshot;
   rocksdb::ReadOptions options;
 
-  rocksdb::DB *tdb = (rocksdb::DB *)db;
-  snapshot = tdb->GetSnapshot();
+  snapshot = db->GetSnapshot();
   options.snapshot = snapshot;
 
   return std::tr1::shared_ptr<KeyValueDB::WholeSpaceIteratorImpl>(
-    new RocksDBSnapshotIteratorImpl(tdb, snapshot,
-      tdb->NewIterator(options))
+    new RocksDBSnapshotIteratorImpl(db, snapshot,
+      db->NewIterator(options))
   );
 }
 
 RocksDBStore::RocksDBSnapshotIteratorImpl::~RocksDBSnapshotIteratorImpl()
 {
-  rocksdb::Snapshot *snap = (rocksdb::Snapshot *)snapshot;
-  rocksdb::DB *tdb = (rocksdb::DB *)db;
-  tdb->ReleaseSnapshot(snap);
+  db->ReleaseSnapshot(snapshot);
 }

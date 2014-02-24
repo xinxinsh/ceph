@@ -33,6 +33,16 @@ enum {
   l_rocksdb_last,
 };
 
+namespace rocksdb{
+  class DB;
+  class Cache;
+  class FilterPolicy;
+  class Snapshot;
+  class Slice;
+  class WriteBatch;
+  class Iterator;
+}
+
 /**
  * Uses RocksDB to implement the KeyValueDB interface
  */
@@ -40,8 +50,8 @@ class RocksDBStore : public KeyValueDB {
   CephContext *cct;
   PerfCounters *logger;
   string path;
-  const void * filterpolicy;
-  void * db;
+  const rocksdb::FilterPolicy *filterpolicy;
+  rocksdb::DB *db;
 
   int do_open(ostream &out, bool create_if_missing);
 
@@ -150,14 +160,13 @@ public:
 
   class RocksDBTransactionImpl : public KeyValueDB::TransactionImpl {
   public:
-    //rocksdb::WriteBatch bat;
-    void * bat;
+    rocksdb::WriteBatch *bat;
     list<bufferlist> buffers;
     list<string> keys;
     RocksDBStore *db;
 
     //RocksDBTransactionImpl(RocksDBStore *db) : db(db) {}
-    RocksDBTransactionImpl(RocksDBStore *db);
+    RocksDBTransactionImpl(RocksDBStore *_db);
     ~RocksDBTransactionImpl();
     void set(
       const string &prefix,
@@ -187,10 +196,9 @@ public:
   class RocksDBWholeSpaceIteratorImpl :
     public KeyValueDB::WholeSpaceIteratorImpl {
   protected:
-    //boost::scoped_ptr<void *> dbiter;
-    void *dbiter;
+    rocksdb::Iterator *dbiter;
   public:
-    RocksDBWholeSpaceIteratorImpl(void *iter) :
+    RocksDBWholeSpaceIteratorImpl(rocksdb::Iterator *iter) :
       dbiter(iter) { }
     //virtual ~RocksDBWholeSpaceIteratorImpl() { }
     ~RocksDBWholeSpaceIteratorImpl();
@@ -211,11 +219,11 @@ public:
   };
 
   class RocksDBSnapshotIteratorImpl : public RocksDBWholeSpaceIteratorImpl {
-    void *db;
-    const void *snapshot;
+    rocksdb::DB *db;
+    const rocksdb::Snapshot *snapshot;
   public:
-    RocksDBSnapshotIteratorImpl(void *db, const void *s,
-				void *iter) :
+    RocksDBSnapshotIteratorImpl(rocksdb::DB *db, const rocksdb::Snapshot *s,
+				rocksdb::Iterator *iter) :
       RocksDBWholeSpaceIteratorImpl(iter), db(db), snapshot(s) { }
 
     ~RocksDBSnapshotIteratorImpl();
@@ -223,9 +231,9 @@ public:
 
   /// Utility
   static string combine_strings(const string &prefix, const string &value);
-  static int split_key(void *in, string *prefix, string *key);
-  static bufferlist to_bufferlist(void *in);
-  static bool in_prefix(const string &prefix, void *key);
+  static int split_key(rocksdb::Slice in, string *prefix, string *key);
+  static bufferlist to_bufferlist(rocksdb::Slice in);
+  static bool in_prefix(const string &prefix, rocksdb::Slice key);
   static string past_prefix(const string &prefix);
 
   virtual uint64_t get_estimated_size(map<string,uint64_t> &extra) {
