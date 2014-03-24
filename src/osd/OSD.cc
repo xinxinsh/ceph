@@ -7527,6 +7527,7 @@ void OSD::enqueue_op(PG *pg, OpRequestRef op)
 	   << " cost " << op->get_req()->get_cost()
 	   << " latency " << latency
 	   << " " << *(op->get_req()) << dendl;
+  op->get_req()->enq_osd_queue_t = ceph_clock_now(g_ceph_context);
   pg->queue_op(op);
 }
 

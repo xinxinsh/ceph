@@ -561,7 +561,6 @@ void ReplicatedBackend::submit_transaction(
       new C_OSD_OnOpCommit(this, &op)));
       
   
-  (static_cast<MOSDOp *>(orig_op->get_req()))->enq_journal_queue_t = ceph_clock_now(g_ceph_context);
   parent->queue_transaction(op_t, op.op);
   delete t;
 }
@@ -574,6 +573,33 @@ void ReplicatedBackend::op_applied(
     op->op->mark_event("op_applied");
 
   op->waiting_for_applied.erase(get_parent()->whoami_shard());
+  op->op->get_req()->send_apply_ack = ceph_clock_now(g_ceph_context);
+  if(g_ceph_context->_conf->trace_enabled)
+  {
+    Message *m = op->op->get_req();
+    dout(0) << "write trace point MSG_OSD_OP " << op->op->get_reqid() << \
+    " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
+    " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
+    " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
+    " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
+    " # local_journal_write = " << m->finish_journal_op_t - m->deq_journal_queue_t << \
+    " # send_commit_ack = " << m->send_commit_ack - m->recv_op_t << \
+    " # osd_filestore_queue = " << m->deq_filestore_queue_t - m->enq_filestore_queue_t << \
+    " # local_filestore_write = " << m->finish_filestore_op_t - m->deq_filestore_queue_t << \
+    " # send_apply_ack = " << m->send_apply_ack - m->recv_op_t << dendl;
+    dout(0) << "write trace timestamp  MSG_OSD_OP " << op->op->get_reqid() << \
+    " # recv_op_t = " << m->recv_op_t << \
+    " # enq_osd_queue_t = " << m->enq_osd_queue_t << \
+    " # deq_osd_queue_t = " << m->deq_osd_queue_t << \
+    " # enq_journal_queue_t = " << m->enq_journal_queue_t << \
+    " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
+    " # finish_journal_op_t = " << m->finish_journal_op_t << \
+    " # send_commit_ack = " << m->send_commit_ack << \
+    " # enq_filestore_queue_t = " << m->enq_filestore_queue_t << \
+    " # deq_filestore_queue_t = " << m->deq_filestore_queue_t << \
+    " # finish_filestore_op_t = " << m->finish_filestore_op_t << \
+    " # send_apply_ack = " << m->send_apply_ack << dendl;
+  }
   parent->op_applied(op->v);
 
   if (op->waiting_for_applied.empty()) {
@@ -596,6 +622,32 @@ void ReplicatedBackend::op_commit(
   op->waiting_for_commit.erase(get_parent()->whoami_shard());
   op->ack_time_t.insert(make_pair(get_parent()->whoami_shard(),ceph_clock_now(g_ceph_context)));
 //  dout(0) << op->tid << " get commited from " << get_parent()->whoami_shard().osd << " at " << ceph_clock_now(g_ceph_context)<< dendl;
+  op->op->get_req()->send_commit_ack = ceph_clock_now(g_ceph_context);
+  if(g_ceph_context->_conf->trace_enabled)
+  {
+    Message *m = op->op->get_req();
+    dout(0) << "write trace point MSG_OSD_OP " << op->op->get_reqid() << \
+    " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
+    " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
+    " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
+    " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
+    " # local_journal_write = " << m->finish_journal_op_t - m->deq_journal_queue_t << \
+    " # send_commit_ack = " << m->send_commit_ack - m->recv_op_t << \
+    " # osd_filestore_queue = " << m->deq_filestore_queue_t - m->enq_filestore_queue_t << \
+    " # local_filestore_write = " << m->finish_filestore_op_t - m->deq_filestore_queue_t << dendl;
+    dout(0) << "write trace timestamp  MSG_OSD_OP " << op->op->get_reqid() << \
+    " # recv_op_t = " << m->recv_op_t << \
+    " # enq_osd_queue_t = " << m->enq_osd_queue_t << \
+    " # deq_osd_queue_t = " << m->deq_osd_queue_t << \
+    " # enq_journal_queue_t = " << m->enq_journal_queue_t << \
+    " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
+    " # finish_journal_op_t = " << m->finish_journal_op_t << \
+    " # send_commit_ack = " << m->send_commit_ack << \
+    " # enq_filestore_queue_t = " << m->enq_filestore_queue_t << \
+    " # deq_filestore_queue_t = " << m->deq_filestore_queue_t << \
+    " # finish_filestore_op_t = " << m->finish_filestore_op_t << dendl;
+  }
+
 
   if (op->waiting_for_commit.empty()) {
     op->on_commit->complete(0);
@@ -656,6 +708,39 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
     }
     ip_op.ack_time_t.insert(make_pair(from,ceph_clock_now(g_ceph_context)));
     ip_op.waiting_for_applied.erase(from);
+    op->get_req()->end = ceph_clock_now(g_ceph_context);
+
+    if(g_ceph_context->_conf->trace_enabled)
+    {
+      Message *m = op->get_req();
+      dout(0) << "write trace point MSG_OSD_SUBOP " << ip_op.op->get_reqid() << \
+      " # network_transmit = " << m->recv_op_t - m->start << \
+      " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
+      " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
+      " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
+      " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
+      " # local_journal_write = " << m->finish_journal_op_t - m->deq_journal_queue_t << \
+      " # send_commit_ack = " << m->send_commit_ack - m->recv_op_t << \
+      " # osd_filestore_queue = " << m->deq_filestore_queue_t - m->enq_filestore_queue_t << \
+      " # local_filestore_write = " << m->finish_filestore_op_t - m->deq_filestore_queue_t << \
+      " # send_apply_ack = " << m->send_apply_ack - m->recv_op_t << \
+      " # time_to_live = " << m->end - m->start << dendl;
+      dout(0) << "write trace timestamp  MSG_OSD_SUBOP " << ip_op.op->get_reqid() << \
+      " # start_op_t = " << m->start << \
+      " # recv_op_t = " << m->recv_op_t << \
+      " # enq_osd_queue_t = " << m->enq_osd_queue_t << \
+      " # deq_osd_queue_t = " << m->deq_osd_queue_t << \
+      " # enq_journal_queue_t = " << m->enq_journal_queue_t << \
+      " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
+      " # finish_journal_op_t = " << m->finish_journal_op_t << \
+      " # send_commit_ack = " << m->send_commit_ack << \
+      " # enq_filestore_queue_t = " << m->enq_filestore_queue_t << \
+      " # deq_filestore_queue_t = " << m->deq_filestore_queue_t << \
+      " # finish_filestore_op_t = " << m->finish_filestore_op_t << \
+      " # send_apply_ack = " << m->send_apply_ack << \
+      " # end_op_t = " << m->end << dendl;
+    }
+
 
     parent->update_peer_last_complete_ondisk(
       from,
@@ -675,6 +760,7 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
         for(map<pg_shard_t,utime_t>::iterator it=ip_op.ack_time_t.begin();it!=ip_op.ack_time_t.end();it++)
           dout(0) << ip_op.tid << " get committed from osd " << (it->first).osd << " # "<< it->second << dendl;
       }
+      
     }
     if (ip_op.done()) {
       assert(!ip_op.on_commit && !ip_op.on_applied);

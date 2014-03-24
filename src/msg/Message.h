@@ -344,17 +344,39 @@ protected:
 
 public:
 
+  utime_t start;
   utime_t recv_op_t;
   utime_t enq_osd_queue_t;
   utime_t deq_osd_queue_t;
   utime_t enq_journal_queue_t;
   utime_t deq_journal_queue_t;
   utime_t finish_journal_op_t;
+  utime_t send_commit_ack;
   utime_t get_all_commit;
   utime_t enq_filestore_queue_t;
   utime_t deq_filestore_queue_t;
   utime_t finish_filestore_op_t;
+  utime_t send_apply_ack;
   utime_t get_all_ack;
+  utime_t end;
+  void copy_trace_timestamp(Message *m)
+  {
+    start = m->start;
+    recv_op_t = m->recv_op_t;
+    enq_osd_queue_t = m->enq_osd_queue_t;
+    deq_osd_queue_t = m->deq_osd_queue_t;
+    enq_journal_queue_t = m->enq_journal_queue_t;
+    deq_journal_queue_t = m->deq_journal_queue_t;
+    finish_journal_op_t = m->finish_journal_op_t;
+    send_commit_ack = m->send_commit_ack;
+    get_all_commit = m->get_all_commit;
+    enq_filestore_queue_t = m->deq_filestore_queue_t;
+    deq_filestore_queue_t = m->deq_filestore_queue_t;
+    finish_filestore_op_t = m->finish_filestore_op_t;
+    send_apply_ack = m->send_apply_ack;
+    get_all_ack = m->get_all_ack;
+    end = m->end;
+  }
 
   Message()
     : connection(NULL),

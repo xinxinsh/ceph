@@ -1777,7 +1777,10 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
     posr->p = osr;
     dout(5) << "queue_transactions new " << *osr << "/" << osr->parent << dendl;
   }
-
+  if(osd_op.get())
+  {
+    (osd_op->get_req())->enq_journal_queue_t = ceph_clock_now(g_ceph_context);
+  }
   if (journal && journal->is_writeable() && !m_filestore_journal_trailing) {
     Op *o = build_op(tls, onreadable, onreadable_sync, osd_op);
     op_queue_reserve_throttle(o, handle);

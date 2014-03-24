@@ -1709,8 +1709,6 @@ void PG::queue_op(OpRequestRef op)
     waiting_for_map.push_back(op);
     return;
   }
-  MOSDOp *m = static_cast<MOSDOp *>(op->get_req());
-  m->enq_osd_queue_t = ceph_clock_now(g_ceph_context);
   osd->op_wq.queue(make_pair(PGRef(this), op));
 }
 

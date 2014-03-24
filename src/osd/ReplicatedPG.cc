@@ -5251,7 +5251,7 @@ void ReplicatedPG::complete_read_ctx(int result, OpContext *ctx)
     utime_t recv = ctx->op->get_req()->get_recv_stamp();
     utime_t enq_osd = m->enq_osd_queue_t;
     utime_t deq_osd = m->deq_osd_queue_t;
-    dout(0) << "read trace point " << m->get_reqid() << \
+    dout(0) << "read trace point all " << m->get_reqid() << \
     " # osd_queue_pre = " << enq_osd - recv << \
     " # osd_queue = " << deq_osd - enq_osd << \
     " # get_all_ack = " << now - recv << dendl;
@@ -6431,6 +6431,7 @@ void ReplicatedPG::eval_repop(RepGather *repop)
 	}
 	reply->add_flags(CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
 	dout(10) << " sending commit on " << *repop << " " << reply << dendl;
+        m->get_all_commit = ceph_clock_now(g_ceph_context);
 	osd->send_message_osd_client(reply, m->get_connection());
 	repop->sent_disk = true;
 	repop->ctx->op->mark_commit_sent();
@@ -6499,7 +6500,7 @@ void ReplicatedPG::eval_repop(RepGather *repop)
 
     if(g_ceph_context->_conf->trace_enabled && repop->ctx->op->may_write())
     {
-    dout(0) << "write trace point " << m->get_reqid() << \
+    dout(0) << "write trace point all " << m->get_reqid() << \
     " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
     " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
     " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
@@ -6509,7 +6510,7 @@ void ReplicatedPG::eval_repop(RepGather *repop)
     " # osd_filestore_queue = " << m->deq_filestore_queue_t - m->enq_filestore_queue_t << \
     " # local_filestore_write = " << m->finish_filestore_op_t - m->deq_filestore_queue_t << \
     " # get_all_ack = " << m->get_all_ack - m->recv_op_t << dendl;
-    dout(0) << "write trace timestamp  " << m->get_reqid() << \
+    dout(0) << "write trace timestamp all " << m->get_reqid() << \
     " # recv_op_t = " << m->recv_op_t << \
     " # enq_osd_queue_t = " << m->enq_osd_queue_t << \
     " # deq_osd_queue_t = " << m->deq_osd_queue_t << \
@@ -6670,6 +6671,8 @@ void ReplicatedBackend::issue_op(
     wr->new_temp_oid = new_temp_oid;
     wr->discard_temp_oid = discard_temp_oid;
 
+    wr->start = ceph_clock_now(g_ceph_context);
+    dout(0) << "SUBOP generate TIMESTAMP " << wr->start << dendl;
     get_parent()->send_message_osd_cluster(
       peer.osd, wr, get_osdmap()->get_epoch());
   }
@@ -7340,6 +7343,7 @@ void ReplicatedBackend::sub_op_modify(OpRequestRef op)
 
   int ackerosd = m->get_source().num();
   
+  dout(0) << "OPREQUEST start " << op->get_req()->start << dendl;
   op->mark_started();
 
   RepModifyRef rm(new RepModify);
@@ -7444,6 +7448,10 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
       m, parent->whoami_shard(),
       0, get_osdmap()->get_epoch(), CEPH_OSD_FLAG_ACK);
     ack->set_priority(CEPH_MSG_PRIO_HIGH); // this better match commit priority!
+    rm->op->get_req()->send_apply_ack = ceph_clock_now(g_ceph_context);
+    dout(0) << "SUBOP send apply ack " << rm->op->get_req()->send_apply_ack << dendl;
+    ack->copy_trace_timestamp(rm->op->get_req());
+    dout(0) << "SUBOP send apply ack timestamp " << ack->send_apply_ack << dendl;
     get_parent()->send_message_osd_cluster(
       rm->ackerosd, ack, get_osdmap()->get_epoch());
   }
@@ -7469,6 +7477,12 @@ void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
     0, get_osdmap()->get_epoch(), CEPH_OSD_FLAG_ONDISK);
   commit->set_last_complete_ondisk(rm->last_complete);
   commit->set_priority(CEPH_MSG_PRIO_HIGH); // this better match ack priority!
+  rm->op->get_req()->send_commit_ack = ceph_clock_now(g_ceph_context);
+  dout(0) << "SUBOP send commit ack " << rm->op->get_req()->send_commit_ack << dendl;
+  dout(0) << "SUBOP start " << rm->op->get_req()->start << dendl;
+  commit->copy_trace_timestamp(rm->op->get_req());
+  dout(0) << "SUBOP send commit ack timestamp " << commit->send_commit_ack << dendl;
+  dout(0) << "SUBOP commit start " << commit->start << dendl;
   get_parent()->send_message_osd_cluster(
     rm->ackerosd, commit, get_osdmap()->get_epoch());
   
