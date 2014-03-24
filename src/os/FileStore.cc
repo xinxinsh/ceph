@@ -76,6 +76,7 @@ using ceph::crypto::SHA1;
 #include "include/assert.h"
 
 #include "common/config.h"
+#include "messages/MOSDOp.h"
 
 #define dout_subsys ceph_subsys_filestore
 #undef dout_prefix
@@ -1693,6 +1694,10 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
 
   osr->apply_lock.Lock();
   Op *o = osr->peek_queue();
+  if((o->osd_op).get())
+  {
+    o->osd_op->get_req()->deq_filestore_queue_t = ceph_clock_now(g_ceph_context);
+  }
   apply_manager.op_apply_start(o->op);
   dout(5) << "_do_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << " start" << dendl;
   int r = _do_transactions(o->tls, o->op, &handle);
@@ -1713,6 +1718,10 @@ void FileStore::_finish_op(OpSequencer *osr)
 
   utime_t lat = ceph_clock_now(g_ceph_context);
   lat -= o->start;
+  if((o->osd_op).get())
+  {
+    o->osd_op->get_req()->finish_filestore_op_t = ceph_clock_now(g_ceph_context);
+  }
   logger->tinc(l_os_apply_lat, lat);
 
   if (o->onreadable_sync) {
@@ -1838,6 +1847,11 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
 
   osr->dequeue_journal();
 
+  if((o->osd_op).get())
+  {
+    o->osd_op->get_req()->finish_journal_op_t = ceph_clock_now(g_ceph_context);
+    o->osd_op->get_req()->enq_filestore_queue_t = ceph_clock_now(g_ceph_context);
+  }
   // do ondisk completions async, to prevent any onreadable_sync completions
   // getting blocked behind an ondisk completion.
   if (ondisk) {

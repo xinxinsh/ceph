@@ -4976,6 +4976,7 @@ void OSD::_dispatch(Message *m)
 
   default:
     {
+      m->recv_op_t = m->get_recv_stamp();
       OpRequestRef op = op_tracker.create_request<OpRequest>(m);
       op->mark_event("waiting_for_osdmap");
       // no map?  starting up?
@@ -7572,6 +7573,8 @@ PGRef OSD::OpWQ::_dequeue()
     pair<PGRef, OpRequestRef> ret = pqueue.dequeue();
     pg = ret.first;
     pg_for_processing[&*pg].push_back(ret.second);
+    MOSDOp *m = static_cast<MOSDOp *>(ret.second->get_req());
+    m->deq_osd_queue_t = ceph_clock_now(g_ceph_context);
   }
   osd->logger->set(l_osd_opq, pqueue.length());
   return pg;

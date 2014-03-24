@@ -343,6 +343,19 @@ protected:
   friend class Messenger;
 
 public:
+
+  utime_t recv_op_t;
+  utime_t enq_osd_queue_t;
+  utime_t deq_osd_queue_t;
+  utime_t enq_journal_queue_t;
+  utime_t deq_journal_queue_t;
+  utime_t finish_journal_op_t;
+  utime_t get_all_commit;
+  utime_t enq_filestore_queue_t;
+  utime_t deq_filestore_queue_t;
+  utime_t finish_filestore_op_t;
+  utime_t get_all_ack;
+
   Message()
     : connection(NULL),
       byte_throttler(NULL),

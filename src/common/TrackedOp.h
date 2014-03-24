@@ -169,6 +169,7 @@ public:
       0.0;
   }
   Message *get_req() const { return request; }
+  //virtual Message *get_req() { return request; }
 
   void mark_event(const string &event);
   virtual const char *state_string() const {

@@ -33,6 +33,8 @@
 
 #include "common/blkdev.h"
 #include "common/linux_version.h"
+#include "messages/MOSDOp.h"
+#include "osd/OpRequest.h"
 
 #define dout_subsys ceph_subsys_journal
 #undef dout_prefix
@@ -1465,6 +1467,12 @@ void FileJournal::pop_write()
 {
   assert(write_lock.is_locked());
   Mutex::Locker locker(writeq_lock);
+  write_item& item = writeq.front();
+  if((item.tracked_op).get())
+  {
+    //MOSDOp *m = static_cast<MOSDOp *>((item.tracked_op)->get_req());
+    ((item.tracked_op)->get_req())->deq_journal_queue_t = ceph_clock_now(g_ceph_context);
+  }
   writeq.pop_front();
 }
 

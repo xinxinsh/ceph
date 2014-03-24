@@ -1766,8 +1766,10 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
   // read or error?
   if (ctx->op_t->empty() || result < 0) {
     if (ctx->pending_async_reads.empty()) {
+      dout(0) << "sync read " << dendl;
       complete_read_ctx(result, ctx);
     } else {
+      dout(0) << "async read " << dendl;
       in_progress_async_reads.push_back(make_pair(op, ctx));
       ctx->start_async_reads(this);
     }
@@ -5243,7 +5245,20 @@ void ReplicatedPG::complete_read_ctx(int result, OpContext *ctx)
 
   reply->add_flags(CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
   osd->send_message_osd_client(reply, m->get_connection());
+  if(g_ceph_context->_conf->trace_enabled && ctx->op->may_read())
+  {
+    utime_t now = ceph_clock_now(g_ceph_context);
+    utime_t recv = ctx->op->get_req()->get_recv_stamp();
+    utime_t enq_osd = m->enq_osd_queue_t;
+    utime_t deq_osd = m->deq_osd_queue_t;
+    dout(0) << "read trace point " << m->get_reqid() << \
+    " # osd_queue_pre = " << enq_osd - recv << \
+    " # osd_queue = " << deq_osd - enq_osd << \
+    " # get_all_ack = " << now - recv << dendl;
+ }
+
   close_op_ctx(ctx, 0);
+  
 }
 
 // ========================================================================
@@ -6421,6 +6436,7 @@ void ReplicatedPG::eval_repop(RepGather *repop)
 	repop->ctx->op->mark_commit_sent();
       }
     }
+    m->get_all_commit = ceph_clock_now(g_ceph_context);
 
     // applied?
     if (repop->all_applied) {
@@ -6457,6 +6473,7 @@ void ReplicatedPG::eval_repop(RepGather *repop)
 	osd->send_message_osd_client(reply, m->get_connection());
 	repop->sent_ack = true;
       }
+      m->get_all_ack = ceph_clock_now(g_ceph_context);
 
       // note the write is now readable (for rlatency calc).  note
       // that this will only be defined if the write is readable
@@ -6480,6 +6497,31 @@ void ReplicatedPG::eval_repop(RepGather *repop)
       queue_snap_trim();
     }
 
+    if(g_ceph_context->_conf->trace_enabled && repop->ctx->op->may_write())
+    {
+    dout(0) << "write trace point " << m->get_reqid() << \
+    " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
+    " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
+    " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
+    " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
+    " # local_journal_write = " << m->finish_journal_op_t - m->deq_journal_queue_t << \
+    " # get_all_commit = " << m->get_all_commit - m->recv_op_t << \
+    " # osd_filestore_queue = " << m->deq_filestore_queue_t - m->enq_filestore_queue_t << \
+    " # local_filestore_write = " << m->finish_filestore_op_t - m->deq_filestore_queue_t << \
+    " # get_all_ack = " << m->get_all_ack - m->recv_op_t << dendl;
+    dout(0) << "write trace timestamp  " << m->get_reqid() << \
+    " # recv_op_t = " << m->recv_op_t << \
+    " # enq_osd_queue_t = " << m->enq_osd_queue_t << \
+    " # deq_osd_queue_t = " << m->deq_osd_queue_t << \
+    " # enq_journal_queue_t = " << m->enq_journal_queue_t << \
+    " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
+    " # finish_journal_op_t = " << m->finish_journal_op_t << \
+    " # get_all_commit = " << m->get_all_commit << \
+    " # enq_filestore_queue_t = " << m->enq_filestore_queue_t << \
+    " # deq_filestore_queue_t = " << m->deq_filestore_queue_t << \
+    " # finish_filestore_op_t = " << m->finish_filestore_op_t << \
+    " # get_all_ack = " << m->get_all_ack << dendl;
+    }
     dout(10) << " removing " << *repop << dendl;
     assert(!repop_queue.empty());
     dout(20) << "   q front is " << *repop_queue.front() << dendl; 

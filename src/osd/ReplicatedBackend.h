@@ -318,6 +318,7 @@ private:
     ceph_tid_t tid;
     set<pg_shard_t> waiting_for_commit;
     set<pg_shard_t> waiting_for_applied;
+    map<pg_shard_t,utime_t> ack_time_t;
     Context *on_commit;
     Context *on_applied;
     OpRequestRef op;

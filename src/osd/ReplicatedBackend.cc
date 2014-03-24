@@ -560,6 +560,8 @@ void ReplicatedBackend::submit_transaction(
     parent->bless_context(
       new C_OSD_OnOpCommit(this, &op)));
       
+  
+  (static_cast<MOSDOp *>(orig_op->get_req()))->enq_journal_queue_t = ceph_clock_now(g_ceph_context);
   parent->queue_transaction(op_t, op.op);
   delete t;
 }
@@ -592,10 +594,17 @@ void ReplicatedBackend::op_commit(
     op->op->mark_event("op_commit");
 
   op->waiting_for_commit.erase(get_parent()->whoami_shard());
+  op->ack_time_t.insert(make_pair(get_parent()->whoami_shard(),ceph_clock_now(g_ceph_context)));
+//  dout(0) << op->tid << " get commited from " << get_parent()->whoami_shard().osd << " at " << ceph_clock_now(g_ceph_context)<< dendl;
 
   if (op->waiting_for_commit.empty()) {
     op->on_commit->complete(0);
     op->on_commit = 0;
+    if(g_ceph_context->_conf->trace_enabled)
+    {
+      for(map<pg_shard_t,utime_t>::iterator it=op->ack_time_t.begin();it!=op->ack_time_t.end();it++)
+        dout(0) << op->tid << " get committed from osd " << (it->first).osd << " # "<< it->second << dendl;
+    }
   }
   if (op->done()) {
     assert(!op->on_commit && !op->on_applied);
@@ -645,6 +654,7 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
       if (ip_op.op)
 	ip_op.op->mark_event("sub_op_applied_rec");
     }
+    ip_op.ack_time_t.insert(make_pair(from,ceph_clock_now(g_ceph_context)));
     ip_op.waiting_for_applied.erase(from);
 
     parent->update_peer_last_complete_ondisk(
@@ -660,6 +670,11 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
         ip_op.on_commit) {
       ip_op.on_commit->complete(0);
       ip_op.on_commit= 0;
+      if(g_ceph_context->_conf->trace_enabled)
+      {
+        for(map<pg_shard_t,utime_t>::iterator it=ip_op.ack_time_t.begin();it!=ip_op.ack_time_t.end();it++)
+          dout(0) << ip_op.tid << " get committed from osd " << (it->first).osd << " # "<< it->second << dendl;
+      }
     }
     if (ip_op.done()) {
       assert(!ip_op.on_commit && !ip_op.on_applied);
