@@ -378,6 +378,12 @@ protected:
       msg_throttler->put();
   }
 public:
+
+  utime_t gen_t;
+  utime_t dest_t;
+  void set_gen_t(utime_t mt){gen_t = mt;}
+  void set_dest_t(utime_t mt){dest_t = mt;}
+
   const ConnectionRef& get_connection() { return connection; }
   void set_connection(const ConnectionRef& c) {
     connection = c;

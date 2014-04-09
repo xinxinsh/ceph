@@ -594,6 +594,73 @@ void ReplicatedBackend::op_commit(
     op->op->mark_event("op_commit");
 
   op->waiting_for_commit.erase(get_parent()->whoami_shard());
+  /*
+   if((op->op).get())
+  {
+    switch (op->op->get_req()->get_type()) {
+
+    dout(0) << "Finish Journal Request Type = " << op->op->get_req()->get_type_name() << dendl;
+      // primary op
+    case CEPH_MSG_OSD_OP:
+    {
+      MOSDOp * m = static_cast<MOSDOp *>(op->op->get_req());
+      //m->set_finish_journal_op_t(ceph_clock_now(g_ceph_context));
+      //m->set_enq_filestore_queue_t(ceph_clock_now(g_ceph_context));
+      m->finish_journal_op_t = ceph_clock_now(g_ceph_context);
+      m->enq_filestore_queue_t = ceph_clock_now(g_ceph_context);
+      if(g_ceph_context->_conf->trace_enabled)
+      {
+      dout(0) << "Message is from Client ? " << m->get_source().is_client() << " Request type ? " << op->op->get_req()->get_type()<< dendl;
+      dout(0) << "callback journal write trace point " << m->get_reqid() << \
+      " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
+      " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
+      " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
+      " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
+      " # local_journal_write = " << m->finish_journal_op_t - m->deq_journal_queue_t << dendl;
+      dout(0) << "calback journal write trace timestamp " << m->get_reqid() << \
+      " # recv_op_t = " << m->recv_op_t << \
+      " # enq_osd_queue_t = " << m->enq_osd_queue_t << \
+      " # deq_osd_queue_t = " << m->deq_osd_queue_t << \
+      " # enq_journal_queue_t = " << m->enq_journal_queue_t << \
+      " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
+      " # finish_journal_op_t = " << m->finish_journal_op_t << dendl;
+      }
+      break;
+    }
+    case MSG_OSD_SUBOP:
+    {
+      MOSDSubOp * m = static_cast<MOSDSubOp *>(op->op->get_req());
+      //m->set_finish_journal_op_t(ceph_clock_now(g_ceph_context));
+      //m->set_enq_filestore_queue_t(ceph_clock_now(g_ceph_context));
+      m->finish_journal_op_t = ceph_clock_now(g_ceph_context);
+      m->enq_filestore_queue_t = ceph_clock_now(g_ceph_context);
+      if(g_ceph_context->_conf->trace_enabled)
+      {
+      dout(0) << "Message is from Client ? " << m->get_source().is_client() << " Request type ? " << op->op->get_req()->get_type()<< dendl;
+      dout(0) << "callback journal write trace point SUBOP " << \
+      " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
+      " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
+      " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
+      " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
+      " # local_journal_write = " << m->finish_journal_op_t - m->deq_journal_queue_t << dendl;
+      dout(0) << "callback journal write trace timestamp SUBOP"  << \
+      " # recv_op_t = " << m->recv_op_t << \
+      " # enq_osd_queue_t = " << m->enq_osd_queue_t << \
+      " # deq_osd_queue_t = " << m->deq_osd_queue_t << \
+      " # enq_journal_queue_t = " << m->enq_journal_queue_t << \
+      " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
+      " # finish_journal_op_t = " << m->finish_journal_op_t << dendl;
+      }
+      break;
+    }
+    default:
+      break;
+    }
+
+  }
+  else
+  {dout(0) << "Callback Journal Request is NONE " << dendl;}
+  */
 
   if (op->waiting_for_commit.empty()) {
     op->on_commit->complete(0);
@@ -620,6 +687,7 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
     map<ceph_tid_t, InProgressOp>::iterator iter =
       in_progress_ops.find(rep_tid);
     InProgressOp &ip_op = iter->second;
+
     MOSDOp *m = NULL;
     if (ip_op.op)
       m = static_cast<MOSDOp *>(ip_op.op->get_req());
@@ -663,6 +731,41 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
       ip_op.on_commit->complete(0);
       ip_op.on_commit= 0;
     }
+  if((ip_op.op).get())
+  {
+    switch ((ip_op.op)->get_req()->get_type()) {
+
+    dout(0) << "Finish Journal Request Type = " << (ip_op.op)->get_req()->get_type_name() << dendl;
+      // primary op
+    case CEPH_MSG_OSD_OP:
+    {
+      MOSDOp * mm = static_cast<MOSDOp *>((ip_op.op)->get_req());
+      if(g_ceph_context->_conf->trace_enabled)
+      {
+      dout(0) << "Message is from Client ? " << mm->get_source().is_client() << " Request type ? " << (ip_op.op)->get_req()->get_type()<< dendl;
+      dout(0) << "subop callback journal write trace point " << mm->get_reqid() << \
+      " # osd_queue_pre = " << mm->enq_osd_queue_t - mm->recv_op_t << \
+      " # osd_queue = " << mm->deq_osd_queue_t - mm->enq_osd_queue_t << \
+      " # osd_journal_pre = " <<  mm->enq_journal_queue_t -  mm->deq_osd_queue_t << \
+      " # osd_journal_queue = " <<  mm->deq_journal_queue_t - mm->enq_journal_queue_t << \
+      " # local_journal_write = " << mm->finish_journal_op_t - mm->deq_journal_queue_t << dendl;
+      dout(0) << "subop calback journal write trace timestamp " << mm->get_reqid() << \
+      " # recv_op_t = " << mm->recv_op_t << \
+      " # enq_osd_queue_t = " << mm->enq_osd_queue_t << \
+      " # deq_osd_queue_t = " << mm->deq_osd_queue_t << \
+      " # enq_journal_queue_t = " << mm->enq_journal_queue_t << \
+      " # deq_journal_queue_t = " << mm->deq_journal_queue_t << \
+      " # finish_journal_op_t = " << mm->finish_journal_op_t << dendl;
+      }
+      break;
+    }
+    default:
+      break;
+    }
+
+  }
+  else
+  {dout(0) << "Callback Journal Request is NONE " << dendl;}
     if (ip_op.done()) {
       assert(!ip_op.on_commit && !ip_op.on_applied);
       in_progress_ops.erase(iter);

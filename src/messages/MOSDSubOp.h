@@ -89,6 +89,29 @@ public:
 
   hobject_t new_temp_oid;      ///< new temp object that we must now start tracking
   hobject_t discard_temp_oid;  ///< previously used temp object that we can now stop tracking
+ 
+  utime_t recv_op_t;
+  utime_t enq_osd_queue_t;
+  utime_t deq_osd_queue_t;
+  utime_t enq_journal_queue_t;
+  utime_t deq_journal_queue_t;
+  utime_t finish_journal_op_t;
+  utime_t send_commit_ack;
+  utime_t enq_filestore_queue_t;
+  utime_t deq_filestore_queue_t;
+  utime_t finish_filestore_op_t;
+  utime_t send_apply_ack;
+  void set_recv_op_t(utime_t mt) {recv_op_t = mt;}
+  void set_enq_osd_queue_t(utime_t mt) {enq_osd_queue_t = mt;}
+  void set_deq_osd_queue_t(utime_t mt) {deq_osd_queue_t = mt;}
+  void set_enq_journal_queue_t(utime_t mt) {enq_journal_queue_t = mt;}
+  void set_deq_journal_queue_t(utime_t mt) {deq_journal_queue_t = mt;}
+  void set_finish_journal_op_t(utime_t mt) {finish_journal_op_t = mt;}
+  void set_send_commit_ack(utime_t mt) {send_commit_ack = mt;}
+  void set_enq_filestore_queue_t(utime_t mt) {enq_filestore_queue_t = mt;}
+  void set_deq_filestore_queue_t(utime_t mt) {deq_filestore_queue_t = mt;}
+  void set_finish_filestore_op_t(utime_t mt) {finish_filestore_op_t = mt;}
+  void set_send_apply_ack(utime_t mt) {send_apply_ack = mt;}
 
   /// non-empty if this transaction involves a hit_set history update
   boost::optional<pg_hit_set_history_t> updated_hit_set_history;

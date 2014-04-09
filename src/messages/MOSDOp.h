@@ -105,6 +105,30 @@ private:
   ~MOSDOp() {}
 
 public:
+
+  utime_t recv_op_t;
+  utime_t enq_osd_queue_t;
+  utime_t deq_osd_queue_t;
+  utime_t enq_journal_queue_t;
+  utime_t deq_journal_queue_t;
+  utime_t finish_journal_op_t;
+  utime_t get_all_commit;
+  utime_t enq_filestore_queue_t;
+  utime_t deq_filestore_queue_t;
+  utime_t finish_filestore_op_t;
+  utime_t get_all_ack;
+  void set_recv_op_t(utime_t mt) {recv_op_t = mt;}
+  void set_enq_osd_queue_t(utime_t mt) {enq_osd_queue_t = mt;}
+  void set_deq_osd_queue_t(utime_t mt) {deq_osd_queue_t = mt;}
+  void set_enq_journal_queue_t(utime_t mt) {enq_journal_queue_t = mt;}
+  void set_deq_journal_queue_t(utime_t mt) {deq_journal_queue_t = mt;}
+  void set_finish_journal_op_t(utime_t mt) {finish_journal_op_t = mt;}
+  void set_get_all_commit(utime_t mt) {get_all_commit = mt;}
+  void set_enq_filestore_queue_t(utime_t mt) {enq_filestore_queue_t = mt;}
+  void set_deq_filestore_queue_t(utime_t mt) {deq_filestore_queue_t = mt;}
+  void set_finish_filestore_op_t(utime_t mt) {finish_filestore_op_t = mt;}
+  void set_get_all_ack(utime_t mt) {get_all_ack = mt;}
+
   void set_version(eversion_t v) { reassert_version = v; }
   void set_mtime(utime_t mt) { mtime = mt; }
 

@@ -5311,6 +5311,18 @@ void ReplicatedPG::complete_read_ctx(int result, OpContext *ctx)
     // on ENOENT, set a floor for what the next user version will be.
     reply->set_enoent_reply_versions(info.last_update, info.last_user_version);
   }
+  if(g_ceph_context->_conf->trace_enabled )
+  {
+    utime_t now = ceph_clock_now(g_ceph_context);
+    utime_t recv = ctx->op->get_req()->get_recv_stamp();
+    utime_t enq_osd = m->enq_osd_queue_t;
+    utime_t deq_osd = m->deq_osd_queue_t;
+    dout(0) << "read trace point all " << m->get_reqid() << \
+    " # osd_queue_pre = " << enq_osd - recv << \
+    " # osd_queue = " << deq_osd - enq_osd << \
+    " # get_all_ack = " << now - recv << dendl;
+  }
+
 
   reply->add_flags(CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
   osd->send_message_osd_client(reply, m->get_connection());
@@ -6484,6 +6496,44 @@ void ReplicatedPG::repop_all_committed(RepGather *repop)
       last_update_ondisk = repop->v;
       last_complete_ondisk = repop->pg_local_last_complete;
     }
+      if((repop->ctx->op).get())
+  {
+    switch (repop->ctx->op->get_req()->get_type()) {
+
+    dout(0) << "Finish Journal Request Type = " << repop->ctx->op->get_req()->get_type_name() << dendl;
+      // primary op
+    case CEPH_MSG_OSD_OP:
+    {
+      MOSDOp * m = static_cast<MOSDOp *>(repop->ctx->op->get_req());
+      if(g_ceph_context->_conf->trace_enabled)
+      {
+      dout(0) << "Message is from Client ? " << m->get_source().is_client() << " Request type ? " << repop->ctx->op->get_req()->get_type()<< dendl;
+      dout(0) << "op commit callback write trace point " << m->get_reqid() << \
+      " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
+      " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
+      " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
+      " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
+      " # local_journal_write = " << m->finish_journal_op_t - m->deq_journal_queue_t << \
+      " # get_all_commit = " << ceph_clock_now(g_ceph_context) - m->recv_op_t << dendl;
+      dout(0) << "op commit calback write trace timestamp " << m->get_reqid() << \
+      " # recv_op_t = " << m->recv_op_t << \
+      " # enq_osd_queue_t = " << m->enq_osd_queue_t << \
+      " # deq_osd_queue_t = " << m->deq_osd_queue_t << \
+      " # enq_journal_queue_t = " << m->enq_journal_queue_t << \
+      " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
+      " # finish_journal_op_t = " << m->finish_journal_op_t << \
+      " # get_all_commit = " << ceph_clock_now(g_ceph_context) << dendl;
+      }
+      break;
+    }
+    default:
+      break;
+    }
+
+  }
+  else
+  {dout(0) << "Callback Journal Request is NONE " << dendl;}
+
     eval_repop(repop);
   }
 }
@@ -6586,6 +6636,7 @@ void ReplicatedPG::eval_repop(RepGather *repop)
       }
     }
 
+  //  m->set_get_all_commit(ceph_clock_now(g_ceph_context));
     // applied?
     if (repop->all_applied) {
 
@@ -6630,7 +6681,35 @@ void ReplicatedPG::eval_repop(RepGather *repop)
 	repop->ctx->readable_stamp = ceph_clock_now(cct);
     }
   }
-
+  /*
+  m->set_get_all_ack(ceph_clock_now(g_ceph_context));
+  if(g_ceph_context->_conf->trace_enabled)
+  {
+    dout(0) << "Message is from Client ? " << m->get_source().is_client() << " Request type ? " << repop->ctx->op->get_req()->get_type()<< dendl;
+    dout(0) << "write trace point all " << m->get_reqid() << \
+    " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
+    " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
+    " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
+    " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
+    " # local_journal_write = " << m->finish_journal_op_t - m->deq_journal_queue_t << \
+    " # get_all_commit = " << m->get_all_commit - m->recv_op_t << \
+    " # osd_filestore_queue = " << m->deq_filestore_queue_t - m->enq_filestore_queue_t << \
+    " # local_filestore_write = " << m->finish_filestore_op_t - m->deq_filestore_queue_t << \
+    " # get_all_ack = " << m->get_all_ack - m->recv_op_t << dendl;
+    dout(0) << "write trace timestamp all " << m->get_reqid() << \
+    " # recv_op_t = " << m->recv_op_t << \
+    " # enq_osd_queue_t = " << m->enq_osd_queue_t << \
+    " # deq_osd_queue_t = " << m->deq_osd_queue_t << \
+    " # enq_journal_queue_t = " << m->enq_journal_queue_t << \
+    " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
+    " # finish_journal_op_t = " << m->finish_journal_op_t << \
+    " # get_all_commit = " << m->get_all_commit << \
+    " # enq_filestore_queue_t = " << m->enq_filestore_queue_t << \
+    " # deq_filestore_queue_t = " << m->deq_filestore_queue_t << \
+    " # finish_filestore_op_t = " << m->finish_filestore_op_t << \
+    " # get_all_ack = " << m->get_all_ack << dendl;
+  }
+  */
   // done.
   if (repop->all_applied && repop->all_committed) {
     repop->rep_done = true;
@@ -6769,6 +6848,7 @@ void ReplicatedBackend::issue_op(
       get_osdmap()->get_epoch(),
       tid, at_version);
 
+    wr->set_gen_t(ceph_clock_now(g_ceph_context));
     // ship resulting transaction, log entries, and pg_stats
     if (!parent->should_send_op(peer, soid)) {
       dout(10) << "issue_repop shipping empty opt to osd." << peer
@@ -7638,6 +7718,36 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
     ack->set_priority(CEPH_MSG_PRIO_HIGH); // this better match commit priority!
     get_parent()->send_message_osd_cluster(
       rm->ackerosd, ack, get_osdmap()->get_epoch());
+    m->send_apply_ack = ceph_clock_now(g_ceph_context);
+    if(g_ceph_context->_conf->trace_enabled)
+    {
+      dout(0) << "Message is from osd ? " <<m->get_source().is_osd() << dendl;
+      dout(0) << "subop apply callback write trace point " << rm->op->get_reqid() << \
+      " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
+      " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
+      " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
+      " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
+      " # local_journal_write = " << m->finish_journal_op_t - m->deq_journal_queue_t << \
+      " # send_commit_ack = " << m->send_commit_ack - m->recv_op_t << \
+      " # osd_filestore_queue = " << m->deq_filestore_queue_t - m->enq_filestore_queue_t << \
+      " # local_filestore_write = " << m->finish_filestore_op_t - m->deq_filestore_queue_t << \
+      " # send_apply_ack = " << m->send_apply_ack - m->recv_op_t << dendl;
+      dout(0) << "subop apply callback write trace timestamp " << rm->op->get_reqid() << \
+      " # gen_t = " << m->gen_t << \
+      " # recv_op_t = " << m->recv_op_t << \
+      " # enq_osd_queue_t = " << m->enq_osd_queue_t << \
+      " # deq_osd_queue_t = " << m->deq_osd_queue_t << \
+      " # enq_journal_queue_t = " << m->enq_journal_queue_t << \
+      " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
+      " # finish_journal_op_t = " << m->finish_journal_op_t << \
+      " # send_commit_ack = " << m->send_commit_ack << \
+      " # enq_filestore_queue_t = " << m->enq_filestore_queue_t << \
+      " # deq_filestore_queue_t = " << m->deq_filestore_queue_t << \
+      " # finish_filestore_op_t = " << m->finish_filestore_op_t << \
+      " # send_apply_ack = " << m->send_apply_ack << dendl;
+    }
+
+    ack->set_send_apply_ack(m->send_apply_ack);
   }
   
   parent->op_applied(m->version);
@@ -7655,12 +7765,50 @@ void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
   
   assert(get_osdmap()->is_up(rm->ackerosd));
   get_parent()->update_last_complete_ondisk(rm->last_complete);
+  MOSDSubOp *m = static_cast<MOSDSubOp*>(rm->op->get_req());
+  m->set_send_commit_ack(ceph_clock_now(g_ceph_context));
+  m->set_send_apply_ack(ceph_clock_now(g_ceph_context));
   MOSDSubOpReply *commit = new MOSDSubOpReply(
     static_cast<MOSDSubOp*>(rm->op->get_req()),
     get_parent()->whoami_shard(),
     0, get_osdmap()->get_epoch(), CEPH_OSD_FLAG_ONDISK);
   commit->set_last_complete_ondisk(rm->last_complete);
   commit->set_priority(CEPH_MSG_PRIO_HIGH); // this better match ack priority!
+  /*
+  commit->set_gen_t(m->gen_t);
+  commit->set_recv_op_t(m->recv_op_t);
+  commit->set_enq_osd_queue_t(m->enq_osd_queue_t);
+  commit->set_deq_osd_queue_t(m->deq_osd_queue_t);
+  commit->set_enq_journal_queue_t(m->enq_journal_queue_t);
+  commit->set_deq_journal_queue_t(m->deq_journal_queue_t);
+  commit->set_finish_journal_op_t(m->finish_journal_op_t);
+  commit->set_send_commit_ack(m->send_commit_ack);
+  commit->set_enq_filestore_queue_t(m->enq_filestore_queue_t);
+  commit->set_deq_filestore_queue_t(m->deq_filestore_queue_t);
+  commit->set_finish_filestore_op_t(m->finish_filestore_op_t);
+  commit->set_send_apply_ack(m->send_apply_ack);
+  */
+  if(g_ceph_context->_conf->trace_enabled)
+  {
+    dout(0) << "Message is from osd ? " <<m->get_source().is_osd() << dendl;
+    dout(0) << "subop commit callback write trace point " << rm->op->get_reqid() << \
+    " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
+    " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
+    " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
+    " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
+    " # local_journal_write = " << m->finish_journal_op_t - m->deq_journal_queue_t << \
+    " # send_commit_ack = " << m->send_commit_ack - m->recv_op_t << dendl;
+    dout(0) << "subop commit write trace timestamp " << rm->op->get_reqid() << \
+    " # gen_t = " << m->gen_t << \
+    " # recv_op_t = " << m->recv_op_t << \
+    " # enq_osd_queue_t = " << m->enq_osd_queue_t << \
+    " # deq_osd_queue_t = " << m->deq_osd_queue_t << \
+    " # enq_journal_queue_t = " << m->enq_journal_queue_t << \
+    " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
+    " # finish_journal_op_t = " << m->finish_journal_op_t << \
+    " # send_commit_ack = " << m->send_commit_ack << dendl;
+  }
+
   get_parent()->send_message_osd_cluster(
     rm->ackerosd, commit, get_osdmap()->get_epoch());
   

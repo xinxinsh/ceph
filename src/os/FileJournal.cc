@@ -33,6 +33,9 @@
 
 #include "common/blkdev.h"
 #include "common/linux_version.h"
+#include "messages/MOSDOp.h"
+#include "messages/MOSDSubOp.h"
+#include "msg/Message.h"
 
 #define dout_subsys ceph_subsys_journal
 #undef dout_prefix
@@ -1465,7 +1468,37 @@ void FileJournal::pop_write()
 {
   assert(write_lock.is_locked());
   Mutex::Locker locker(writeq_lock);
+  write_item& item = writeq.front();
   writeq.pop_front();
+  if(item.tracked_op.get())
+  {
+    
+    dout(0) << "Deq Journal Request Type = " << (item.tracked_op)->get_req()->get_type_name() << dendl;
+    dout(0) << "is from client ? " << (item.tracked_op)->get_req()->get_source().is_client() << dendl;
+    switch ((item.tracked_op)->get_req()->get_type()) {
+
+    // primary op
+    case CEPH_MSG_OSD_OP:
+    {
+      
+      MOSDOp * m = static_cast<MOSDOp *>((item.tracked_op)->get_req());
+      //m->set_deq_journal_queue_t(ceph_clock_now(g_ceph_context));
+      m->deq_journal_queue_t = ceph_clock_now(g_ceph_context);
+      break;
+    }
+    case MSG_OSD_SUBOP:
+    {
+      MOSDSubOp * m = static_cast<MOSDSubOp *>((item.tracked_op)->get_req());
+      //m->set_deq_journal_queue_t(ceph_clock_now(g_ceph_context));
+      m->deq_journal_queue_t = ceph_clock_now(g_ceph_context);
+      break;
+    }
+    default:
+      break;
+    }
+  }
+  else
+  {dout(0) << "Deq Journal Request is NONE" << dendl;}
 }
 
 void FileJournal::commit_start(uint64_t seq)

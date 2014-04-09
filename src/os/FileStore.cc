@@ -35,6 +35,9 @@
 
 #include "common/xattr.h"
 #include "chain_xattr.h"
+#include "messages/MOSDOp.h"
+#include "messages/MOSDSubOp.h"
+#include "msg/Message.h"
 
 #if defined(DARWIN) || defined(__FreeBSD__)
 #include <sys/param.h>
@@ -1690,10 +1693,36 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
     g_conf->set_val("filestore_inject_stall", "0");
     dout(5) << "_do_op done stalling" << dendl;
   }
-
   osr->apply_lock.Lock();
   Op *o = osr->peek_queue();
+  if((o->osd_op).get())
+  {
+    switch (o->osd_op->get_req()->get_type()) {
+
+    dout(0) << "Deq FileStore Request Type = " << o->osd_op->get_req()->get_type_name() << dendl;
+    // primary op
+    case CEPH_MSG_OSD_OP:
+    {
+      MOSDOp * m = static_cast<MOSDOp *>(o->osd_op->get_req());
+      m->set_deq_filestore_queue_t(ceph_clock_now(g_ceph_context));
+      break;
+    }
+    case MSG_OSD_SUBOP:
+    {
+      MOSDSubOp * m = static_cast<MOSDSubOp *>(o->osd_op->get_req());
+      m->set_deq_filestore_queue_t(ceph_clock_now(g_ceph_context));
+      break;
+    }
+    default:
+      break;
+    }
+
+  }
+  else
+  {dout(0) << "Deq FileStore Request is NONE " << dendl;}
+
   apply_manager.op_apply_start(o->op);
+  
   dout(5) << "_do_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << " start" << dendl;
   int r = _do_transactions(o->tls, o->op, &handle);
   apply_manager.op_apply_finish(o->op);
@@ -1704,6 +1733,32 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
 void FileStore::_finish_op(OpSequencer *osr)
 {
   Op *o = osr->dequeue();
+  if((o->osd_op).get())
+  {
+    switch (o->osd_op->get_req()->get_type()) {
+
+    dout(0) << "Finish FileStore Request Type = " << o->osd_op->get_req()->get_type_name() << dendl;
+    // primary op
+    case CEPH_MSG_OSD_OP:
+    {
+      MOSDOp * m = static_cast<MOSDOp *>(o->osd_op->get_req());
+      m->set_finish_filestore_op_t(ceph_clock_now(g_ceph_context));
+      break;
+    }
+    case MSG_OSD_SUBOP:
+    {
+      MOSDSubOp * m = static_cast<MOSDSubOp *>(o->osd_op->get_req());
+      m->set_finish_filestore_op_t(ceph_clock_now(g_ceph_context));
+      break;
+    }
+    default:
+      break;
+    }
+
+  }
+  else
+  {dout(0) << "Finish FileStore Request is NONE " << dendl;}
+
   
   dout(10) << "_finish_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << dendl;
   osr->apply_lock.Unlock();  // locked in _do_op
@@ -1776,6 +1831,30 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
     uint64_t op_num = submit_manager.op_submit_start();
     o->op = op_num;
 
+    if(osd_op.get())
+    {
+      switch (osd_op->get_req()->get_type()) {
+
+      // primary op
+      case CEPH_MSG_OSD_OP:
+      {
+        MOSDOp * m = static_cast<MOSDOp *>(osd_op->get_req());
+        m->set_enq_journal_queue_t(ceph_clock_now(g_ceph_context));
+        break;
+      }
+      case MSG_OSD_SUBOP:
+      {
+        MOSDSubOp * m = static_cast<MOSDSubOp *>(osd_op->get_req());
+        m->set_enq_journal_queue_t(ceph_clock_now(g_ceph_context));
+        break;
+      }
+      default:
+        break;
+      }
+    }
+    else
+    {dout(0) << "Enq Journale is NONE " << dendl;}
+
     if (m_filestore_do_dump)
       dump_transactions(o->tls, o->op, osr);
 
@@ -1837,6 +1916,72 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
   queue_op(osr, o);
 
   osr->dequeue_journal();
+
+  if((o->osd_op).get())
+  {
+    switch (o->osd_op->get_req()->get_type()) {
+
+    dout(0) << "Finish Journal Request Type = " << o->osd_op->get_req()->get_type_name() << dendl;
+      // primary op
+    case CEPH_MSG_OSD_OP:
+    {
+      MOSDOp * m = static_cast<MOSDOp *>(o->osd_op->get_req());
+      //m->set_finish_journal_op_t(ceph_clock_now(g_ceph_context));
+      //m->set_enq_filestore_queue_t(ceph_clock_now(g_ceph_context));
+      m->finish_journal_op_t = ceph_clock_now(g_ceph_context);
+      m->enq_filestore_queue_t = ceph_clock_now(g_ceph_context);
+      if(o->osd_op.get() && g_ceph_context->_conf->trace_enabled)
+      {
+      dout(0) << "Message is from Client ? " << m->get_source().is_client() << " Request type ? " << o->osd_op->get_req()->get_type()<< dendl;
+      dout(0) << "journal write trace point " << m->get_reqid() << \
+      " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
+      " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
+      " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
+      " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
+      " # local_journal_write = " << m->finish_journal_op_t - m->deq_journal_queue_t << dendl;
+      dout(0) << "journal write trace timestamp " << m->get_reqid() << \
+      " # recv_op_t = " << m->recv_op_t << \
+      " # enq_osd_queue_t = " << m->enq_osd_queue_t << \
+      " # deq_osd_queue_t = " << m->deq_osd_queue_t << \
+      " # enq_journal_queue_t = " << m->enq_journal_queue_t << \
+      " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
+      " # finish_journal_op_t = " << m->finish_journal_op_t << dendl;
+      }
+      break;
+    }
+    case MSG_OSD_SUBOP:
+    {
+      MOSDSubOp * m = static_cast<MOSDSubOp *>(o->osd_op->get_req());
+      //m->set_finish_journal_op_t(ceph_clock_now(g_ceph_context));
+      //m->set_enq_filestore_queue_t(ceph_clock_now(g_ceph_context));
+      m->finish_journal_op_t = ceph_clock_now(g_ceph_context);
+      m->enq_filestore_queue_t = ceph_clock_now(g_ceph_context);
+      if(o->osd_op.get() && g_ceph_context->_conf->trace_enabled)
+      {
+      dout(0) << "Message is from Client ? " << m->get_source().is_client() << " Request type ? " << o->osd_op->get_req()->get_type()<< dendl;
+      dout(0) << "journal write trace point SUBOP " << \
+      " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
+      " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
+      " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
+      " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
+      " # local_journal_write = " << m->finish_journal_op_t - m->deq_journal_queue_t << dendl;
+      dout(0) << "journal write trace timestamp SUBOP"  << \
+      " # recv_op_t = " << m->recv_op_t << \
+      " # enq_osd_queue_t = " << m->enq_osd_queue_t << \
+      " # deq_osd_queue_t = " << m->deq_osd_queue_t << \
+      " # enq_journal_queue_t = " << m->enq_journal_queue_t << \
+      " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
+      " # finish_journal_op_t = " << m->finish_journal_op_t << dendl;
+      }
+      break;
+    }
+    default:
+      break;
+    }
+
+  }
+  else
+  {dout(0) << "Deq Journal Request is NONE " << dendl;}
 
   // do ondisk completions async, to prevent any onreadable_sync completions
   // getting blocked behind an ondisk completion.
