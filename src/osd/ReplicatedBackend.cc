@@ -735,20 +735,21 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
   {
     switch ((ip_op.op)->get_req()->get_type()) {
 
-    dout(0) << "Finish Journal Request Type = " << (ip_op.op)->get_req()->get_type_name() << dendl;
+    //dout(0) << "Finish Journal Request Type = " << (ip_op.op)->get_req()->get_type_name() << dendl;
       // primary op
     case CEPH_MSG_OSD_OP:
     {
       MOSDOp * mm = static_cast<MOSDOp *>((ip_op.op)->get_req());
       if(g_ceph_context->_conf->trace_enabled)
       {
-      dout(0) << "Message is from Client ? " << mm->get_source().is_client() << " Request type ? " << (ip_op.op)->get_req()->get_type()<< dendl;
+      //dout(0) << "Message is from Client ? " << mm->get_source().is_client() << " Request type ? " << (ip_op.op)->get_req()->get_type()<< dendl;
       dout(0) << "subop callback journal write trace point " << mm->get_reqid() << \
       " # osd_queue_pre = " << mm->enq_osd_queue_t - mm->recv_op_t << \
       " # osd_queue = " << mm->deq_osd_queue_t - mm->enq_osd_queue_t << \
       " # osd_journal_pre = " <<  mm->enq_journal_queue_t -  mm->deq_osd_queue_t << \
       " # osd_journal_queue = " <<  mm->deq_journal_queue_t - mm->enq_journal_queue_t << \
       " # local_journal_write = " << mm->finish_journal_op_t - mm->deq_journal_queue_t << dendl;
+      /*
       dout(0) << "subop calback journal write trace timestamp " << mm->get_reqid() << \
       " # recv_op_t = " << mm->recv_op_t << \
       " # enq_osd_queue_t = " << mm->enq_osd_queue_t << \
@@ -756,6 +757,7 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
       " # enq_journal_queue_t = " << mm->enq_journal_queue_t << \
       " # deq_journal_queue_t = " << mm->deq_journal_queue_t << \
       " # finish_journal_op_t = " << mm->finish_journal_op_t << dendl;
+      */
       }
       break;
     }
@@ -764,8 +766,8 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
     }
 
   }
-  else
-  {dout(0) << "Callback Journal Request is NONE " << dendl;}
+  //else
+  //{dout(0) << "Callback Journal Request is NONE " << dendl;}
     if (ip_op.done()) {
       assert(!ip_op.on_commit && !ip_op.on_applied);
       in_progress_ops.erase(iter);

@@ -1473,8 +1473,8 @@ void FileJournal::pop_write()
   if(item.tracked_op.get())
   {
     
-    dout(0) << "Deq Journal Request Type = " << (item.tracked_op)->get_req()->get_type_name() << dendl;
-    dout(0) << "is from client ? " << (item.tracked_op)->get_req()->get_source().is_client() << dendl;
+    //dout(0) << "Deq Journal Request Type = " << (item.tracked_op)->get_req()->get_type_name() << dendl;
+    //dout(0) << "is from client ? " << (item.tracked_op)->get_req()->get_source().is_client() << dendl;
     switch ((item.tracked_op)->get_req()->get_type()) {
 
     // primary op
@@ -1497,8 +1497,8 @@ void FileJournal::pop_write()
       break;
     }
   }
-  else
-  {dout(0) << "Deq Journal Request is NONE" << dendl;}
+  //else
+  //{dout(0) << "Deq Journal Request is NONE" << dendl;}
 }
 
 void FileJournal::commit_start(uint64_t seq)

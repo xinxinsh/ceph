@@ -6500,14 +6500,14 @@ void ReplicatedPG::repop_all_committed(RepGather *repop)
   {
     switch (repop->ctx->op->get_req()->get_type()) {
 
-    dout(0) << "Finish Journal Request Type = " << repop->ctx->op->get_req()->get_type_name() << dendl;
+   // dout(0) << "Finish Journal Request Type = " << repop->ctx->op->get_req()->get_type_name() << dendl;
       // primary op
     case CEPH_MSG_OSD_OP:
     {
       MOSDOp * m = static_cast<MOSDOp *>(repop->ctx->op->get_req());
       if(g_ceph_context->_conf->trace_enabled)
       {
-      dout(0) << "Message is from Client ? " << m->get_source().is_client() << " Request type ? " << repop->ctx->op->get_req()->get_type()<< dendl;
+      //dout(0) << "Message is from Client ? " << m->get_source().is_client() << " Request type ? " << repop->ctx->op->get_req()->get_type()<< dendl;
       dout(0) << "op commit callback write trace point " << m->get_reqid() << \
       " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
       " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
@@ -6515,6 +6515,7 @@ void ReplicatedPG::repop_all_committed(RepGather *repop)
       " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
       " # local_journal_write = " << m->finish_journal_op_t - m->deq_journal_queue_t << \
       " # get_all_commit = " << ceph_clock_now(g_ceph_context) - m->recv_op_t << dendl;
+      /*
       dout(0) << "op commit calback write trace timestamp " << m->get_reqid() << \
       " # recv_op_t = " << m->recv_op_t << \
       " # enq_osd_queue_t = " << m->enq_osd_queue_t << \
@@ -6523,6 +6524,7 @@ void ReplicatedPG::repop_all_committed(RepGather *repop)
       " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
       " # finish_journal_op_t = " << m->finish_journal_op_t << \
       " # get_all_commit = " << ceph_clock_now(g_ceph_context) << dendl;
+      */
       }
       break;
     }
@@ -6531,8 +6533,8 @@ void ReplicatedPG::repop_all_committed(RepGather *repop)
     }
 
   }
-  else
-  {dout(0) << "Callback Journal Request is NONE " << dendl;}
+  //else
+  //{dout(0) << "Callback Journal Request is NONE " << dendl;}
 
     eval_repop(repop);
   }
@@ -7721,7 +7723,7 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
     m->send_apply_ack = ceph_clock_now(g_ceph_context);
     if(g_ceph_context->_conf->trace_enabled)
     {
-      dout(0) << "Message is from osd ? " <<m->get_source().is_osd() << dendl;
+      //dout(0) << "Message is from osd ? " <<m->get_source().is_osd() << dendl;
       dout(0) << "subop apply callback write trace point " << rm->op->get_reqid() << \
       " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
       " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
@@ -7732,6 +7734,7 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
       " # osd_filestore_queue = " << m->deq_filestore_queue_t - m->enq_filestore_queue_t << \
       " # local_filestore_write = " << m->finish_filestore_op_t - m->deq_filestore_queue_t << \
       " # send_apply_ack = " << m->send_apply_ack - m->recv_op_t << dendl;
+      /*
       dout(0) << "subop apply callback write trace timestamp " << rm->op->get_reqid() << \
       " # gen_t = " << m->gen_t << \
       " # recv_op_t = " << m->recv_op_t << \
@@ -7745,6 +7748,7 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
       " # deq_filestore_queue_t = " << m->deq_filestore_queue_t << \
       " # finish_filestore_op_t = " << m->finish_filestore_op_t << \
       " # send_apply_ack = " << m->send_apply_ack << dendl;
+      */
     }
 
     ack->set_send_apply_ack(m->send_apply_ack);
@@ -7790,7 +7794,7 @@ void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
   */
   if(g_ceph_context->_conf->trace_enabled)
   {
-    dout(0) << "Message is from osd ? " <<m->get_source().is_osd() << dendl;
+    //dout(0) << "Message is from osd ? " <<m->get_source().is_osd() << dendl;
     dout(0) << "subop commit callback write trace point " << rm->op->get_reqid() << \
     " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
     " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
@@ -7798,6 +7802,7 @@ void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
     " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
     " # local_journal_write = " << m->finish_journal_op_t - m->deq_journal_queue_t << \
     " # send_commit_ack = " << m->send_commit_ack - m->recv_op_t << dendl;
+    /*
     dout(0) << "subop commit write trace timestamp " << rm->op->get_reqid() << \
     " # gen_t = " << m->gen_t << \
     " # recv_op_t = " << m->recv_op_t << \
@@ -7807,6 +7812,7 @@ void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
     " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
     " # finish_journal_op_t = " << m->finish_journal_op_t << \
     " # send_commit_ack = " << m->send_commit_ack << dendl;
+    */
   }
 
   get_parent()->send_message_osd_cluster(

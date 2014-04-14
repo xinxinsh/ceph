@@ -1699,7 +1699,7 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
   {
     switch (o->osd_op->get_req()->get_type()) {
 
-    dout(0) << "Deq FileStore Request Type = " << o->osd_op->get_req()->get_type_name() << dendl;
+    //dout(0) << "Deq FileStore Request Type = " << o->osd_op->get_req()->get_type_name() << dendl;
     // primary op
     case CEPH_MSG_OSD_OP:
     {
@@ -1718,8 +1718,8 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
     }
 
   }
-  else
-  {dout(0) << "Deq FileStore Request is NONE " << dendl;}
+ // else
+ // {dout(0) << "Deq FileStore Request is NONE " << dendl;}
 
   apply_manager.op_apply_start(o->op);
   
@@ -1737,7 +1737,7 @@ void FileStore::_finish_op(OpSequencer *osr)
   {
     switch (o->osd_op->get_req()->get_type()) {
 
-    dout(0) << "Finish FileStore Request Type = " << o->osd_op->get_req()->get_type_name() << dendl;
+    //dout(0) << "Finish FileStore Request Type = " << o->osd_op->get_req()->get_type_name() << dendl;
     // primary op
     case CEPH_MSG_OSD_OP:
     {
@@ -1756,8 +1756,8 @@ void FileStore::_finish_op(OpSequencer *osr)
     }
 
   }
-  else
-  {dout(0) << "Finish FileStore Request is NONE " << dendl;}
+  //else
+  //{dout(0) << "Finish FileStore Request is NONE " << dendl;}
 
   
   dout(10) << "_finish_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << dendl;
@@ -1852,8 +1852,8 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
         break;
       }
     }
-    else
-    {dout(0) << "Enq Journale is NONE " << dendl;}
+    //else
+    //{dout(0) << "Enq Journale is NONE " << dendl;}
 
     if (m_filestore_do_dump)
       dump_transactions(o->tls, o->op, osr);
@@ -1916,7 +1916,7 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
   queue_op(osr, o);
 
   osr->dequeue_journal();
-
+  /*
   if((o->osd_op).get())
   {
     switch (o->osd_op->get_req()->get_type()) {
@@ -1982,7 +1982,7 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
   }
   else
   {dout(0) << "Deq Journal Request is NONE " << dendl;}
-
+   */
   // do ondisk completions async, to prevent any onreadable_sync completions
   // getting blocked behind an ondisk completion.
   if (ondisk) {
