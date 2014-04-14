@@ -1916,7 +1916,6 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
   queue_op(osr, o);
 
   osr->dequeue_journal();
-  /*
   if((o->osd_op).get())
   {
     switch (o->osd_op->get_req()->get_type()) {
@@ -1930,6 +1929,7 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
       //m->set_enq_filestore_queue_t(ceph_clock_now(g_ceph_context));
       m->finish_journal_op_t = ceph_clock_now(g_ceph_context);
       m->enq_filestore_queue_t = ceph_clock_now(g_ceph_context);
+      /*
       if(o->osd_op.get() && g_ceph_context->_conf->trace_enabled)
       {
       dout(0) << "Message is from Client ? " << m->get_source().is_client() << " Request type ? " << o->osd_op->get_req()->get_type()<< dendl;
@@ -1947,6 +1947,7 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
       " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
       " # finish_journal_op_t = " << m->finish_journal_op_t << dendl;
       }
+      */
       break;
     }
     case MSG_OSD_SUBOP:
@@ -1956,6 +1957,7 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
       //m->set_enq_filestore_queue_t(ceph_clock_now(g_ceph_context));
       m->finish_journal_op_t = ceph_clock_now(g_ceph_context);
       m->enq_filestore_queue_t = ceph_clock_now(g_ceph_context);
+      /*
       if(o->osd_op.get() && g_ceph_context->_conf->trace_enabled)
       {
       dout(0) << "Message is from Client ? " << m->get_source().is_client() << " Request type ? " << o->osd_op->get_req()->get_type()<< dendl;
@@ -1973,6 +1975,7 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
       " # deq_journal_queue_t = " << m->deq_journal_queue_t << \
       " # finish_journal_op_t = " << m->finish_journal_op_t << dendl;
       }
+      */
       break;
     }
     default:
@@ -1980,9 +1983,8 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
     }
 
   }
-  else
-  {dout(0) << "Deq Journal Request is NONE " << dendl;}
-   */
+  //else
+  //{dout(0) << "Deq Journal Request is NONE " << dendl;}
   // do ondisk completions async, to prevent any onreadable_sync completions
   // getting blocked behind an ondisk completion.
   if (ondisk) {
