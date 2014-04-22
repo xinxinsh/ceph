@@ -48,6 +48,8 @@ class MOSDOpReply : public Message {
   request_redirect_t redirect;
 
 public:
+  utime_t mtime;
+  vector<utime_t> trace_time;
   object_t get_oid() const { return oid; }
   pg_t     get_pg() const { return pgid; }
   int      get_flags() const { return flags; }
@@ -176,11 +178,16 @@ public:
       ::encode(result, payload);
       ::encode(bad_replay_version, payload);
       ::encode(osdmap_epoch, payload);
+      ::encode(mtime, payload);
 
       __u32 num_ops = ops.size();
       ::encode(num_ops, payload);
       for (unsigned i = 0; i < num_ops; i++)
 	::encode(ops[i].op, payload);
+      __u32 num_t = trace_time.size();
+      ::encode(num_t, payload);
+      for (unsigned i = 0; i < num_t; i++)
+        ::encode(trace_time[i], payload);
 
       ::encode(retry_attempt, payload);
 
@@ -216,12 +223,18 @@ public:
       ::decode(result, p);
       ::decode(bad_replay_version, p);
       ::decode(osdmap_epoch, p);
+      ::decode(mtime, p);
 
       __u32 num_ops = ops.size();
       ::decode(num_ops, p);
       ops.resize(num_ops);
       for (unsigned i = 0; i < num_ops; i++)
 	::decode(ops[i].op, p);
+      __u32 num_t = trace_time.size();
+      ::decode(num_t, p);
+      trace_time.resize(num_t);
+      for (unsigned i = 0; i < num_t; i++)
+        ::decode(trace_time[i], p);
 
       if (header.version >= 3)
 	::decode(retry_attempt, p);

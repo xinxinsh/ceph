@@ -21,6 +21,7 @@
 #include "Message.h"
 #include "Pipe.h"
 #include "SimpleMessenger.h"
+#include "messages/MOSDOp.h"
 
 #include "common/debug.h"
 #include "common/errno.h"
@@ -1655,6 +1656,15 @@ void Pipe::writer()
 	}
 
 	// associate message with Connection (for benefit of encode_payload)
+        switch (m->get_type())
+        {
+          case CEPH_MSG_OSD_OP:
+          {
+            MOSDOp *mop = static_cast<MOSDOp *>(m);
+            mop->set_clienttoosd(ceph_clock_now(msgr->cct));
+            break;
+          }
+        }
 	m->set_connection(connection_state.get());
 
 	uint64_t features = connection_state->get_features();

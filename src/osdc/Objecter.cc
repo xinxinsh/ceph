@@ -435,6 +435,7 @@ ceph_tid_t Objecter::linger_read(const object_t& oid, const object_locator_t& ol
   info->poutbl = poutbl;
   info->pobjver = objver;
   info->on_reg_commit = onfinish;
+  info->mtime = ceph_clock_now(cct);
 
   info->linger_id = ++max_linger_id;
   linger_ops[info->linger_id] = info;
@@ -1719,7 +1720,77 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
 
   // get pio
   ceph_tid_t tid = m->get_tid();
+  //ldout(cct,0) << "log reqeust timestamp " << tid << dendll;
+  if(cct->_conf->trace_enabled)
+  {
+    vector<utime_t> time = m->trace_time;
+    //ldout(cct,0) << "request " << tid << " time trace size " << time.size() << dendl;
+    if(time.size()>0)
+    {
+      std::ostringstream os;
+      //std::ostringstream tos;
+      utime_t now = ceph_clock_now(cct);
+      //ldout(cct,0) << "trace for request " << tid << " size " << time.size() << dendl;
+      unsigned i;
+      /*
+      tos << "timestamp for request ";
+      tos << tid;
+      tos << " size ";
+      tos << time.size();
 
+      for(i = 0; i < time.size(); i++)
+      {
+        //ldout(cct,0) << " # Stage_" << i + 1 << " = "<<  time[i+1] - time[i] << dendl;
+        tos << " # Stage_";
+        tos << i+1;
+        tos << " = ";
+        tos << time[i];
+      }
+      tos << " # Stage_";
+      tos << time.size()+1;
+      tos << " = ";
+      tos << m->mtime;
+      tos << " # Stage_";
+      tos << time.size()+2;
+      tos << " = ";
+      tos << m->get_recv_stamp();
+      tos << " # Stage_";
+      tos << time.size()+3;
+      tos << " = ";
+      tos << now;
+      tos << "\n";
+      ldout(cct,0) << tos.str() << dendl;
+      */
+      os << "trace for request ";
+      os << tid;
+      os << " size ";
+      os << time.size();
+      
+      for(i = 0; i < time.size() - 1; i++)
+      {
+        //ldout(cct,0) << " # Stage_" << i + 1 << " = "<<  time[i+1] - time[i] << dendl;
+        os << " # Stage_";
+        os << i+1;
+        os << " = ";
+        os << time[i+1] - time[i];
+      }
+      os << " # Stage_";
+      os << time.size();
+      os << " = ";
+      os << m->get_recv_stamp() - m->mtime;
+      os << " # Stage_";
+      os << time.size()+1;
+      os << " = ";
+      os << now - m->get_recv_stamp();
+      os << " # Stage_";
+      os << time.size()+2;
+      os << " = ";
+      os << now - time[0];
+      ldout(cct,0) << os.str() << "\n" << dendl;
+      //ldout(cct,0) << " # Stage_" << time.size() << " = " << now - m->mtime << dendl;
+      //ldout(cct,0) << " # Stage_" << time.size() << " = " << now - time[0] << dendl;
+    }
+  }
   if (ops.count(tid) == 0) {
     ldout(cct, 7) << "handle_osd_op_reply " << tid
 	    << (m->is_ondisk() ? " ondisk":(m->is_onnvram() ? " onnvram":" ack"))

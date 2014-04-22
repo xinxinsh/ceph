@@ -5311,17 +5311,27 @@ void ReplicatedPG::complete_read_ctx(int result, OpContext *ctx)
     // on ENOENT, set a floor for what the next user version will be.
     reply->set_enoent_reply_versions(info.last_update, info.last_user_version);
   }
+  utime_t now = ceph_clock_now(g_ceph_context);
+  reply->mtime = now;
   if(g_ceph_context->_conf->trace_enabled )
   {
-    utime_t now = ceph_clock_now(g_ceph_context);
     utime_t recv = ctx->op->get_req()->get_recv_stamp();
     utime_t enq_osd = m->enq_osd_queue_t;
     utime_t deq_osd = m->deq_osd_queue_t;
     dout(0) << "read trace point all " << m->get_reqid() << \
-    " # osd_queue_pre = " << enq_osd - recv << \
+    " # client librbd = " << m->clienttoosd - m->get_mtime() << \
+    " # recv = " << m->get_recv_complete_stamp() - m->get_recv_stamp() << \
+    " # osd_queue_pre = " << enq_osd - m->get_recv_complete_stamp() << \
     " # osd_queue = " << deq_osd - enq_osd << \
     " # get_all_ack = " << now - recv << dendl;
   }
+  reply->trace_time.push_back(m->get_mtime());
+  reply->trace_time.push_back(m->clienttoosd);
+  reply->trace_time.push_back(m->get_recv_stamp());
+  reply->trace_time.push_back(m->get_recv_complete_stamp());
+  reply->trace_time.push_back(m->enq_osd_queue_t);
+  reply->trace_time.push_back(m->deq_osd_queue_t);
+  reply->trace_time.push_back(reply->mtime);
 
 
   reply->add_flags(CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
@@ -6505,16 +6515,19 @@ void ReplicatedPG::repop_all_committed(RepGather *repop)
     case CEPH_MSG_OSD_OP:
     {
       MOSDOp * m = static_cast<MOSDOp *>(repop->ctx->op->get_req());
+      m->get_all_commit = ceph_clock_now(g_ceph_context);
       if(g_ceph_context->_conf->trace_enabled)
       {
       //dout(0) << "Message is from Client ? " << m->get_source().is_client() << " Request type ? " << repop->ctx->op->get_req()->get_type()<< dendl;
       dout(0) << "op commit callback write trace point " << m->get_reqid() << \
-      " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
+      " # client librbd = " << m->clienttoosd -  m->get_mtime() << \
+      " # recv = " <<  m->get_recv_complete_stamp() - m->get_recv_stamp() << \
+      " # osd_queue_pre = " << m->enq_osd_queue_t - m->get_recv_complete_stamp() << \
       " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
       " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
       " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
       " # local_journal_write = " << m->finish_journal_op_t - m->deq_journal_queue_t << \
-      " # get_all_commit = " << ceph_clock_now(g_ceph_context) - m->recv_op_t << dendl;
+      " # get_all_commit = " << m->get_all_commit - m->recv_op_t << dendl;
       /*
       dout(0) << "op commit calback write trace timestamp " << m->get_reqid() << \
       " # recv_op_t = " << m->recv_op_t << \
@@ -6630,6 +6643,17 @@ void ReplicatedPG::eval_repop(RepGather *repop)
 	  reply->set_reply_versions(repop->ctx->at_version,
 	                            repop->ctx->user_at_version);
 	}
+        reply->trace_time.push_back(m->get_mtime());
+        reply->trace_time.push_back(m->clienttoosd);
+        reply->trace_time.push_back(m->get_recv_stamp());
+        reply->trace_time.push_back(m->get_recv_complete_stamp());
+        reply->trace_time.push_back(m->enq_osd_queue_t);
+        reply->trace_time.push_back(m->deq_osd_queue_t);
+        reply->trace_time.push_back(m->enq_journal_queue_t);
+        reply->trace_time.push_back(m->deq_journal_queue_t);
+        reply->trace_time.push_back(m->finish_journal_op_t);
+        reply->trace_time.push_back(m->get_all_commit);
+        reply->mtime = ceph_clock_now(g_ceph_context);
 	reply->add_flags(CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
 	dout(10) << " sending commit on " << *repop << " " << reply << dendl;
 	osd->send_message_osd_client(reply, m->get_connection());
@@ -6638,7 +6662,6 @@ void ReplicatedPG::eval_repop(RepGather *repop)
       }
     }
 
-  //  m->set_get_all_commit(ceph_clock_now(g_ceph_context));
     // applied?
     if (repop->all_applied) {
 
@@ -6851,6 +6874,7 @@ void ReplicatedBackend::issue_op(
       tid, at_version);
 
     wr->set_gen_t(ceph_clock_now(g_ceph_context));
+    wr->mtime = ceph_clock_now(g_ceph_context);
     // ship resulting transaction, log entries, and pg_stats
     if (!parent->should_send_op(peer, soid)) {
       dout(10) << "issue_repop shipping empty opt to osd." << peer
@@ -7725,7 +7749,8 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
     {
       //dout(0) << "Message is from osd ? " <<m->get_source().is_osd() << dendl;
       dout(0) << "subop apply callback write trace point " << rm->op->get_reqid() << \
-      " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
+      " # recv = " << m->get_recv_complete_stamp() - m->get_recv_stamp() << \
+      " # osd_queue_pre = " << m->enq_osd_queue_t - m->get_recv_complete_stamp() << \
       " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
       " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
       " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \
@@ -7796,7 +7821,8 @@ void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
   {
     //dout(0) << "Message is from osd ? " <<m->get_source().is_osd() << dendl;
     dout(0) << "subop commit callback write trace point " << rm->op->get_reqid() << \
-    " # osd_queue_pre = " << m->enq_osd_queue_t - m->recv_op_t << \
+    " # recv = " << m->get_recv_complete_stamp() - m->get_recv_stamp() << \
+    " # osd_queue_pre = " << m->enq_osd_queue_t - m->get_recv_complete_stamp() << \
     " # osd_queue = " << m->deq_osd_queue_t - m->enq_osd_queue_t << \
     " # osd_journal_pre = " <<  m->enq_journal_queue_t -  m->deq_osd_queue_t << \
     " # osd_journal_queue = " <<  m->deq_journal_queue_t - m->enq_journal_queue_t << \

@@ -1149,6 +1149,10 @@ public:
       should_resend(true) {
       ops.swap(op);
       
+      struct timeval tv;
+      gettimeofday(&tv, NULL);
+      utime_t n(&tv);
+      mtime = n;
       /* initialize out_* to match op vector */
       out_bl.resize(ops.size());
       out_rval.resize(ops.size());
@@ -1688,6 +1692,7 @@ public:
 	     snapid_t snapid, bufferlist *pbl, int flags,
 	     Context *onack, version_t *objver = NULL) {
     Op *o = new Op(oid, oloc, op.ops, flags | global_op_flags | CEPH_OSD_FLAG_READ, onack, NULL, objver);
+    o->mtime = ceph_clock_now(cct);
     o->priority = op.priority;
     o->snapid = snapid;
     o->outbl = pbl;
