@@ -1449,7 +1449,16 @@ unsigned KeyValueStore::_do_transaction(Transaction& transaction,
       break;
 
     case Transaction::OP_SETALLOCHINT:
-      // TODO: can kvstore make use of the hint?
+      {
+        // TODO: can kvstore make use of the hint?
+        coll_t cid(i.get_cid());
+        ghobject_t oid = i.get_oid();
+        uint64_t expected_object_size = i.get_length();
+        uint64_t expected_write_size = i.get_length();
+        dout(0) << __func__ << " doesn't support op " << op << " on " << cid
+                << "/" << oid << " object_size " << expected_object_size
+                << " write_size " << expected_write_size << dendl;
+      }
       break;
 
     default:
