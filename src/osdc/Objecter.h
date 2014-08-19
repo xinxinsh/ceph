@@ -1011,6 +1011,8 @@ public:
   std::multimap<string,string> crush_location;
 
   bool initialized;
+  vector<double>write_trace;
+  vector<double>read_trace;
 
 private:
   ceph_tid_t last_tid;
@@ -1149,6 +1151,10 @@ public:
       should_resend(true) {
       ops.swap(op);
       
+      struct timeval tv;
+      gettimeofday(&tv, NULL);
+      utime_t n(&tv);
+      mtime = n;
       /* initialize out_* to match op vector */
       out_bl.resize(ops.size());
       out_rval.resize(ops.size());
@@ -1534,6 +1540,10 @@ public:
     op_throttle_ops.put(1);
   }
   Throttle op_throttle_bytes, op_throttle_ops;
+  double sample_count;
+  double ops_zero_count;
+  double read_samples;
+  double write_samples;
 
  public:
   Objecter(CephContext *cct_, Messenger *m, MonClient *mc,
@@ -1554,13 +1564,13 @@ public:
     mon_timeout(mon_timeout),
     osd_timeout(osd_timeout),
     op_throttle_bytes(cct, "objecter_bytes", cct->_conf->objecter_inflight_op_bytes),
-    op_throttle_ops(cct, "objecter_ops", cct->_conf->objecter_inflight_ops)
+    op_throttle_ops(cct, "objecter_ops", cct->_conf->objecter_inflight_ops),
+    sample_count(cct->_conf->sample_count),
+    ops_zero_count(cct->_conf->ops_zero_count),
+    read_samples(0),
+    write_samples(0)
   { }
-  ~Objecter() {
-    assert(!tick_event);
-    assert(!m_request_state_hook);
-    assert(!logger);
-  }
+  ~Objecter();
 
   void init_unlocked();
   void init_locked();
@@ -1688,6 +1698,7 @@ public:
 	     snapid_t snapid, bufferlist *pbl, int flags,
 	     Context *onack, version_t *objver = NULL) {
     Op *o = new Op(oid, oloc, op.ops, flags | global_op_flags | CEPH_OSD_FLAG_READ, onack, NULL, objver);
+    o->mtime = ceph_clock_now(cct);
     o->priority = op.priority;
     o->snapid = snapid;
     o->outbl = pbl;

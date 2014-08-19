@@ -89,7 +89,7 @@ public:
 
   hobject_t new_temp_oid;      ///< new temp object that we must now start tracking
   hobject_t discard_temp_oid;  ///< previously used temp object that we can now stop tracking
-
+ 
   /// non-empty if this transaction involves a hit_set history update
   boost::optional<pg_hit_set_history_t> updated_hit_set_history;
 

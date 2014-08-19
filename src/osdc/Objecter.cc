@@ -435,6 +435,7 @@ ceph_tid_t Objecter::linger_read(const object_t& oid, const object_locator_t& ol
   info->poutbl = poutbl;
   info->pobjver = objver;
   info->on_reg_commit = onfinish;
+  info->mtime = ceph_clock_now(cct);
 
   info->linger_id = ++max_linger_id;
   linger_ops[info->linger_id] = info;
@@ -1726,7 +1727,6 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
 
   // get pio
   ceph_tid_t tid = m->get_tid();
-
   if (ops.count(tid) == 0) {
     ldout(cct, 7) << "handle_osd_op_reply " << tid
 	    << (m->is_ondisk() ? " ondisk":(m->is_onnvram() ? " onnvram":" ack"))
@@ -1844,6 +1844,85 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
     op->outbl = 0;
   }
 
+  // do callbacks
+  if (onack) {
+    onack->complete(rc);
+  }
+  if (oncommit) {
+    oncommit->complete(rc);
+  }
+
+  vector<utime_t> time = m->trace_time;
+  if(cct->_conf->trace_enabled && time.size() != 0)
+  {
+    int idx=0;
+    utime_t now = ceph_clock_now(cct);
+    if (op->target.flags & CEPH_OSD_FLAG_WRITE) {
+      if(write_trace.empty()) 
+        write_trace.resize(time.size());
+      assert(write_trace.size() == time.size());
+      for(unsigned i = 0; i < time.size()-1; i++)
+      {
+        if(i == 1) continue;
+        double interval = time[i+1] - time[i];
+        write_trace[idx]+=interval;
+        idx++;
+      }
+      write_trace[idx]+=(now - m->get_recv_stamp());
+      idx++;
+      write_trace[idx]+=(now - time[0]);
+      write_samples++;
+      sample_count--;
+    }else if (op->target.flags & CEPH_OSD_FLAG_READ) {
+      if (read_trace.empty())
+        read_trace.resize(time.size());
+      assert(read_trace.size() == time.size());
+      for(unsigned i = 0; i < time.size()-1; i++)
+      {
+        if(i == 1) continue;
+        double interval = time[i+1] - time[i];
+        read_trace[idx]+=interval;
+        idx++;
+      }
+      read_trace[idx]+=(now - m->get_recv_stamp());
+      idx++;
+      read_trace[idx]+=(now - time[0]);
+      read_samples++;
+      sample_count--;
+    }
+    if (ops.size() == 1)
+      ops_zero_count--;
+    if ((sample_count == 0) || ops_zero_count == 0) {
+      std::ostringstream os;
+      for(unsigned i = 0; i < write_trace.size(); i++)
+      {
+        double avg = 1000 * (write_trace[i]/write_samples);
+        os << " # Stage_";
+        os << i+1;
+        os << " = ";
+        os << avg;
+      }
+      if (!write_trace.empty())
+        ldout(cct,0) << "write average interval with " << write_samples << " samples " << os.str() << "\n" << dendl;
+      std::ostringstream tos;
+      for(unsigned i = 0; i < read_trace.size(); i++)
+      {
+        double avg = 1000 * (read_trace[i]/read_samples);
+        tos << " # Stage_";
+        tos << i+1;
+        tos << " = ";
+        tos << avg;
+      }
+      if (!read_trace.empty())
+        ldout(cct,0) << "read average interval with " << read_samples << " samples " << tos.str() << "\n" << dendl;
+      sample_count = cct->_conf->sample_count;
+      ops_zero_count = cct->_conf->ops_zero_count;
+      write_samples = 0;
+      read_samples = 0;
+      write_trace.clear();
+      read_trace.clear();
+    }
+  }
   // done with this tid?
   if (!op->onack && !op->oncommit) {
     ldout(cct, 15) << "handle_osd_op_reply completed tid " << tid << dendl;
@@ -1852,13 +1931,6 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   
   ldout(cct, 5) << num_unacked << " unacked, " << num_uncommitted << " uncommitted" << dendl;
 
-  // do callbacks
-  if (onack) {
-    onack->complete(rc);
-  }
-  if (oncommit) {
-    oncommit->complete(rc);
-  }
 
   m->put();
 }
@@ -2889,3 +2961,36 @@ void Objecter::_finish_command(CommandOp *c, int r, string rs)
 
   logger->set(l_osdc_command_active, command_ops.size());
 }
+Objecter::~Objecter() {
+  assert(!tick_event);
+  assert(!m_request_state_hook);
+  assert(!logger);
+  std::ostringstream os;
+  for(unsigned i = 0; i < write_trace.size(); i++)
+  {
+    double avg = 1000 * (write_trace[i]/write_samples);
+    os << " # Stage_";
+    os << i+1;
+    os << " = ";
+    os << avg;
+  }
+  if (!write_trace.empty())
+    ldout(cct,0) << "dump write average interval with " << write_samples << " samples " << os.str() << "\n" << dendl;
+  std::ostringstream tos;
+  for(unsigned i = 0; i < read_trace.size(); i++)
+  {
+    double avg = 1000 * (read_trace[i]/read_samples);
+    tos << " # Stage_";
+    tos << i+1;
+    tos << " = ";
+    tos << avg;
+  }
+  if (!read_trace.empty())
+    ldout(cct,0) << "dump read average interval with " << read_samples << " samples " << tos.str() << "\n" << dendl;
+  sample_count = cct->_conf->sample_count;
+  write_trace.clear();
+  read_trace.clear();
+  write_samples = 0;
+  read_samples = 0;
+}
+

@@ -378,6 +378,7 @@ protected:
       msg_throttler->put();
   }
 public:
+
   const ConnectionRef& get_connection() { return connection; }
   void set_connection(const ConnectionRef& c) {
     connection = c;

@@ -4937,11 +4937,12 @@ void OSD::dispatch_op(OpRequestRef op)
   case CEPH_MSG_OSD_OP:
     handle_op(op);
     break;
-
+   
     // for replication etc.
   case MSG_OSD_SUBOP:
     handle_replica_op<MOSDSubOp, MSG_OSD_SUBOP>(op);
     break;
+   
   case MSG_OSD_SUBOPREPLY:
     handle_replica_op<MOSDSubOpReply, MSG_OSD_SUBOPREPLY>(op);
     break;
@@ -7598,6 +7599,18 @@ void OSD::enqueue_op(PG *pg, OpRequestRef op)
 	   << " cost " << op->get_req()->get_cost()
 	   << " latency " << latency
 	   << " " << *(op->get_req()) << dendl;
+  switch (op->get_req()->get_type()) {
+  
+  // primary op
+  case CEPH_MSG_OSD_OP:
+  {
+    MOSDOp * m = static_cast<MOSDOp *>(op->get_req());
+    m->set_enq_osd_queue_t(ceph_clock_now(g_ceph_context));
+    break;
+  }
+  default:
+    break;
+  }
   pg->queue_op(op);
 }
 
@@ -7643,6 +7656,20 @@ PGRef OSD::OpWQ::_dequeue()
     Mutex::Locker l(qlock);
     pair<PGRef, OpRequestRef> ret = pqueue.dequeue();
     pg = ret.first;
+    OpRequestRef op = ret.second;
+    switch (op->get_req()->get_type()) {
+
+    // primary op
+    case CEPH_MSG_OSD_OP:
+    {
+      MOSDOp * m = static_cast<MOSDOp *>(op->get_req());
+      m->set_deq_osd_queue_t(ceph_clock_now(g_ceph_context));
+      break;
+    }
+    default:
+      break;
+    }
+
     pg_for_processing[&*pg].push_back(ret.second);
   }
   osd->logger->set(l_osd_opq, pqueue.length());
