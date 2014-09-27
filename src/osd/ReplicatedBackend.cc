@@ -672,6 +672,31 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
       ip_op.on_commit->complete(0);
       ip_op.on_commit= 0;
     }
+  if((ip_op.op).get())
+  {
+    switch ((ip_op.op)->get_req()->get_type()) {
+
+    //dout(0) << "Finish Journal Request Type = " << (ip_op.op)->get_req()->get_type_name() << dendl;
+      // primary op
+    case CEPH_MSG_OSD_OP:
+    {
+      MOSDOp * mm = static_cast<MOSDOp *>((ip_op.op)->get_req());
+      if(g_ceph_context->_conf->trace_enabled)
+      {
+      dout(0) << "subop callback journal write trace point " << mm->get_reqid() << \
+      " # osd_queue_pre = " << mm->enq_osd_queue_t - mm->recv_op_t << \
+      " # osd_queue = " << mm->deq_osd_queue_t - mm->enq_osd_queue_t << \
+      " # osd_journal_pre = " <<  mm->enq_journal_queue_t -  mm->deq_osd_queue_t << \
+      " # osd_journal_queue = " <<  mm->deq_journal_queue_t - mm->enq_journal_queue_t << \
+      " # local_journal_write = " << mm->finish_journal_op_t - mm->deq_journal_queue_t << dendl;
+      }
+      break;
+    }
+    default:
+      break;
+    }
+
+  }
     if (ip_op.done()) {
       assert(!ip_op.on_commit && !ip_op.on_applied);
       in_progress_ops.erase(iter);
