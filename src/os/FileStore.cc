@@ -35,6 +35,9 @@
 
 #include "common/xattr.h"
 #include "chain_xattr.h"
+#include "messages/MOSDOp.h"
+#include "messages/MOSDSubOp.h"
+#include "msg/Message.h"
 
 #if defined(DARWIN) || defined(__FreeBSD__)
 #include <sys/param.h>
@@ -1758,10 +1761,28 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
     g_conf->set_val("filestore_inject_stall", "0");
     dout(5) << "_do_op done stalling" << dendl;
   }
-
   osr->apply_lock.Lock();
   Op *o = osr->peek_queue();
+  if((o->osd_op).get())
+  {
+    OpRequest *op = dynamic_cast<OpRequest *>(o->osd_op.get());
+    switch (op->get_req()->get_type()) {
+
+    // primary op
+    case CEPH_MSG_OSD_OP:
+    {
+      MOSDOp * m = static_cast<MOSDOp *>(op->get_req());
+      m->set_deq_filestore_queue_t(ceph_clock_now(g_ceph_context));
+      break;
+    }
+    default:
+      break;
+    }
+
+  }
+
   apply_manager.op_apply_start(o->op);
+  
   dout(5) << "_do_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << " start" << dendl;
   int r = _do_transactions(o->tls, o->op, &handle);
   apply_manager.op_apply_finish(o->op);
@@ -1773,6 +1794,24 @@ void FileStore::_finish_op(OpSequencer *osr)
 {
   list<Context*> to_queue;
   Op *o = osr->dequeue(&to_queue);
+  if((o->osd_op).get())
+  {
+    OpRequest *op = dynamic_cast<OpRequest *>((o->osd_op).get());
+    switch (op->get_req()->get_type()) {
+
+    // primary op
+    case CEPH_MSG_OSD_OP:
+    {
+      MOSDOp * m = static_cast<MOSDOp *>(op->get_req());
+      m->set_finish_filestore_op_t(ceph_clock_now(g_ceph_context));
+      break;
+    }
+    default:
+      break;
+    }
+
+  }
+
   
   dout(10) << "_finish_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << dendl;
   osr->apply_lock.Unlock();  // locked in _do_op
@@ -1850,6 +1889,23 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
     journal->throttle();
     uint64_t op_num = submit_manager.op_submit_start();
     o->op = op_num;
+
+    if(osd_op.get())
+    {
+      OpRequest *op = dynamic_cast<OpRequest *>((o->osd_op).get());
+      switch (op->get_req()->get_type()) {
+
+      // primary op
+      case CEPH_MSG_OSD_OP:
+      {
+        MOSDOp * m = static_cast<MOSDOp *>(op->get_req());
+        m->set_enq_journal_queue_t(ceph_clock_now(g_ceph_context));
+        break;
+      }
+      default:
+        break;
+      }
+    }
 
     if (m_filestore_do_dump)
       dump_transactions(o->tls, o->op, osr);
@@ -1933,7 +1989,24 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
 
   list<Context*> to_queue;
   osr->dequeue_journal(&to_queue);
+  if((o->osd_op).get())
+  {
+    OpRequest *op = dynamic_cast<OpRequest *>((o->osd_op).get());
+    switch (op->get_req()->get_type()) {
 
+      // primary op
+    case CEPH_MSG_OSD_OP:
+    {
+      MOSDOp * m = static_cast<MOSDOp *>(op->get_req());
+      m->set_finish_journal_op_t(ceph_clock_now(g_ceph_context));
+      m->set_enq_filestore_queue_t(ceph_clock_now(g_ceph_context));
+      break;
+    }
+    default:
+      break;
+    }
+
+  }
   // do ondisk completions async, to prevent any onreadable_sync completions
   // getting blocked behind an ondisk completion.
   if (ondisk) {

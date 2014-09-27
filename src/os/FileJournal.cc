@@ -1488,12 +1488,13 @@ void FileJournal::pop_write()
   writeq.pop_front();
   if(item.tracked_op.get())
   {
-    switch ((item.tracked_op)->get_req()->get_type()) {
+    OpRequest *op = dynamic_cast<OpRequest *>((item.tracked_op).get());
+    switch (op->get_req()->get_type()) {
 
     // primary op
     case CEPH_MSG_OSD_OP:
     {
-      MOSDOp * m = static_cast<MOSDOp *>((item.tracked_op)->get_req());
+      MOSDOp * m = static_cast<MOSDOp *>(op->get_req());
       m->set_deq_journal_queue_t(ceph_clock_now(g_ceph_context));
       break;
     }
