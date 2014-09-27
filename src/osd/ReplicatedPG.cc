@@ -5557,6 +5557,15 @@ void ReplicatedPG::complete_read_ctx(int result, OpContext *ctx)
     // on ENOENT, set a floor for what the next user version will be.
     reply->set_enoent_reply_versions(info.last_update, info.last_user_version);
   }
+  reply->mtime = ceph_clock_now(g_ceph_context);
+  reply->trace_time.push_back(m->get_mtime());
+  reply->trace_time.push_back(m->clienttoosd);
+  reply->trace_time.push_back(m->get_recv_stamp());
+  reply->trace_time.push_back(m->get_recv_complete_stamp());
+  reply->trace_time.push_back(m->enq_osd_queue_t);
+  reply->trace_time.push_back(m->deq_osd_queue_t);
+  reply->trace_time.push_back(reply->mtime);
+
 
   reply->set_result(result);
   reply->add_flags(CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
@@ -6752,6 +6761,22 @@ void ReplicatedPG::repop_all_committed(RepGather *repop)
       last_update_ondisk = repop->v;
       last_complete_ondisk = repop->pg_local_last_complete;
     }
+  if((repop->ctx->op).get())
+  {
+    switch (repop->ctx->op->get_req()->get_type()) {
+
+      // primary op
+    case CEPH_MSG_OSD_OP:
+    {
+      MOSDOp * m = static_cast<MOSDOp *>(repop->ctx->op->get_req());
+      m->get_all_commit = ceph_clock_now(g_ceph_context);
+      break;
+    }
+    default:
+      break;
+    }
+
+  }
     eval_repop(repop);
   }
 }
@@ -6843,6 +6868,17 @@ void ReplicatedPG::eval_repop(RepGather *repop)
 	  reply->set_reply_versions(repop->ctx->at_version,
 	                            repop->ctx->user_at_version);
 	}
+        reply->trace_time.push_back(m->get_mtime());
+        reply->trace_time.push_back(m->clienttoosd);
+        reply->trace_time.push_back(m->get_recv_stamp());
+        reply->trace_time.push_back(m->get_recv_complete_stamp());
+        reply->trace_time.push_back(m->enq_osd_queue_t);
+        reply->trace_time.push_back(m->deq_osd_queue_t);
+        reply->trace_time.push_back(m->enq_journal_queue_t);
+        reply->trace_time.push_back(m->deq_journal_queue_t);
+        reply->trace_time.push_back(m->finish_journal_op_t);
+        reply->trace_time.push_back(m->get_all_commit);
+        reply->mtime = ceph_clock_now(g_ceph_context);
 	reply->add_flags(CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
 	dout(10) << " sending commit on " << *repop << " " << reply << dendl;
 	osd->send_message_osd_client(reply, m->get_connection());
@@ -6895,7 +6931,6 @@ void ReplicatedPG::eval_repop(RepGather *repop)
 	repop->ctx->readable_stamp = ceph_clock_now(cct);
     }
   }
-
   // done.
   if (repop->all_applied && repop->all_committed) {
     repop->rep_done = true;
