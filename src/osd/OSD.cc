@@ -8207,6 +8207,18 @@ void OSD::enqueue_op(PG *pg, OpRequestRef& op)
 	   << " cost " << op->get_req()->get_cost()
 	   << " latency " << latency
 	   << " " << *(op->get_req()) << dendl;
+  switch (op->get_req()->get_type()) {
+  // primary op
+  case CEPH_MSG_OSD_OP:
+  {
+    MOSDOp * m = static_cast<MOSDOp *>(op->get_req());
+    m->set_enq_osd_queue_t(ceph_clock_now(g_ceph_context));
+    break;
+  }
+  default:
+    break;
+  }
+
   pg->queue_op(op);
 }
 
@@ -8230,6 +8242,19 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
     }
   }
   pair<PGRef, OpRequestRef> item = sdata->pqueue.dequeue();
+  OpRequestRef rp = item.second;
+  switch (rp->get_req()->get_type()) {
+  // primary op
+  case CEPH_MSG_OSD_OP:
+  {
+    MOSDOp * m = static_cast<MOSDOp *>(rp->get_req());
+    m->set_deq_osd_queue_t(ceph_clock_now(g_ceph_context));
+    break;
+  }
+  default:
+    break;
+  }
+
   sdata->pg_for_processing[&*(item.first)].push_back(item.second);
   sdata->sdata_op_ordering_lock.Unlock();
   ThreadPool::TPHandle tp_handle(osd->cct, hb, timeout_interval, 
