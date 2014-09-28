@@ -2645,7 +2645,77 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   if (completion_lock) {
     completion_lock->Unlock();
   }
-
+  vector<utime_t> time = m->trace_time;
+  if(cct->_conf->trace_enabled && time.size() != 0)
+  {
+    int idx=0;
+    utime_t now = ceph_clock_now(cct);
+    if (op->target.flags & CEPH_OSD_FLAG_WRITE) {
+      if(write_trace.empty())
+        write_trace.resize(time.size());
+      assert(write_trace.size() == time.size());
+      for(unsigned i = 0; i < time.size()-1; i++)
+      {
+        if(i == 1) continue;
+        double interval = time[i+1] - time[i];
+        write_trace[idx]+=interval;
+        idx++;
+      }
+      write_trace[idx]+=(now - m->get_recv_stamp());
+      idx++;
+      write_trace[idx]+=(now - time[0]);
+      write_samples++;
+      sample_count--;
+    } else if (op->target.flags & CEPH_OSD_FLAG_READ) {
+      if (read_trace.empty())
+        read_trace.resize(time.size());
+      assert(read_trace.size() == time.size());
+      for(unsigned i = 0; i < time.size()-1; i++)
+      {
+        if(i == 1) continue;
+        double interval = time[i+1] - time[i];
+        read_trace[idx]+=interval;
+        idx++;
+      }
+      read_trace[idx]+=(now - m->get_recv_stamp());
+      idx++;
+      read_trace[idx]+=(now - time[0]);
+      read_samples++;
+      sample_count--;
+    }
+    if (s->ops.size() == 0)
+      ops_zero_count--;
+    if ((sample_count == 0) || ops_zero_count == 0) {
+      std::ostringstream os;
+      for(unsigned i = 0; i < write_trace.size(); i++)
+      {
+        double avg = 1000 * (write_trace[i]/write_samples);
+        os << " # Stage_";
+        os << i+1;
+        os << " = ";
+        os << avg;
+      }
+      if (!write_trace.empty())
+        ldout(cct,0) << "write average interval with " << write_samples << " samples " << os.str() << "\n" << dendl;
+      std::ostringstream tos;
+      for(unsigned i = 0; i < read_trace.size(); i++)
+      {
+        double avg = 1000 * (read_trace[i]/read_samples);
+        tos << " # Stage_";
+        tos << i+1;
+        tos << " = ";
+        tos << avg;
+      }
+      if (!read_trace.empty())
+        ldout(cct,0) << "read average interval with " << read_samples << " samples " << tos.str() << "\n" << dendl;
+      sample_count = cct->_conf->sample_count;
+      ops_zero_count = cct->_conf->ops_zero_count;
+      write_samples = 0;
+      read_samples = 0;
+      write_trace.clear();
+      read_trace.clear();
+    }
+  }
   m->put();
   put_session(s);
 }
@@ -3924,5 +3994,32 @@ Objecter::~Objecter()
   assert(!tick_event);
   assert(!m_request_state_hook);
   assert(!logger);
+  std::ostringstream os;
+  for(unsigned i = 0; i < write_trace.size(); i++)
+  {
+    double avg = 1000 * (write_trace[i]/write_samples);
+    os << " # Stage_";
+    os << i+1;
+    os << " = ";
+    os << avg;
+  }
+  if (!write_trace.empty())
+    ldout(cct,0) << "dump write average interval with " << write_samples << " samples " << os.str() << "\n" << dendl;
+  std::ostringstream tos;
+  for(unsigned i = 0; i < read_trace.size(); i++)
+  {
+    double avg = 1000 * (read_trace[i]/read_samples);
+    tos << " # Stage_";
+    tos << i+1;
+    tos << " = ";
+    tos << avg;
+  }
+  if (!read_trace.empty())
+    ldout(cct,0) << "dump read average interval with " << read_samples << " samples " << tos.str() << "\n" << dendl;
+  sample_count = cct->_conf->sample_count;
+  write_trace.clear();
+  read_trace.clear();
+  write_samples = 0;
+  read_samples = 0;
 }
 
