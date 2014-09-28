@@ -73,6 +73,9 @@ namespace librbd {
     utime_t elapsed;
     assert(lock.is_locked());
     elapsed = ceph_clock_now(ictx->cct) - start_time;
+    if(ictx->cct->_conf->librbd_trace)
+      ldout(ictx->cct,0) << "librbd request of type " << aio_type << " elapsed time = " << elapsed << "\n" << dendl;
+
     switch (aio_type) {
     case AIO_TYPE_READ:
       ictx->perfcounter->tinc(l_librbd_aio_rd_latency, elapsed); break;
