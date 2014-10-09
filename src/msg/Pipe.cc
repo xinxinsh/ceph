@@ -22,6 +22,7 @@
 #include "Pipe.h"
 #include "SimpleMessenger.h"
 #include "messages/MOSDOp.h"
+#include "messages/MOSDOpReply.h"
 
 #include "common/debug.h"
 #include "common/errno.h"
@@ -1719,6 +1720,12 @@ void Pipe::writer()
           {
             MOSDOp *mop = static_cast<MOSDOp *>(m);
             mop->set_clienttoosd(ceph_clock_now(msgr->cct));
+            break;
+          }
+          case CEPH_MSG_OSD_OPREPLY:
+          {
+            MOSDOpReply *mrp = static_cast<MOSDOpReply *>(m);
+            mrp->trace_time.push_back(ceph_clock_now(msgr->cct));
             break;
           }
         }
