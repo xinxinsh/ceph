@@ -2650,7 +2650,7 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   {
     int idx=0;
     utime_t now = ceph_clock_now(cct);
-    if (op->target.flags & CEPH_OSD_FLAG_WRITE) {
+    if (op->target.flags == CEPH_OSD_FLAG_WRITE) {
       if(write_trace.empty())
         write_trace.resize(time.size());
       assert(write_trace.size() == time.size());
@@ -2666,7 +2666,7 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
       write_trace[idx]+=(now - time[0]);
       write_samples++;
       sample_count--;
-    } else if (op->target.flags & CEPH_OSD_FLAG_READ) {
+    } else if (op->target.flags == CEPH_OSD_FLAG_READ) {
       if (read_trace.empty())
         read_trace.resize(time.size());
       assert(read_trace.size() == time.size());
