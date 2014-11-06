@@ -2640,8 +2640,9 @@ void PG::write_info(ObjectStore::Transaction& t)
   info.stats.stats.add(unstable_stats);
   unstable_stats.clear();
 
+  hobject_t oid = OSD::make_pg_infos_oid(info.pgid);
   int ret = _write_info(t, get_osdmap()->get_epoch(), info, coll,
-     past_intervals, snap_collections, osd->infos_oid,
+     past_intervals, snap_collections, oid,
      info_struct_v, dirty_big_info);
   assert(ret == 0);
   last_persisted_osdmap_ref = osdmap_ref;
@@ -2885,8 +2886,10 @@ int PG::read_info(
 
 void PG::read_state(ObjectStore *store, bufferlist &bl)
 {
+  hobject_t oid = OSD::make_pg_infos_oid(info.pgid);
+
   int r = read_info(store, coll, bl, info, past_intervals, biginfo_oid,
-    osd->infos_oid, snap_collections, info_struct_v);
+    oid, snap_collections, info_struct_v);
   assert(r >= 0);
 
   ostringstream oss;

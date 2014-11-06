@@ -994,6 +994,13 @@ public:
     getline(ss, s);
     return hobject_t(sobject_t(object_t(s.c_str()), 0));
   }
+  static hobject_t make_pg_infos_oid(spg_t pg) {
+    stringstream ss;
+    ss << "infos_" << pg;
+    string s;
+    getline(ss, s);
+    return hobject_t(sobject_t(object_t(s.c_str()), 0));
+  }
   static hobject_t make_infos_oid() {
     hobject_t oid(sobject_t("infos", CEPH_NOSNAP));
     return oid;

@@ -2907,7 +2907,8 @@ void OSD::load_pgs()
 
     dout(10) << "pgid " << pgid << " coll " << coll_t(pgid) << dendl;
     bufferlist bl;
-    epoch_t map_epoch = PG::peek_map_epoch(store, coll_t(pgid), service.infos_oid, &bl);
+    hobject_t oid = make_pg_infos_oid(pgid);
+    epoch_t map_epoch = PG::peek_map_epoch(store, coll_t(pgid), oid, &bl);
 
     PG *pg = _open_lock_pg(map_epoch == 0 ? osdmap : service.get_map(map_epoch), pgid);
     // there can be no waiters here, so we don't call wake_pg_waiters
@@ -3207,6 +3208,9 @@ void OSD::handle_pg_peering_evt(
       ::encode(expected_num_objects_pg, hint);
       uint32_t hint_type = ObjectStore::Transaction::COLL_HINT_EXPECTED_NUM_OBJECTS;
       rctx.transaction->collection_hint(cid, hint_type, hint);
+      hobject_t oid = make_pg_infos_oid(pgid);
+      rctx.transaction->touch(coll_t(), oid);
+
 
       PG *pg = _create_lock_pg(
 	get_map(epoch),
@@ -4281,7 +4285,7 @@ void OSD::RemoveWQ::_process(
   ObjectStore::Transaction *t = new ObjectStore::Transaction;
   PGLog::clear_info_log(
     pg->info.pgid,
-    OSD::make_infos_oid(),
+    OSD::make_pg_infos_oid(pg->info.pgid),
     pg->log_oid,
     t);
 
@@ -7033,6 +7037,8 @@ void OSD::handle_pg_create(OpRequestRef op)
       ::encode(expected_num_objects_pg, hint);
       uint32_t hint_type = ObjectStore::Transaction::COLL_HINT_EXPECTED_NUM_OBJECTS;
       rctx.transaction->collection_hint(cid, hint_type, hint);
+      hobject_t oid = make_pg_infos_oid(pgid);
+      rctx.transaction->touch(coll_t(), oid);
 
       pg = _create_lock_pg(
 	osdmap, pgid, true, false, false,
