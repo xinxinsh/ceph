@@ -69,7 +69,7 @@ public:
   } 
   bool is_pgmeta() const {
     // make sure we are distinct from hobject_t(), which has pool -1
-    return pool >= 0 && name.empty();
+    return pool >= 0 && oid.name.empty();
   }
   
   hobject_t() : snap(0), hash(0), max(false), pool(-1) {}
