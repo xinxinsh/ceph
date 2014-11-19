@@ -58,11 +58,18 @@ public:
   }
 
   static hobject_t make_temp(const string &name) {
-    hobject_t ret(object_t(name), "", CEPH_NOSNAP, 0, POOL_IS_TEMP, "");
-    return ret;
+    return hobject_t(object_t(name), "", CEPH_NOSNAP, 0, POOL_IS_TEMP, "");
   }
   bool is_temp() const {
     return pool == POOL_IS_TEMP;
+  }
+
+  static hobject_t make_pgmeta(int64_t pool, uint32_t hash) {
+    return hobject_t(object_t(), string(), CEPH_NOSNAP, hash, pool, string());
+  } 
+  bool is_pgmeta() const {
+    // make sure we are distinct from hobject_t(), which has pool -1
+    return pool >= 0 && name.empty();
   }
   
   hobject_t() : snap(0), hash(0), max(false), pool(-1) {}
