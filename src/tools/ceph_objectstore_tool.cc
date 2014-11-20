@@ -1391,7 +1391,8 @@ int do_import(ObjectStore *store, OSDSuperblock& sb)
   //this program is interupted.
   coll_t rmcoll = coll_t::make_removal_coll(next_removal_seq, pgid);
   ObjectStore::Transaction *t = new ObjectStore::Transaction;
-  t->create_collection(rmcoll);
+  PG::_create(*t, pgid, NULL);
+  t->collection_setattr(coll, "remove", one);
   store->apply_transaction(*t);
   delete t;
 
