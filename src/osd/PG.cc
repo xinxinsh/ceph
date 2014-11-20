@@ -2485,8 +2485,15 @@ void PG::upgrade(ObjectStore *store, const interval_set<snapid_t> &snapcolls)
   t.remove(META_COLL, biginfo_oid);
   t.collection_rmattr(coll, "info");
 
+  map<string,bufferlist> v;
+  __u8 ver = cur_struct_v;
+  ::encode(ver, v[infover_key]);
+  t.omap_setkeys(coll, pgmeta_oid, v);
+
   dirty_info = true;
+  dirty_big_info = true;
   write_if_dirty(t);
+
   int r = store->apply_transaction(t);
   if (r != 0) {
     derr << __func__ << ": apply_transaction returned "
@@ -2629,18 +2636,12 @@ int PG::_write_info(ObjectStore::Transaction& t, epoch_t epoch,
 		    __u8 info_struct_v, bool dirty_big_info, bool force_ver)
 {
   // pg state
+#warning fixme why do we need info_struct_v and force_ver here?
 
   if (info_struct_v > cur_struct_v)
     return -EINVAL;
 
   map<string,bufferlist> v;
-
-  // Only need to write struct_v to attr when upgrading
-  if (force_ver || info_struct_v < cur_struct_v) {
-    info_struct_v = cur_struct_v;
-    ::encode(info_struct_v, v[infover_key]);
-    dirty_big_info = true;
-  }
 
   // info.  store purged_snaps separately.
   interval_set<snapid_t> purged_snaps;
@@ -2658,7 +2659,7 @@ int PG::_write_info(ObjectStore::Transaction& t, epoch_t epoch,
     //dout(20) << "write_info bigbl " << bigbl.length() << dendl;
   }
 
-  t.omap_setkeys(META_COLL, pgmeta_oid, v);
+  t.omap_setkeys(coll, pgmeta_oid, v);
 
   return 0;
 }
@@ -2920,7 +2921,7 @@ void PG::read_state(ObjectStore *store, bufferlist &bl)
   assert(r >= 0);
 
   ostringstream oss;
-  hobject_t log_oid = pgmeta_oid;
+  ghobject_t log_oid = pgmeta_oid;
   if (info_struct_v < 8)
     log_oid = OSD::make_pg_log_oid(pg_id);
   if (pg_log.read_log(
@@ -2931,7 +2932,7 @@ void PG::read_state(ObjectStore *store, bufferlist &bl)
      */
     pg_log.mark_log_for_rewrite();
     ObjectStore::Transaction t;
-    t.remove(coll_t(), log_oid); // remove old version
+    t.remove(META_COLL, log_oid); // remove old version
     pg_log.write_log(t, pgmeta_oid);
     int r = osd->store->apply_transaction(t);
     assert(!r);
