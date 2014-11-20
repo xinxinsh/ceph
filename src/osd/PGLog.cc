@@ -689,7 +689,7 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
 }
 
 void PGLog::write_log(
-  ObjectStore::Transaction& t, const hobject_t &log_oid)
+  ObjectStore::Transaction& t, const ghobject_t &log_oid)
 {
   if (is_dirty()) {
     dout(10) << "write_log with: "
@@ -715,7 +715,7 @@ void PGLog::write_log(
 }
 
 void PGLog::write_log(ObjectStore::Transaction& t, pg_log_t &log,
-    const hobject_t &log_oid, map<eversion_t, hobject_t> &divergent_priors)
+    const ghobject_t &log_oid, map<eversion_t, hobject_t> &divergent_priors)
 {
   _write_log(
     t, log, log_oid,
@@ -726,7 +726,7 @@ void PGLog::write_log(ObjectStore::Transaction& t, pg_log_t &log,
 
 void PGLog::_write_log(
   ObjectStore::Transaction& t, pg_log_t &log,
-  const hobject_t &log_oid, map<eversion_t, hobject_t> &divergent_priors,
+  const ghobject_t &log_oid, map<eversion_t, hobject_t> &divergent_priors,
   eversion_t dirty_to,
   eversion_t dirty_from,
   eversion_t writeout_from,
@@ -802,7 +802,7 @@ void PGLog::_write_log(
   t.omap_setkeys(META_COLL, log_oid, keys);
 }
 
-bool PGLog::read_log(ObjectStore *store, coll_t coll, hobject_t log_oid,
+bool PGLog::read_log(ObjectStore *store, coll_t coll, ghobject_t log_oid,
   const pg_info_t &info, map<eversion_t, hobject_t> &divergent_priors,
   IndexedLog &log,
   pg_missing_t &missing,
@@ -924,7 +924,7 @@ bool PGLog::read_log(ObjectStore *store, coll_t coll, hobject_t log_oid,
   return rewrite_log;
 }
 
-void PGLog::read_log_old(ObjectStore *store, coll_t coll, hobject_t log_oid,
+void PGLog::read_log_old(ObjectStore *store, coll_t coll, ghobject_t log_oid,
 			 const pg_info_t &info, map<eversion_t, hobject_t> &divergent_priors,
 			 IndexedLog &log,
 			 pg_missing_t &missing, ostringstream &oss,
