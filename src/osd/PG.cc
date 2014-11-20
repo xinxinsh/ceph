@@ -2691,7 +2691,18 @@ epoch_t PG::peek_map_epoch(ObjectStore *store, coll_t coll, hobject_t &infos_oid
   bool ok = coll.is_pg(pgid, snap);
   assert(ok);
   int r = store->collection_getattr(coll, "info", *bl);
-  assert(r > 0);
+  if (r < 0){
+     set<string> keys;
+     map<string, bufferlist> values;
+     keys.insert(infover_key);
+     ghobject_t oid = OSD::make_pg_meta_oid(pgid);
+     r = store->omap_get_values(META_COLL, oid, keys, &values);
+     if (r == 0){
+       bl->swap(values[infover_key]);
+     } else {
+       assert(r == 0);
+     }
+  }
   bufferlist::iterator bp = bl->begin();
   __u8 struct_v = 0;
   ::decode(struct_v, bp);
@@ -2707,7 +2718,10 @@ epoch_t PG::peek_map_epoch(ObjectStore *store, coll_t coll, hobject_t &infos_oid
     set<string> keys;
     keys.insert(get_epoch_key(pgid));
     map<string,bufferlist> values;
-    store->omap_get_values(META_COLL, infos_oid, keys, &values);
+    ghobject_t oid = OSD::make_pg_meta_oid(pgid);
+    if (struct_v < 8)
+      oid = infos_oid;
+    store->omap_get_values(META_COLL, oid, keys, &values);
     assert(values.size() == 1);
     tmpbl = values[ek];
     bufferlist::iterator p = tmpbl.begin();
