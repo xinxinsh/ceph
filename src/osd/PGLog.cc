@@ -145,18 +145,29 @@ void PGLog::clear() {
 }
 
 void PGLog::clear_info_log(
-  spg_t pgid,
+  spg_t pgid, __u8 &struct_v,
   const hobject_t &infos_oid,
   const hobject_t &log_oid,
   ObjectStore::Transaction *t) {
 
   set<string> keys_to_remove;
-  keys_to_remove.insert(PG::get_epoch_key(pgid));
-  keys_to_remove.insert(PG::get_biginfo_key(pgid));
-  keys_to_remove.insert(PG::get_info_key(pgid));
+  if (struct_v < 8) {
+    keys_to_remove.insert(PG::get_epoch_key(pgid));
+    keys_to_remove.insert(PG::get_biginfo_key(pgid));
+    keys_to_remove.insert(PG::get_info_key(pgid));
 
-  t->remove(META_COLL, log_oid);
-  t->omap_rmkeys(META_COLL, infos_oid, keys_to_remove);
+    t->remove(META_COLL, log_oid);
+    t->omap_rmkeys(META_COLL, infos_oid, keys_to_remove);
+  } else {
+    ghobject_t oid = ghobject_t::make_pgmeta(pgid.pgid.pool(), pgid.pgid.ps(), pgid.shard);
+    string epoch_key("epoch");
+    string info_key("info");
+    string biginfo_key("biginfo");
+    keys_to_remove.insert(epoch_key);
+    keys_to_remove.insert(info_key);
+    keys_to_remove.insert(biginfo_key);
+    t->omap_rmkeys(META_COLL, oid, keys_to_remove);
+  }
 }
 
 void PGLog::trim(

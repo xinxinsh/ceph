@@ -2714,13 +2714,15 @@ epoch_t PG::peek_map_epoch(ObjectStore *store, coll_t coll, hobject_t &infos_oid
   } else {
     // get epoch out of leveldb
     bufferlist tmpbl;
-    string ek = get_epoch_key(pgid);
-    set<string> keys;
-    keys.insert(get_epoch_key(pgid));
-    map<string,bufferlist> values;
+    string ek = epoch_key;
     ghobject_t oid = OSD::make_pg_meta_oid(pgid);
-    if (struct_v < 8)
+    if (struct_v < 8) {
+      ek = get_epoch_key(pgid);
       oid = infos_oid;
+    }
+    set<string> keys;
+    keys.insert(ek);
+    map<string,bufferlist> values;
     store->omap_get_values(META_COLL, oid, keys, &values);
     assert(values.size() == 1);
     tmpbl = values[ek];
@@ -2893,13 +2895,19 @@ int PG::read_info(
       ::decode(past_intervals, p);
     } else {
       // get info out of leveldb
-      string k = get_info_key(info.pgid);
-      string bk = get_biginfo_key(info.pgid);
+      string k = info_key;
+      string bk = biginfo_key;
+      ghobject_t oid = OSD::make_pg_meta_oid(info.pgid);
+      if (struct_v < 8) {
+        oid = infos_oid;
+        k = get_info_key(info.pgid);
+        bk = get_biginfo_key(info.pgid);
+      }
       set<string> keys;
       keys.insert(k);
       keys.insert(bk);
       map<string,bufferlist> values;
-      store->omap_get_values(META_COLL, infos_oid, keys, &values);
+      store->omap_get_values(META_COLL, oid, keys, &values);
       assert(values.size() == 2);
       lbl = values[k];
       p = lbl.begin();
