@@ -847,6 +847,8 @@ bool PGLog::read_log(ObjectStore *store, coll_t coll, ghobject_t log_oid,
 	bufferlist bl = p->value();
 	bufferlist::iterator bp = bl.begin();
 	::decode(log.can_rollback_to, bp);
+      } else if ((p->key() == "infover") || (p->key() == "info") || (p->key() == "biginfo") || (p->key() == "epoch")) {
+        continue;
       } else {
 	pg_log_entry_t e;
 	e.decode_with_checksum(bp);
