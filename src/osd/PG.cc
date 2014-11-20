@@ -2636,13 +2636,17 @@ int PG::_write_info(ObjectStore::Transaction& t, epoch_t epoch,
 		    __u8 info_struct_v, bool dirty_big_info, bool force_ver)
 {
   // pg state
-#warning fixme why do we need info_struct_v and force_ver here?
 
   if (info_struct_v > cur_struct_v)
     return -EINVAL;
 
   map<string,bufferlist> v;
 
+  if (force_ver || info_struct_v < cur_struct_v) {
+    info_struct_v = cur_struct_v;
+    ::encode(info_struct_v, v[infover_key]);
+    dirty_big_info = true;
+  }
   // info.  store purged_snaps separately.
   interval_set<snapid_t> purged_snaps;
   ::encode(epoch, v[epoch_key]);
