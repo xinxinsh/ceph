@@ -2475,7 +2475,7 @@ void PG::upgrade(ObjectStore *store, const interval_set<snapid_t> &snapcolls)
 
   if (info_struct_v < 7) {
     _upgrade_v7(store, snapcolls);
-  }
+  } 
 
   // 7 -> 8
   pg_log.mark_log_for_rewrite();
@@ -2484,6 +2484,11 @@ void PG::upgrade(ObjectStore *store, const interval_set<snapid_t> &snapcolls)
   t.remove(META_COLL, log_oid);
   t.remove(META_COLL, biginfo_oid);
   t.collection_rmattr(coll, "info");
+  set<string> to_remove;
+  to_remove.insert(PG::get_epoch_key(pg_id));
+  to_remove.insert(PG::get_biginfo_key(pg_id));
+  to_remove.insert(PG::get_info_key(pg_id));
+  t.omap_rmkeys(META_COLL, log_oid, to_remove);
 
   map<string,bufferlist> v;
   __u8 ver = cur_struct_v;
