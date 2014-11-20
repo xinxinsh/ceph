@@ -2716,7 +2716,7 @@ void PG::write_if_dirty(ObjectStore::Transaction& t)
 {
   if (dirty_big_info || dirty_info)
     write_info(t);
-  pg_log.write_log(t, log_oid);
+  pg_log.write_log(t, pgmeta_oid);
 }
 
 void PG::trim_peers()
