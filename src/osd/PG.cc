@@ -2663,7 +2663,7 @@ int PG::_write_info(ObjectStore::Transaction& t, epoch_t epoch,
     //dout(20) << "write_info bigbl " << bigbl.length() << dendl;
   }
 
-  t.omap_setkeys(coll, pgmeta_oid, v);
+  t.omap_setkeys(META_COLL, pgmeta_oid, v);
 
   return 0;
 }
