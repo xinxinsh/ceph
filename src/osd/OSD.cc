@@ -4270,7 +4270,6 @@ void OSD::RemoveWQ::_process(
   ObjectStore::Transaction *t = new ObjectStore::Transaction;
   PGLog::clear_info_log(
     pg->info.pgid,
-    OSD::make_infos_oid(),
     pg->log_oid,
     t);
 
