@@ -1392,6 +1392,8 @@ int do_import(ObjectStore *store, OSDSuperblock& sb)
   //Switch to collection which will be removed automatically if
   //this program is interupted.
   coll_t rmcoll = coll_t::make_removal_coll(next_removal_seq, pgid);
+  bufferlist one;
+  one.append('1');
   ObjectStore::Transaction *t = new ObjectStore::Transaction;
   PG::_create(*t, pgid, NULL);
   t->collection_setattr(coll, "remove", one);
