@@ -1994,6 +1994,8 @@ void ReplicatedPG::log_op_stats(OpContext *ctx)
   latency -= ctx->op->get_req()->get_recv_stamp();
   utime_t process_latency = now;
   process_latency -= ctx->op->get_dequeued_time();
+  utime_t in_queue_latency = ctx->op->get_dequeued_time() - ctx->op->get_enqueued_time();
+  utime_t osd_op_thread_latency = ctx->op->get_process_time() - ctx->op->get_dequeued_time();
 
   utime_t rlatency;
   if (ctx->readable_stamp != utime_t()) {
@@ -2010,6 +2012,8 @@ void ReplicatedPG::log_op_stats(OpContext *ctx)
   osd->logger->inc(l_osd_op_inb, inb);
   osd->logger->tinc(l_osd_op_lat, latency);
   osd->logger->tinc(l_osd_op_process_lat, process_latency);
+  osd->logger->tinc(l_osd_op_in_queue_lat, in_queue_latency);
+  osd->logger->tinc(l_osd_op_thread_process_lat, osd_op_thread_latency);
 
   if (op->may_read() && op->may_write()) {
     osd->logger->inc(l_osd_op_rw);

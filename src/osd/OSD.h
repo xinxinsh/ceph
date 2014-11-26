@@ -67,6 +67,8 @@ enum {
   l_osd_op_outb,
   l_osd_op_lat,
   l_osd_op_process_lat,
+  l_osd_op_in_queue_lat,
+  l_osd_op_thread_process_lat,
   l_osd_op_r,
   l_osd_op_r_outb,
   l_osd_op_r_lat,

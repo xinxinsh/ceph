@@ -2191,6 +2191,8 @@ void OSD::create_logger()
   osd_plb.add_u64_counter(l_osd_op_outb,  "op_out_bytes");      // client op out bytes (reads)
   osd_plb.add_time_avg(l_osd_op_lat,   "op_latency");       // client op latency
   osd_plb.add_time_avg(l_osd_op_process_lat, "op_process_latency");   // client op process latency
+  osd_plb.add_time_avg(l_osd_op_in_queue_lat, "op_in_queue_latency");   // osd op in queue latency
+  osd_plb.add_time_avg(l_osd_op_thread_process_lat, "op_thread_process_latency");   // osd op in queue latency
 
   osd_plb.add_u64_counter(l_osd_op_r,      "op_r");        // client reads
   osd_plb.add_u64_counter(l_osd_op_r_outb, "op_r_out_bytes");   // client read out bytes
@@ -8205,6 +8207,8 @@ bool OSD::op_is_discardable(MOSDOp *op)
 void OSD::enqueue_op(PG *pg, OpRequestRef& op)
 {
   utime_t latency = ceph_clock_now(cct) - op->get_req()->get_recv_stamp();
+  utime_t now = ceph_clock_now(cct);
+  op->set_enqueued_time(now);
   dout(15) << "enqueue_op " << op << " prio " << op->get_req()->get_priority()
 	   << " cost " << op->get_req()->get_cost()
 	   << " latency " << latency
@@ -8274,6 +8278,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
 
   osd->dequeue_op(item.first, op, tp_handle);
 
+  op->set_process_time(ceph_clock_now(g_ceph_context));
   {
 #ifdef WITH_LTTNG
     osd_reqid_t reqid = op->get_reqid();
