@@ -1566,7 +1566,10 @@ void ReplicatedPG::do_op(OpRequestRef& op)
   op->mark_started();
   ctx->src_obc = src_obc;
 
+  utime_t s = ceph_clock_now(g_ceph_context);
   execute_ctx(ctx);
+  utime_t dur = ceph_clock_now(g_ceph_context) - s;
+  osd->logger->tinc(l_osd_op_execute_ctx_lat,dur);
 }
 
 bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
