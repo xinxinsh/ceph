@@ -2193,6 +2193,7 @@ void OSD::create_logger()
   osd_plb.add_time_avg(l_osd_op_process_lat, "op_process_latency");   // client op process latency
   osd_plb.add_time_avg(l_osd_op_in_queue_lat, "op_in_queue_latency");   // osd op in queue latency
   osd_plb.add_time_avg(l_osd_op_thread_process_lat, "op_thread_process_latency");   // osd op in queue latency
+  osd_plb.add_time_avg(l_osd_pg_wait_lat, "pg_wait_latency");   // osd op in queue latency
 
   osd_plb.add_u64_counter(l_osd_op_r,      "op_r");        // client reads
   osd_plb.add_u64_counter(l_osd_op_r_outb, "op_r_out_bytes");   // client read out bytes
@@ -8241,8 +8242,10 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
   ThreadPool::TPHandle tp_handle(osd->cct, hb, timeout_interval, 
     suicide_interval);
 
+  utime_t s = ceph_clock_now(g_ceph_context);
   (item.first)->lock_suspend_timeout(tp_handle);
-
+  utime_t dur = ceph_clock_now(g_ceph_context) - s;
+  osd->logger->tinc(l_osd_pg_wait_lat, dur);
   OpRequestRef op;
   {
     Mutex::Locker l(sdata->sdata_op_ordering_lock);
