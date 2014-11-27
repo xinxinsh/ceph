@@ -1967,8 +1967,10 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
 
   repop->src_obc.swap(src_obc); // and src_obc.
 
+  utime_t s = ceph_clock_now(g_ceph_context);
   issue_repop(repop, now);
-
+  utime_t dur = ceph_clock_now(g_ceph_context) - s;
+  osd->logger->tinc(l_osd_op_issue_repop_lat, dur);
   eval_repop(repop);
   repop->put();
 }
@@ -6988,6 +6990,7 @@ void ReplicatedPG::issue_repop(RepGather *repop, utime_t now)
     repop->obc,
     repop->ctx->clone_obc,
     unlock_snapset_obc ? repop->ctx->snapset_obc : ObjectContextRef());
+  utime_t s = ceph_clock_now(g_ceph_context);
   pgbackend->submit_transaction(
     soid,
     repop->ctx->at_version,
@@ -7002,6 +7005,8 @@ void ReplicatedPG::issue_repop(RepGather *repop, utime_t now)
     repop->rep_tid,
     repop->ctx->reqid,
     repop->ctx->op);
+  utime_t dur = ceph_clock_now(g_ceph_context) - s;
+  osd->logger->tinc(l_osd_op_submit_tx_lat, dur);
   repop->ctx->op_t = NULL;
 }
     
