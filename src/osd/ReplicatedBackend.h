@@ -21,6 +21,7 @@
 #include "../include/memory.h"
 
 struct C_ReplicatedBackend_OnPullComplete;
+
 class ReplicatedBackend : public PGBackend {
   struct RPGHandle : public PGBackend::RecoveryHandle {
     map<pg_shard_t, vector<PushOp> > pushes;

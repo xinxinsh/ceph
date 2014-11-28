@@ -185,8 +185,8 @@ public:
   std::string gen_prefix() const;
 
   /*** PG ****/
-protected:
   OSDService *osd;
+protected:
   CephContext *cct;
   OSDriver osdriver;
   SnapMapper snap_mapper;

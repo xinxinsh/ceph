@@ -13,6 +13,7 @@
  */
 #include "common/errno.h"
 #include "ReplicatedBackend.h"
+#include "ReplicatedPG.h"
 #include "messages/MOSDOp.h"
 #include "messages/MOSDSubOp.h"
 #include "messages/MOSDSubOpReply.h"
@@ -27,6 +28,8 @@
 static ostream& _prefix(std::ostream *_dout, ReplicatedBackend *pgb) {
   return *_dout << pgb->get_parent()->gen_dbg_prefix();
 }
+
+class ReplicatedPG;
 
 ReplicatedBackend::ReplicatedBackend(
   PGBackend::Listener *pg,
@@ -551,6 +554,9 @@ void ReplicatedBackend::submit_transaction(
   }
   clear_temp_objs(t->get_temp_cleared());
 
+  ReplicatedPG *cur_pg = dynamic_cast<ReplicatedPG *>(parent);
+  assert(cur_pg);
+  utime_t s = ceph_clock_now(g_ceph_context);
   parent->log_operation(
     log_entries,
     hset_history,
@@ -560,6 +566,8 @@ void ReplicatedBackend::submit_transaction(
     &local_t);
   local_t.append(*op_t);
   local_t.swap(*op_t);
+  utime_t dur = ceph_clock_now(g_ceph_context) - s;
+  cur_pg->osd->logger->tinc(l_osd_op_log_op_lat, dur);
   
   op_t->register_on_applied_sync(on_local_applied_sync);
   op_t->register_on_applied(
@@ -571,7 +579,10 @@ void ReplicatedBackend::submit_transaction(
     parent->bless_context(
       new C_OSD_OnOpCommit(this, &op)));
       
+  utime_t s1 = ceph_clock_now(g_ceph_context);
   parent->queue_transaction(op_t, op.op);
+  utime_t dur1 = ceph_clock_now(g_ceph_context) - s1;
+  cur_pg->osd->logger->tinc(l_osd_op_queue_tx_lat, dur1);
   delete t;
 }
 
