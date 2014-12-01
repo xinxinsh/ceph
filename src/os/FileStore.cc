@@ -571,6 +571,9 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   plb.add_u64(l_os_jq_bytes, "journal_queue_bytes");
   plb.add_u64_counter(l_os_j_bytes, "journal_bytes");
   plb.add_time_avg(l_os_j_lat, "journal_latency");
+  plb.add_time_avg(l_os_j_submit_lat, "journal_submit_latency");
+  plb.add_time_avg(l_os_j_tx_lat, "journal_tx_latency");
+  plb.add_time_avg(l_os_j_sub_lock_lat, "journal_sub_lock_latency");
   plb.add_u64_counter(l_os_j_wr, "journal_wr");
   plb.add_u64_avg(l_os_j_wr_bytes, "journal_wr_bytes");
   plb.add_u64(l_os_oq_max_ops, "op_queue_max_ops");
@@ -1843,7 +1846,10 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
     Op *o = build_op(tls, onreadable, onreadable_sync, osd_op);
     op_queue_reserve_throttle(o, handle);
     journal->throttle();
+    utime_t s = ceph_clock_now(g_ceph_context);
     uint64_t op_num = submit_manager.op_submit_start();
+    utime_t dur = ceph_clock_now(g_ceph_context) - s;
+    logger->tinc(l_os_j_sub_lock_lat,dur);
     o->op = op_num;
 
     if (m_filestore_do_dump)
@@ -1860,10 +1866,13 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
       dout(5) << "queue_transactions (writeahead) " << o->op << " " << o->tls << dendl;
       
       osr->queue_journal(o->op);
+      utime_t s1 = ceph_clock_now(g_ceph_context);
 
       _op_journal_transactions(o->tls, o->op,
 			       new C_JournaledAhead(this, osr, o, ondisk),
 			       osd_op);
+      utime_t dur1 = ceph_clock_now(g_ceph_context) - s1;
+      logger->tinc(l_os_j_tx_lat, dur1);
     } else {
       assert(0);
     }

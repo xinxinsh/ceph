@@ -1436,6 +1436,7 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, int alignment,
 			       Context *oncommit, TrackedOpRef osd_op)
 {
   // dump on queue
+  utime_t t = ceph_clock_now(g_ceph_context);
   dout(5) << "submit_entry seq " << seq
 	  << " len " << e.length()
 	  << " (" << oncommit << ")" << dendl;
@@ -1461,6 +1462,10 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, int alignment,
 	seq, oncommit, ceph_clock_now(g_ceph_context), osd_op));
     writeq.push_back(write_item(seq, e, alignment, osd_op));
     writeq_cond.Signal();
+  }
+  utime_t dur = ceph_clock_now(g_ceph_context) - t;
+  if (logger) {
+    logger->tinc(l_os_j_submit_lat, dur);
   }
 }
 
