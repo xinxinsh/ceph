@@ -88,7 +88,7 @@ public:
     completions.pop_front();
   }
 
-  void submit_entry(uint64_t seq, bufferlist& bl, int alignment,
+  uint64_t submit_entry(list<uint64_t> *jq, bufferlist& bl, int alignment,
 		    Context *oncommit,
 		    TrackedOpRef osd_op = TrackedOpRef());
   /// End protected by finisher_lock
@@ -277,6 +277,7 @@ private:
   // in journal
   deque<pair<uint64_t, off64_t> > journalq;  // track seq offsets, so we can trim later.
   uint64_t writing_seq;
+  uint64_t submit_seq;
 
   
   // throttle
@@ -374,6 +375,7 @@ private:
     full_state(FULL_NOTFULL),
     fd(-1),
     writing_seq(0),
+    submit_seq(0),
     throttle_ops(g_ceph_context, "filestore_ops"),
     throttle_bytes(g_ceph_context, "filestore_bytes"),
     write_lock("FileJournal::write_lock", false, true, false, g_ceph_context),
@@ -409,6 +411,10 @@ private:
   }
 
   void set_wait_on_full(bool b) { wait_on_full = b; }
+  void set_submit_seq(uint64_t seq) { 
+    Mutex::Locker l(writeq_lock);
+    submit_seq = seq; 
+  }
 
   // reads
 

@@ -49,7 +49,7 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
   apply_manager.init_seq(fs_op_seq);
 
   if (!journal) {
-    submit_manager.set_op_seq(op_seq);
+    journal->set_submit_seq(fs_op_seq);
     return 0;
   }
 
@@ -103,8 +103,8 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
 
   replaying = false;
 
-  submit_manager.set_op_seq(op_seq);
-
+  assert(journal);
+  journal->set_submit_seq(op_seq);
   // done reading, make writeable.
   err = journal->make_writeable();
   if (err < 0)
@@ -250,12 +250,10 @@ void JournalingObjectStore::ApplyManager::commit_finish()
   }
 }
 
-void JournalingObjectStore::_op_journal_transactions(
-  list<ObjectStore::Transaction*>& tls, uint64_t op,
+uint64_t JournalingObjectStore::_op_journal_transactions(
+  list<ObjectStore::Transaction*>& tls, list<uint64_t> *jq,
   Context *onjournal, TrackedOpRef osd_op)
 {
-  dout(10) << "op_journal_transactions " << op << " " << tls << dendl;
-
   if (journal && journal->is_writeable()) {
     bufferlist tbl;
     unsigned data_len = 0;
@@ -270,8 +268,9 @@ void JournalingObjectStore::_op_journal_transactions(
       }
       ::encode(*t, tbl);
     }
-    journal->submit_entry(op, tbl, data_align, onjournal, osd_op);
+    return journal->submit_entry(jq, tbl, data_align, onjournal, osd_op);
   } else if (onjournal) {
-    apply_manager.add_waiter(op, onjournal);
+    apply_manager.add_waiter(0, onjournal);
   }
+  return 0;
 }

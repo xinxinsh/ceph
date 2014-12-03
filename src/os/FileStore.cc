@@ -1846,11 +1846,6 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
     Op *o = build_op(tls, onreadable, onreadable_sync, osd_op);
     op_queue_reserve_throttle(o, handle);
     journal->throttle();
-    utime_t s = ceph_clock_now(g_ceph_context);
-    uint64_t op_num = submit_manager.op_submit_start();
-    utime_t dur = ceph_clock_now(g_ceph_context) - s;
-    logger->tinc(l_os_j_sub_lock_lat,dur);
-    o->op = op_num;
 
     if (m_filestore_do_dump)
       dump_transactions(o->tls, o->op, osr);
@@ -1858,25 +1853,25 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
     if (m_filestore_journal_parallel) {
       dout(5) << "queue_transactions (parallel) " << o->op << " " << o->tls << dendl;
       
-      _op_journal_transactions(o->tls, o->op, ondisk, osd_op);
+      o->op = _op_journal_transactions(o->tls, osr->get_jq(), ondisk, osd_op);
       
       // queue inside submit_manager op submission lock
       queue_op(osr, o);
     } else if (m_filestore_journal_writeahead) {
       dout(5) << "queue_transactions (writeahead) " << o->op << " " << o->tls << dendl;
       
-      osr->queue_journal(o->op);
       utime_t s1 = ceph_clock_now(g_ceph_context);
 
-      _op_journal_transactions(o->tls, o->op,
+      osr->lock();
+      o->op = _op_journal_transactions(o->tls, osr->get_jq(),
 			       new C_JournaledAhead(this, osr, o, ondisk),
 			       osd_op);
       utime_t dur1 = ceph_clock_now(g_ceph_context) - s1;
+      osr->unlock();
       logger->tinc(l_os_j_tx_lat, dur1);
     } else {
       assert(0);
     }
-    submit_manager.op_submit_finish(op_num);
     return 0;
   }
 
@@ -1886,31 +1881,25 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
 
     op_queue_reserve_throttle(o, handle);
 
-    uint64_t op_num = submit_manager.op_submit_start();
-    o->op = op_num;
-
     if (m_filestore_do_dump)
       dump_transactions(o->tls, o->op, osr);
 
     queue_op(osr, o);
 
     if (ondisk)
-      apply_manager.add_waiter(op_num, ondisk);
-    submit_manager.op_submit_finish(op_num);
+      apply_manager.add_waiter(o->op, ondisk);
     return 0;
   }
 
-  uint64_t op = submit_manager.op_submit_start();
-  dout(5) << "queue_transactions (trailing journal) " << op << " " << tls << dendl;
 
   if (m_filestore_do_dump)
-    dump_transactions(tls, op, osr);
+    dump_transactions(tls, 1, osr);
 
-  apply_manager.op_apply_start(op);
-  int r = do_transactions(tls, op);
+  apply_manager.op_apply_start(1);
+  int r = do_transactions(tls, 1);
     
   if (r >= 0) {
-    _op_journal_transactions(tls, op, ondisk, osd_op);
+    _op_journal_transactions(tls, osr->get_jq(), ondisk, osd_op);
   } else {
     delete ondisk;
   }
@@ -1922,8 +1911,7 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
   }
   op_finisher.queue(onreadable, r);
 
-  submit_manager.op_submit_finish(op);
-  apply_manager.op_apply_finish(op);
+  apply_manager.op_apply_finish(1);
 
   return r;
 }

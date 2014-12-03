@@ -46,6 +46,7 @@ public:
   virtual int create() = 0;  ///< create a fresh journal
   virtual int open(uint64_t fs_op_seq) = 0;  ///< open an existing journal
   virtual void close() = 0;  ///< close an open journal
+  virtual void set_submit_seq(uint64_t seq) = 0;
 
   virtual void flush() = 0;
   virtual void throttle() = 0;
@@ -57,7 +58,7 @@ public:
   // writes
   virtual bool is_writeable() = 0;
   virtual int make_writeable() = 0;
-  virtual void submit_entry(uint64_t seq, bufferlist& e, int alignment,
+  virtual uint64_t submit_entry(list<uint64_t> *jq, bufferlist& e, int alignment,
 			    Context *oncommit,
 			    TrackedOpRef osd_op = TrackedOpRef()) = 0;
   virtual void commit_start(uint64_t seq) = 0;

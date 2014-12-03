@@ -193,7 +193,12 @@ private:
   public:
     Sequencer *parent;
     Mutex apply_lock;  // for apply mutual exclusion
+    Mutex jq_lock;  // protect atomicity of jq and journal writeq&completions
     
+    list<uint64_t> *get_jq(){
+      return &jq;
+    }
+
     /// get_max_uncompleted
     bool _get_max_uncompleted(
       uint64_t *seq ///< [out] max uncompleted seq
@@ -306,11 +311,18 @@ private:
 	return false;
       }
     }
+    void lock() {
+      qlock.Lock();
+    }
+    void unlock() {
+      qlock.Unlock();
+    }
 
     OpSequencer()
       : qlock("FileStore::OpSequencer::qlock", false, false),
 	parent(0),
-	apply_lock("FileStore::OpSequencer::apply_lock", false, false) {}
+	apply_lock("FileStore::OpSequencer::apply_lock", false, false),
+	jq_lock("FileStore::OpSequencer::jq_lock", false, false) {}
     ~OpSequencer() {
       assert(q.empty());
     }

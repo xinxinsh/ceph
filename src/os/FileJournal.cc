@@ -1432,12 +1432,11 @@ void FileJournal::check_aio_completion()
 }
 #endif
 
-void FileJournal::submit_entry(uint64_t seq, bufferlist& e, int alignment,
+uint64_t FileJournal::submit_entry(list<uint64_t> *jq, bufferlist& e, int alignment,
 			       Context *oncommit, TrackedOpRef osd_op)
 {
   // dump on queue
-  utime_t t = ceph_clock_now(g_ceph_context);
-  dout(5) << "submit_entry seq " << seq
+  dout(5) << "submit_entry "
 	  << " len " << e.length()
 	  << " (" << oncommit << ")" << dendl;
   assert(e.length() > 0);
@@ -1457,16 +1456,15 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, int alignment,
   {
     Mutex::Locker l1(writeq_lock);  // ** lock **
     Mutex::Locker l2(completions_lock);  // ** lock **
+    submit_seq++;
+    jq->push_back(submit_seq);
     completions.push_back(
       completion_item(
-	seq, oncommit, ceph_clock_now(g_ceph_context), osd_op));
-    writeq.push_back(write_item(seq, e, alignment, osd_op));
+	submit_seq, oncommit, ceph_clock_now(g_ceph_context), osd_op));
+    writeq.push_back(write_item(submit_seq, e, alignment, osd_op));
     writeq_cond.Signal();
   }
-  utime_t dur = ceph_clock_now(g_ceph_context) - t;
-  if (logger) {
-    logger->tinc(l_os_j_submit_lat, dur);
-  }
+  return submit_seq;
 }
 
 bool FileJournal::writeq_empty()
