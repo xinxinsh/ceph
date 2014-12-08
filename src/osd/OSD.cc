@@ -2199,6 +2199,7 @@ void OSD::create_logger()
   osd_plb.add_time_avg(l_osd_op_submit_tx_lat, "op_submit_tx_latency");   // osd op in queue latency
   osd_plb.add_time_avg(l_osd_op_log_op_lat, "op_log_op_latency");   // osd op in queue latency
   osd_plb.add_time_avg(l_osd_op_queue_tx_lat,"op_queue_tx_latency");   // osd op in queue latency
+  osd_plb.add_time_avg(l_osd_op_thread_wait_lat,"op_thread_wait_latency");   // osd op in queue latency
 
   osd_plb.add_u64_counter(l_osd_op_r,      "op_r");        // client reads
   osd_plb.add_u64_counter(l_osd_op_r_outb, "op_r_out_bytes");   // client read out bytes
@@ -8229,6 +8230,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
   ShardData* sdata = shard_list[shard_index];
   assert(NULL != sdata);
   sdata->sdata_op_ordering_lock.Lock();
+  utime_t s1 = ceph_clock_now(g_ceph_context);
   if (sdata->pqueue.empty()) {
     sdata->sdata_op_ordering_lock.Unlock();
     osd->cct->get_heartbeat_map()->reset_timeout(hb, 4, 0);
@@ -8241,6 +8243,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
       return;
     }
   }
+  osd->logger->tinc(l_osd_op_thread_wait_lat, ceph_clock_now(g_ceph_context) - s1);
   pair<PGRef, OpRequestRef> item = sdata->pqueue.dequeue();
   sdata->pg_for_processing[&*(item.first)].push_back(item.second);
   sdata->sdata_op_ordering_lock.Unlock();
