@@ -86,6 +86,8 @@ private:
   utime_t dequeued_time;
   utime_t enqueued_time;
   utime_t process_time;
+  utime_t enq;
+  utime_t deq;
   static const uint8_t flag_queued_for_pg=1 << 0;
   static const uint8_t flag_reached_pg =  1 << 1;
   static const uint8_t flag_delayed =     1 << 2;
@@ -170,6 +172,18 @@ public:
   }
   void set_process_time(utime_t proc_time) {
     process_time = proc_time;
+  }
+  utime_t get_enq() const {
+    return enq;
+  }
+  void set_enq(utime_t enq_time) {
+    enq = enq_time;
+  }
+  utime_t get_deq() const {
+    return deq;
+  }
+  void set_deq(utime_t deq_time) {
+    deq = deq_time;
   }
 
   osd_reqid_t get_reqid() const {
