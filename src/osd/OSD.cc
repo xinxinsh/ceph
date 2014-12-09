@@ -2192,7 +2192,9 @@ void OSD::create_logger()
   osd_plb.add_time_avg(l_osd_op_lat,   "op_latency");       // client op latency
   osd_plb.add_time_avg(l_osd_op_process_lat, "op_process_latency");   // client op process latency
   osd_plb.add_time_avg(l_osd_op_in_queue_lat, "op_in_queue_latency");   // osd op in queue latency
+  osd_plb.add_time_avg(l_osd_op_before_queue_lat, "op_before_queue_latency");   // osd op in queue latency
   osd_plb.add_time_avg(l_osd_op_queue_lat, "op_queue_latency");   // osd op in queue latency
+  osd_plb.add_time_avg(l_osd_op_after_queue_lat, "op_after_queue_latency");   // osd op in queue latency
   osd_plb.add_time_avg(l_osd_op_thread_process_lat, "op_thread_process_latency");   // osd op in queue latency
   osd_plb.add_time_avg(l_osd_pg_wait_lat, "pg_wait_latency");   // osd op in queue latency
   osd_plb.add_time_avg(l_osd_op_execute_ctx_lat, "op_execute_ctx_latency");   // osd op in queue latency
@@ -8246,8 +8248,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
   }
   osd->logger->tinc(l_osd_op_thread_wait_lat, ceph_clock_now(g_ceph_context) - s1);
   pair<PGRef, OpRequestRef> item = sdata->pqueue.dequeue();
-  utime_t d1 = ceph_clock_now(g_ceph_context) - item.second->get_enq();
-  osd->logger->tinc(l_osd_op_queue_lat, d1);
+  item.second->set_deq(ceph_clock_now(g_ceph_context));
   sdata->pg_for_processing[&*(item.first)].push_back(item.second);
   sdata->sdata_op_ordering_lock.Unlock();
   ThreadPool::TPHandle tp_handle(osd->cct, hb, timeout_interval, 
@@ -8315,7 +8316,8 @@ void OSD::ShardedOpWQ::_enqueue(pair<PGRef, OpRequestRef> item) {
   sdata->sdata_op_ordering_lock.Lock();
  
   osd->logger->inc(l_osd_opq, sdata->pqueue.length());
-  item.second->set_enq(ceph_clock_now(g_ceph_context));
+  utime_t s = ceph_clock_now(g_ceph_context);
+  item.second->set_enq(s);
   if (priority >= CEPH_MSG_PRIO_LOW)
     sdata->pqueue.enqueue_strict(
       item.second->get_req()->get_source_inst(), priority, item);
