@@ -1326,10 +1326,13 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     return;
   }
 
+  utime_t s1 = ceph_clock_now(g_ceph_context);
   int r = find_object_context(
     oid, &obc, can_create,
     m->get_flags() & CEPH_OSD_FLAG_MAP_SNAP_CLONE,
     &missing_oid);
+  utime_t d = ceph_clock_now(g_ceph_context) - s1;
+  osd->logger->tinc(l_osd_op_get_ctx_lat, d);
 
   if (r == -EAGAIN) {
     // If we're not the primary of this OSD, and we have
