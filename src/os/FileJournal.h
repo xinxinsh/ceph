@@ -51,10 +51,12 @@ public:
     uint64_t seq;
     bufferlist bl;
     int alignment;
+    utime_t enq;
     TrackedOpRef tracked_op;
     write_item(uint64_t s, bufferlist& b, int al, TrackedOpRef opref) :
       seq(s), alignment(al), tracked_op(opref) {
       bl.claim(b);
+      enq = ceph_clock_now(g_ceph_context);
     }
     write_item() : seq(0), alignment(0) {}
   };

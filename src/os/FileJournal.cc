@@ -766,7 +766,9 @@ int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_
     return -ENOSPC;
   
   while (!writeq_empty()) {
+    utime_t s = ceph_clock_now(g_ceph_context);
     int r = prepare_single_write(bl, queue_pos, orig_ops, orig_bytes);
+    logger->tinc(l_os_j_prepare_single_write_lat, ceph_clock_now(g_ceph_context) -s);
     if (r == -ENOSPC) {
       if (orig_ops)
 	break;         // commit what we have
@@ -1124,6 +1126,8 @@ void FileJournal::write_thread_entry()
       }
     }
     
+  logger->inc(l_os_j_q_len, writeq.size());
+  utime_t s1 = ceph_clock_now(g_ceph_context);
 #ifdef HAVE_LIBAIO
     //We hope write_finish_thread_entry return until the last aios complete
     //when set write_stop. But it can't. So don't use aio mode when shutdown.
@@ -1157,8 +1161,11 @@ void FileJournal::write_thread_entry()
       }
     }
 #endif
-
+    utime_t s2 = ceph_clock_now(g_ceph_context);
+    logger->tinc(l_os_j_wait_aio_lat, s2-s1);
     Mutex::Locker locker(write_lock);
+    utime_t s3 = ceph_clock_now(g_ceph_context);
+    logger->tinc(l_os_j_write_lock_lat, s3-s2);
     uint64_t orig_ops = 0;
     uint64_t orig_bytes = 0;
 
@@ -1170,6 +1177,8 @@ void FileJournal::write_thread_entry()
       dout(20) << "write_thread_entry woke up" << dendl;
       continue;
     }
+    utime_t s4 = ceph_clock_now(g_ceph_context);
+    logger->tinc(l_os_j_prepare_lat, s4-s3);
     assert(r == 0);
 
     if (logger) {
@@ -1185,6 +1194,8 @@ void FileJournal::write_thread_entry()
 #else
     do_write(bl);
 #endif
+    utime_t s5 = ceph_clock_now(g_ceph_context);
+    logger->tinc(l_os_j_write_lat, s5-s4);
     put_throttle(orig_ops, orig_bytes);
   }
 
@@ -1455,7 +1466,9 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, int alignment,
   }
 
   {
+    utime_t ss = ceph_clock_now(g_ceph_context);
     Mutex::Locker l1(writeq_lock);  // ** lock **
+    logger->tinc(l_os_j_insert_lat, ceph_clock_now(g_ceph_context) - ss);
     Mutex::Locker l2(completions_lock);  // ** lock **
     completions.push_back(
       completion_item(
@@ -1471,22 +1484,31 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, int alignment,
 
 bool FileJournal::writeq_empty()
 {
+  utime_t ss = ceph_clock_now(g_ceph_context);
   Mutex::Locker locker(writeq_lock);
+  logger->tinc(l_os_j_empty_lat, ceph_clock_now(g_ceph_context) - ss);
   return writeq.empty();
 }
 
 FileJournal::write_item &FileJournal::peek_write()
 {
   assert(write_lock.is_locked());
+  utime_t ss = ceph_clock_now(g_ceph_context);
   Mutex::Locker locker(writeq_lock);
+  logger->tinc(l_os_j_peek_lat, ceph_clock_now(g_ceph_context) - ss);
   return writeq.front();
 }
 
 void FileJournal::pop_write()
 {
   assert(write_lock.is_locked());
+  utime_t ss = ceph_clock_now(g_ceph_context);
   Mutex::Locker locker(writeq_lock);
+  logger->tinc(l_os_j_pop_lat, ceph_clock_now(g_ceph_context) - ss);
+  write_item& item = writeq.front();
   writeq.pop_front();
+  utime_t s = ceph_clock_now(g_ceph_context) - item.enq;
+  logger->tinc(l_os_j_q_lat, s);
 }
 
 void FileJournal::commit_start(uint64_t seq)
@@ -1523,7 +1545,9 @@ void FileJournal::commit_start(uint64_t seq)
 
 void FileJournal::committed_thru(uint64_t seq)
 {
+  utime_t s = ceph_clock_now(g_ceph_context);
   Mutex::Locker locker(write_lock);
+  logger->tinc(l_os_j_sync_write_lock_lat,ceph_clock_now(g_ceph_context) - s);
 
   if (seq < last_committed_seq) {
     dout(5) << "committed_thru " << seq << " < last_committed_seq " << last_committed_seq << dendl;
