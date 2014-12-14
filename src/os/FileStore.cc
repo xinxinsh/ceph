@@ -575,6 +575,18 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   plb.add_time_avg(l_os_j_tx_lat, "journal_tx_latency");
   plb.add_time_avg(l_os_j_sub_lock_lat, "journal_sub_lock_latency");
   plb.add_u64_counter(l_os_j_wr, "journal_wr");
+  plb.add_time_avg(l_os_j_wait_aio_lat, "journal_wait_aio_latency");
+  plb.add_time_avg(l_os_j_write_lock_lat, "journal_write_lock_latency");
+  plb.add_time_avg(l_os_j_sync_write_lock_lat, "journal_sync_write_lock_latency");
+  plb.add_time_avg(l_os_j_q_lat, "journal_queue_latency");
+  plb.add_time_avg(l_os_j_prepare_lat, "journal_prepare_latency");
+  plb.add_time_avg(l_os_j_prepare_single_write_lat, "journal_prepare_single_write_latency");
+  plb.add_time_avg(l_os_j_write_lat, "journal_write_latency");
+  plb.add_time_avg(l_os_j_insert_lat, "journal_insert_latency");
+  plb.add_time_avg(l_os_j_pop_lat, "journal_pop_latency");
+  plb.add_time_avg(l_os_j_peek_lat, "journal_peek_latency");
+  plb.add_time_avg(l_os_j_empty_lat, "journal_empty_latency");
+  plb.add_u64_avg(l_os_j_q_len, "journal_queue_length");
   plb.add_u64_avg(l_os_j_wr_bytes, "journal_wr_bytes");
   plb.add_u64(l_os_oq_max_ops, "op_queue_max_ops");
   plb.add_u64(l_os_oq_ops, "op_queue_ops");
