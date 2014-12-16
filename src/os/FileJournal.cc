@@ -1347,6 +1347,7 @@ int FileJournal::write_aio_bl(off64_t& pos, bufferlist& bl, uint64_t seq)
 void FileJournal::write_finish_thread_entry()
 {
 #ifdef HAVE_LIBAIO
+  utime_t s = ceph_clock_now(g_ceph_context);
   dout(10) << "write_finish_thread_entry enter" << dendl;
   while (true) {
     {
@@ -1388,6 +1389,7 @@ void FileJournal::write_finish_thread_entry()
       check_aio_completion();
     }
   }
+  logger->tinc(l_os_j_write_finish_lat, ceph_clock_now(g_ceph_context) - s);
   dout(10) << "write_finish_thread_entry exit" << dendl;
 #endif
 }

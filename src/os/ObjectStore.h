@@ -61,6 +61,7 @@ enum {
   l_os_j_prepare_lat,
   l_os_j_prepare_single_write_lat,
   l_os_j_write_lat,
+  l_os_j_write_finish_lat,
   l_os_j_insert_lat,
   l_os_j_pop_lat,
   l_os_j_peek_lat,

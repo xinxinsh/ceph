@@ -582,6 +582,7 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   plb.add_time_avg(l_os_j_prepare_lat, "journal_prepare_latency");
   plb.add_time_avg(l_os_j_prepare_single_write_lat, "journal_prepare_single_write_latency");
   plb.add_time_avg(l_os_j_write_lat, "journal_write_latency");
+  plb.add_time_avg(l_os_j_write_finish_lat, "journal_write_finish_latency");
   plb.add_time_avg(l_os_j_insert_lat, "journal_insert_latency");
   plb.add_time_avg(l_os_j_pop_lat, "journal_pop_latency");
   plb.add_time_avg(l_os_j_peek_lat, "journal_peek_latency");
