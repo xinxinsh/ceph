@@ -238,11 +238,13 @@ private:
     bool done;
     uint64_t off, len;    ///< these are for debug only
     uint64_t seq;         ///< seq number to complete on aio completion, if non-zero
+    utime_t start;
 
     aio_info(bufferlist& b, uint64_t o, uint64_t s)
       : iov(NULL), done(false), off(o), len(b.length()), seq(s) {
       bl.claim(b);
       memset((void*)&iocb, 0, sizeof(iocb));
+      start = ceph_clock_now(g_ceph_context);
     }
     ~aio_info() {
       delete[] iov;

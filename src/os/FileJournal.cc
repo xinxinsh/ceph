@@ -1385,6 +1385,9 @@ void FileJournal::write_finish_thread_entry()
 	dout(10) << "write_finish_thread_entry aio " << ai->off
 		 << "~" << ai->len << " done" << dendl;
 	ai->done = true;
+        assert((ai->start) != utime_t());
+        utime_t dur = ceph_clock_now(g_ceph_context) - ai->start;
+        logger->tinc(l_os_j_aio_write_lat, dur);
       }
       check_aio_completion();
     }
