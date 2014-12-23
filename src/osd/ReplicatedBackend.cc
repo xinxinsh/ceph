@@ -531,7 +531,10 @@ void ReplicatedBackend::submit_transaction(
     parent->get_actingbackfill_shards().begin(),
     parent->get_actingbackfill_shards().end());
 
-
+  ReplicatedPG *cur_pg = dynamic_cast<ReplicatedPG *>(parent);
+  assert(cur_pg);
+  
+  utime_t ss = ceph_clock_now(g_ceph_context);
   issue_op(
     soid,
     at_version,
@@ -546,6 +549,8 @@ void ReplicatedBackend::submit_transaction(
     hset_history,
     &op,
     op_t);
+  utime_t dd = ceph_clock_now(g_ceph_context) - ss;
+  cur_pg->osd->logger->tinc(l_osd_op_issue_subop_lat, dd);
 
   ObjectStore::Transaction local_t;
   if (t->get_temp_added().size()) {
@@ -554,8 +559,6 @@ void ReplicatedBackend::submit_transaction(
   }
   clear_temp_objs(t->get_temp_cleared());
 
-  ReplicatedPG *cur_pg = dynamic_cast<ReplicatedPG *>(parent);
-  assert(cur_pg);
   utime_t s = ceph_clock_now(g_ceph_context);
   parent->log_operation(
     log_entries,

@@ -75,6 +75,7 @@ enum {
   l_osd_op_execute_ctx_lat,
   l_osd_op_issue_repop_lat,
   l_osd_op_submit_tx_lat,
+  l_osd_op_issue_subop_lat,
   l_osd_op_log_op_lat,
   l_osd_op_before_queue_lat,
   l_osd_op_queue_tx_lat,

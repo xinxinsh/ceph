@@ -2201,6 +2201,7 @@ void OSD::create_logger()
   osd_plb.add_time_avg(l_osd_op_execute_ctx_lat, "op_execute_ctx_latency");   // osd op in queue latency
   osd_plb.add_time_avg(l_osd_op_issue_repop_lat, "op_issue_repop_latency");   // osd op in queue latency
   osd_plb.add_time_avg(l_osd_op_submit_tx_lat, "op_submit_tx_latency");   // osd op in queue latency
+  osd_plb.add_time_avg(l_osd_op_issue_subop_lat, "op_issue_subop_latency");   // osd op in queue latency
   osd_plb.add_time_avg(l_osd_op_log_op_lat, "op_log_op_latency");   // osd op in queue latency
   osd_plb.add_time_avg(l_osd_op_queue_tx_lat,"op_queue_tx_latency");   // osd op in queue latency
   osd_plb.add_time_avg(l_osd_op_thread_wait_lat,"op_thread_wait_latency");   // osd op in queue latency
