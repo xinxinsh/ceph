@@ -628,6 +628,9 @@ OPTION(rocksdb_num_levels, OPT_INT, 0) // number of levels for this database
 OPTION(rocksdb_wal_dir, OPT_STR, "")  //  rocksdb write ahead log file
 OPTION(rocksdb_info_log_level, OPT_STR, "info")  // info log level : debug , info , warn, error, fatal
 
+OPTION(lmdb_map_size, OPT_U64, 1000*1024*1024*1024) // size of memory map, default 1000 GB
+OPTION(lmdb_max_readers, OPT_U64, 126) // max number of threads/reader 
+
 /**
  * osd_client_op_priority and osd_recovery_op_priority adjust the relative
  * priority of client io vs recovery io.
