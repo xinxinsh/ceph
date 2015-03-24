@@ -14,6 +14,8 @@ using std::string;
 #include "KeyValueDB.h"
 #include "LMDBStore.h"
 
+#define dout_subsys ceph_subsys_keyvaluestore
+
 int LMDBStore::init()
 {
   options.map_size = g_conf->lmdb_map_size;
@@ -86,12 +88,15 @@ int LMDBStore::_test_init(const string& dir)
   key.mv_data = (void *)(k.data());
   value.mv_size = v.size();
   value.mv_data = (void *)(v.data());
+  dout(0) << "start test_init " << dendl;
   rc = mdb_env_create(&_env);
   if (rc != 0) {
     derr << __FILE__ << ":" << __LINE__ << " " << mdb_strerror(rc) << dendl;
     return -1;
   }
+  dout(0) << "create env " << mdb_strerror(rc) << dendl;
   rc = mdb_env_open(_env, dir.c_str(), MDB_FIXEDMAP, 0644);
+  dout(0) << "open env " << mdb_strerror(rc) << dendl;
   if (rc != 0) {
     derr << __FILE__ << ":" << __LINE__ << " " << mdb_strerror(rc) << dendl;
     mdb_env_close(_env);
@@ -186,7 +191,11 @@ int LMDBStore::submit_transaction_sync(KeyValueDB::Transaction t)
   int rc;
   LMDBTransactionImpl * _t =
     static_cast<LMDBTransactionImpl *>(t.get());
+  MDB_env *ev = mdb_txn_env(_t->txn);
+  dout(1) << "lmdb sync submit " << _t->txn << " & " << ev << dendl;
   rc = mdb_txn_commit(_t->txn);
+  if (rc != 0)
+    dout(1) << "lmdb sync submit ERROR : " << mdb_strerror(rc) << dendl;
   logger->inc(l_lmdb_txns);
   return (rc == 0) ? 0 : -1;
 }
@@ -197,6 +206,7 @@ LMDBStore::LMDBTransactionImpl::LMDBTransactionImpl(LMDBStore *_db)
   db = _db;
   dbi = db->dbi;
   rc = mdb_txn_begin(db->env.get(), NULL, 0, &txn);
+  dout(1) << "create new transaction " << txn << " rc " << mdb_strerror(rc) << dendl;
   if (rc != 0) {
     derr << __FILE__ << ":" << __LINE__ << " " << mdb_strerror(rc) << dendl;
     mdb_txn_abort(txn);
@@ -211,6 +221,7 @@ LMDBStore::LMDBTransactionImpl::LMDBTransactionImpl(LMDBStore *_db)
 }
 LMDBStore::LMDBTransactionImpl::~LMDBTransactionImpl()
 {
+  dout(1) << "delete transaction " << txn << dendl;
   mdb_txn_commit(txn);
 }
 void LMDBStore::LMDBTransactionImpl::set(
@@ -223,11 +234,14 @@ void LMDBStore::LMDBTransactionImpl::set(
   string kk = combine_strings(prefix, key);
   keys.push_back(kk);
   MDB_val k, v;
+  dout(1) << "lmdb set transaction " << txn << " key " << kk << " " << bl << dendl;
   k.mv_size = keys.rbegin()->size();
   k.mv_data = (void *)keys.rbegin()->data();
   v.mv_size = bl.length();
   v.mv_data = (void *)bl.c_str();
-  mdb_put(txn, dbi, &k, &v, 0);
+  int rc = mdb_put(txn, dbi, &k, &v, 0);
+  if (rc != 0)
+    dout(1) << "lmdb set transaction ERROR " << mdb_strerror(rc) << dendl;
 }
 
 void LMDBStore::LMDBTransactionImpl::rmkey(const string &prefix,
@@ -238,7 +252,9 @@ void LMDBStore::LMDBTransactionImpl::rmkey(const string &prefix,
   MDB_val k;
   k.mv_size = keys.rbegin()->size();
   k.mv_data = (void *)keys.rbegin()->data();
-  mdb_del(txn, dbi, &k, NULL);
+  int rc = mdb_del(txn, dbi, &k, NULL);
+  if (rc != 0)
+    dout(1) << "lmdb rmkey ERROR " << mdb_strerror(rc) << dendl;
 }
 
 void LMDBStore::LMDBTransactionImpl::rmkeys_by_prefix(const string &prefix)
@@ -252,7 +268,9 @@ void LMDBStore::LMDBTransactionImpl::rmkeys_by_prefix(const string &prefix)
     MDB_val k;
     k.mv_size = keys.rbegin()->size();
     k.mv_data = (void *)keys.rbegin()->data();
-    mdb_del(txn, dbi, &k, NULL);
+    int rc = mdb_del(txn, dbi, &k, NULL);
+    if (rc != 0)
+      dout(1) << "lmdb rmkeys_by_prefix ERROR " << mdb_strerror(rc) << dendl;
   }
 }
 
@@ -266,7 +284,9 @@ int LMDBStore::get(
        i != keys.end();
        ++i) {
     it->lower_bound(*i);
+    dout(1) << "lmdb get prefix " << prefix << " " << *i << dendl;
     if (it->valid() && it->key() == *i) {
+      dout(1) << "lmdb get rc " << it->key() << dendl;
       out->insert(make_pair(*i, it->value()));
      } else if (!it->valid())
       break;
@@ -390,7 +410,10 @@ int LMDBStore::LMDBWholeSpaceIteratorImpl::lower_bound(const string &prefix, con
   string bound = combine_strings(prefix, to);
   key.mv_size = bound.size();
   key.mv_data = (void *)bound.data();
-  rc = mdb_cursor_get(cursor, &key, NULL, MDB_SET_RANGE);
+  dout(1) << "lmdb lower_bound " << prefix << " " << to << dendl;
+  rc = mdb_cursor_get(cursor, &key, NULL, MDB_SET);
+  if(rc!=0)
+   dout(1) << "lmdb lower_bound rc " << mdb_strerror(rc) << dendl;
   return (rc == 0) ? 0 : -1;
 }
 bool LMDBStore::LMDBWholeSpaceIteratorImpl::valid()

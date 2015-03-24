@@ -1161,6 +1161,13 @@ int KeyValueStore::_do_transactions(list<Transaction*> &tls, uint64_t op_seq,
   for (list<Transaction*>::iterator p = tls.begin();
        p != tls.end();
        ++p, trans_num++) {
+    dout(0) << " transaction dump:\n";
+    JSONFormatter f(true);
+    f.open_object_section("transaction");
+    (**p).dump(&f);
+    f.close_section();
+    f.flush(*_dout);
+    *_dout << dendl;
     r = _do_transaction(**p, bt, handle);
     if (r < 0)
       break;
