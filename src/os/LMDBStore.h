@@ -121,6 +121,7 @@ public:
   protected:
     MDB_cursor *cursor;
     MDB_txn *txn;
+    MDB_dbi dbi;
   public:
     LMDBWholeSpaceIteratorImpl(LMDBStore *store);
    

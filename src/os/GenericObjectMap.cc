@@ -336,6 +336,7 @@ int GenericObjectMap::GenericObjectMapIteratorImpl::seek_to_first()
       return r;
   }
   r = key_iter->seek_to_first();
+  dout(0) << "genericobjectmap seek_to_first " << r << dendl;
   if (r < 0)
     return r;
   return adjust();
@@ -374,6 +375,7 @@ int GenericObjectMap::GenericObjectMapIteratorImpl::lower_bound(const string &to
       return r;
   }
   r = key_iter->lower_bound(to);
+  dout(0) << "genericobjectmap lower_bound " << r << dendl;
   if (r < 0)
     return r;
   return adjust();
@@ -398,6 +400,7 @@ bool GenericObjectMap::GenericObjectMapIteratorImpl::valid()
 {
   bool valid = !invalid && ready;
   assert(!valid || cur_iter->valid());
+  dout(0) << "genericobjectmap valid " << valid << dendl;
   return valid;
 }
 
@@ -413,6 +416,7 @@ int GenericObjectMap::GenericObjectMapIteratorImpl::next()
 {
   assert(cur_iter->valid());
   assert(valid());
+  dout(0) << "genericobjectmap next "  << dendl;
   cur_iter->next();
   return adjust();
 }
@@ -813,9 +817,11 @@ int GenericObjectMap::scan(Header header,
        key_iter != in_keys.end();
        ++key_iter) {
     db_iter->lower_bound(*key_iter);
+    dout(0) << "genericobjectmap scan " << db_iter->key() << " key_iter " << *key_iter << " # status " << db_iter->status() << dendl;
     if (db_iter->status())
       return db_iter->status();
 
+    dout(0) << "genericobjectmap scan " << db_iter->key() << " key_iter " << *key_iter << " # valid " << db_iter->valid() << dendl;
     if (db_iter->valid() && db_iter->key() == *key_iter) {
       if (out_keys)
         out_keys->insert(*key_iter);
@@ -1084,6 +1090,7 @@ int GenericObjectMap::list_objects(const coll_t &cid, ghobject_t start, int max,
 
   int size = 0;
   KeyValueDB::Iterator iter = db->get_iterator(GHOBJECT_TO_SEQ_PREFIX);
+  dout(0) << "genericobjectmap get iterator" << dendl;
   for (iter->lower_bound(header_key(cid, start)); iter->valid(); iter->next()) {
     bufferlist bl = iter->value();
     bufferlist::iterator bliter = bl.begin();

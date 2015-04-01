@@ -861,6 +861,7 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
   if (p) {
     for (p->seek_to_first(); p->valid() ; p->next()) {
       // non-log pgmeta_oid keys are prefixed with _; skip those
+      dout(1) << "read_log " << p->key() << " valid " << p->valid() << dendl;
       if (p->key()[0] == '_')
 	continue;
       bufferlist bl = p->value();//Copy bufferlist before creating iterator

@@ -152,6 +152,7 @@ LMDBStore::LMDBStore(CephContext *c, const string &path) :
   dbi(0),
   options()
 {
+  dout(1) << "create LMDBStore" << dendl;
   MDB_env *_env;
   int rc = mdb_env_create(&_env);
   if (rc != 0) {
@@ -162,6 +163,7 @@ LMDBStore::LMDBStore(CephContext *c, const string &path) :
 
 LMDBStore::~LMDBStore()
 {
+  dout(1) << "delete LMDBStore" << dendl;
   close();
   mdb_dbi_close(env.get(), dbi);
   if (env.get()) {
@@ -194,6 +196,7 @@ int LMDBStore::submit_transaction_sync(KeyValueDB::Transaction t)
   MDB_env *ev = mdb_txn_env(_t->txn);
   dout(1) << "lmdb sync submit " << _t->txn << " & " << ev << dendl;
   rc = mdb_txn_commit(_t->txn);
+  dout(1) << "finish create new transaction submit " << _t->txn << " & " << ev << " & " << mdb_strerror(rc) << dendl;
   if (rc != 0)
     dout(1) << "lmdb sync submit ERROR : " << mdb_strerror(rc) << dendl;
   logger->inc(l_lmdb_txns);
@@ -204,9 +207,9 @@ LMDBStore::LMDBTransactionImpl::LMDBTransactionImpl(LMDBStore *_db)
 {
   int rc;
   db = _db;
-  dbi = db->dbi;
+  dout(1) << "start create new transaction " << db->env.get() << dendl;
   rc = mdb_txn_begin(db->env.get(), NULL, 0, &txn);
-  dout(1) << "create new transaction " << txn << " rc " << mdb_strerror(rc) << dendl;
+  dout(1) << "finish create new transaction " << txn << " rc " << mdb_strerror(rc) << dendl;
   if (rc != 0) {
     derr << __FILE__ << ":" << __LINE__ << " " << mdb_strerror(rc) << dendl;
     mdb_txn_abort(txn);
@@ -221,8 +224,8 @@ LMDBStore::LMDBTransactionImpl::LMDBTransactionImpl(LMDBStore *_db)
 }
 LMDBStore::LMDBTransactionImpl::~LMDBTransactionImpl()
 {
-  dout(1) << "delete transaction " << txn << dendl;
-  mdb_txn_commit(txn);
+  dout(1) << "delete finish create new transaction " << txn << " & " << db->env.get() << dendl;
+  mdb_dbi_close(db->env.get(),dbi);
 }
 void LMDBStore::LMDBTransactionImpl::set(
   const string &prefix,
@@ -333,34 +336,40 @@ LMDBStore::LMDBWholeSpaceIteratorImpl::LMDBWholeSpaceIteratorImpl(LMDBStore *sto
 {
   int rc = 1;
   MDB_env *env = store->env.get();
-  MDB_dbi dbi = store->dbi;
   rc = mdb_txn_begin(env, NULL, MDB_RDONLY, &txn);
+  dout(0) << "create transaction in iterator " << txn << dendl;
   if (rc != 0) {
     derr << __FILE__ << ":" << __LINE__ << " " << mdb_strerror(rc) << dendl;
   }
+  dout(0) << "open dbi in iterator " << dbi << dendl;
   rc = mdb_dbi_open(txn, NULL, 0, &dbi);
   if (rc != 0) {
     derr << __FILE__ << ":" << __LINE__ << " " << mdb_strerror(rc) << dendl;
   }
   rc = mdb_cursor_open(txn, dbi, &cursor);
+  dout(0) << "create cursor " << rc << dendl;
   if (rc != 0) {
     derr << __FILE__ << ":" << __LINE__ << " " << mdb_strerror(rc) << dendl;
   }
 }
 LMDBStore::LMDBWholeSpaceIteratorImpl::~LMDBWholeSpaceIteratorImpl()
 {
+  int rc;
+  dout(0) << "delete cursor " << dendl;
+  dout(0) << "commit transaction in iterator " << txn << dendl;;
+  if (txn) { 
+    rc = mdb_txn_commit(txn);
+  }
+  dout(0) << "close cursor in iterator " << cursor << " + " << rc <<  dendl;;
   if (cursor) {
     mdb_cursor_close(cursor);
-    cursor = NULL;
   }
-  if (txn) { 
-    mdb_txn_commit(txn);
-    txn = NULL;
-  }
+  dout(1) << "after delete iterator " << txn << " & " << cursor << " + " << dendl;
 }
 int LMDBStore::LMDBWholeSpaceIteratorImpl::seek_to_first()
 {
   int rc = mdb_cursor_get(cursor, NULL, NULL, MDB_FIRST);
+  dout(1) << "seek_to_first " << rc << dendl;
   return (rc == 0) ? 0 : -1;
 }
 int LMDBStore::LMDBWholeSpaceIteratorImpl::seek_to_first(const string &prefix)
@@ -370,6 +379,7 @@ int LMDBStore::LMDBWholeSpaceIteratorImpl::seek_to_first(const string &prefix)
   key.mv_size = prefix.size();
   key.mv_data = (void *)prefix.data();
   rc = mdb_cursor_get(cursor, &key, NULL, MDB_SET_RANGE);
+  dout(0) << "seek_to_first with prefix " << prefix << dendl;
   return (rc == 0) ? 0 : -1;
 }
 int LMDBStore::LMDBWholeSpaceIteratorImpl::seek_to_last()
@@ -411,21 +421,27 @@ int LMDBStore::LMDBWholeSpaceIteratorImpl::lower_bound(const string &prefix, con
   key.mv_size = bound.size();
   key.mv_data = (void *)bound.data();
   dout(1) << "lmdb lower_bound " << prefix << " " << to << dendl;
-  rc = mdb_cursor_get(cursor, &key, NULL, MDB_SET);
+  rc = mdb_cursor_get(cursor, &key, NULL, MDB_SET_RANGE);
   if(rc!=0)
    dout(1) << "lmdb lower_bound rc " << mdb_strerror(rc) << dendl;
   return (rc == 0) ? 0 : -1;
 }
 bool LMDBStore::LMDBWholeSpaceIteratorImpl::valid()
 {
-  int rc = mdb_cursor_get(cursor, NULL, NULL, MDB_GET_CURRENT);
+  MDB_val key;
+  int rc = mdb_cursor_get(cursor, &key, NULL, MDB_GET_CURRENT);
+  string out = string((const char *)key.mv_data, key.mv_size);
+  dout(1) << "valid " << rc << " # " << out << dendl;
   return (rc == 0) ? true : false;
 }
 int LMDBStore::LMDBWholeSpaceIteratorImpl::next()
 {
   int rc = 1;
+  MDB_val key;
   if (valid())
-    rc = mdb_cursor_get(cursor, NULL, NULL, MDB_NEXT);
+    rc = mdb_cursor_get(cursor, &key, NULL, MDB_NEXT);
+  string out = string((const char *)key.mv_data, key.mv_size);
+  dout(1) << "next " << rc << " # " << out << dendl;
   return (rc == 0) ? 0 : -1;
 }
 int LMDBStore::LMDBWholeSpaceIteratorImpl::prev()
@@ -457,6 +473,7 @@ pair<string,string> LMDBStore::LMDBWholeSpaceIteratorImpl::raw_key()
   }
   out = string((const char *)k.mv_data, k.mv_size);
   split_key(out, &prefix, &key);
+  dout(0) << "raw_key prefix " << prefix << " key " << key << dendl;
   return make_pair(prefix, key);
 }
 bufferlist LMDBStore::LMDBWholeSpaceIteratorImpl::value()
@@ -472,7 +489,10 @@ bufferlist LMDBStore::LMDBWholeSpaceIteratorImpl::value()
 }
 int LMDBStore::LMDBWholeSpaceIteratorImpl::status()
 {
-  int rc = mdb_cursor_get(cursor, NULL, NULL, MDB_GET_CURRENT);
+  MDB_val key;
+  int rc = mdb_cursor_get(cursor, &key, NULL, MDB_GET_CURRENT);
+  string out = string((const char *)key.mv_data, key.mv_size);
+  dout(0) << "status rc " << rc << " # " << dendl;
   if (rc != 0) {
     derr << __FILE__ << ":" << __LINE__ << " " << mdb_strerror(rc) << dendl;
   }

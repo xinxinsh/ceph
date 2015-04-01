@@ -2815,6 +2815,7 @@ void OSD::load_pgs()
     dout(10) << "pgid " << pgid << " coll " << coll_t(pgid) << dendl;
     bufferlist bl;
     epoch_t map_epoch = PG::peek_map_epoch(store, pgid, &bl);
+    dout(1) << "get peak epoch " << map_epoch << dendl;
 
     PG *pg = _open_lock_pg(map_epoch == 0 ? osdmap : service.get_map(map_epoch), pgid);
     // there can be no waiters here, so we don't call wake_pg_waiters
