@@ -414,10 +414,15 @@ bool GenericObjectMap::GenericObjectMapIteratorImpl::valid_parent()
 
 int GenericObjectMap::GenericObjectMapIteratorImpl::next()
 {
+  int r;
   assert(cur_iter->valid());
   assert(valid());
   dout(0) << "genericobjectmap next "  << dendl;
-  cur_iter->next();
+  r = cur_iter->next();
+  if (r < 0) {
+    invalid = true;
+    return 0;
+  }
   return adjust();
 }
 
