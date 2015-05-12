@@ -58,10 +58,16 @@ public:
   struct options_t {
     uint64_t map_size; /// size of memory map
     uint64_t max_readers; /// max number of threads/reader
+    bool nomeminit;
+    bool noreadahead;
+    bool writemap;
 
     options_t() :
       map_size(0), // 0 means default
-      max_readers(0) // 0 means default
+      max_readers(0), // 0 means default
+      nomeminit(false),
+      noreadahead(false),
+      writemap(false)
     {}
   } options;
 
