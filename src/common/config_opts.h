@@ -732,6 +732,9 @@ OPTION(rocksdb_disableWAL, OPT_BOOL, false)  // if true, writes will not first g
 
 OPTION(lmdb_map_size, OPT_U64, 1000*1024*1024*1024) // size of memory map, default 1000 GB
 OPTION(lmdb_max_readers, OPT_U64, 126) // max number of threads/reader 
+OPTION(lmdb_noreadahead, OPT_BOOL, false) // turn off read ahead 
+OPTION(lmdb_nomeminit, OPT_BOOL, false) // do not initialize new-allocated memory 
+OPTION(lmdb_writemap, OPT_BOOL, false) // diable writemap
 
 /**
  * osd_client_op_priority and osd_recovery_op_priority adjust the relative

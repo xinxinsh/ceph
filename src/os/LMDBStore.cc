@@ -18,6 +18,9 @@ int LMDBStore::init()
 {
   options.map_size = g_conf->lmdb_map_size;
   options.max_readers = g_conf->lmdb_max_readers;
+  options.noreadahead = g_conf->lmdb_noreadahead;
+  options.writemap = g_conf->lmdb_writemap;
+  options.nomeminit = g_conf->lmdb_nomeminit;
   return 0;
 }
 
@@ -33,8 +36,15 @@ int LMDBStore::do_open(ostream &out, bool create_if_missing)
     mdb_env_set_maxreaders(env.get(), options.max_readers);
   if (create_if_missing)
     flags |= MDB_CREATE;
+  if (options.noreadahead)
+    flags |= MDB_NORDAHEAD;
+  if (options.writemap)
+    flags |= MDB_WRITEMAP;
+  if (options.nomeminit)
+    flags |= MDB_NOMEMINIT;
+  flags |= MDB_NOTLS;
 
-  rc = mdb_env_open(env.get(), path.c_str(), MDB_NOTLS, 0644);
+  rc = mdb_env_open(env.get(), path.c_str(), flags, 0644);
   if (rc != 0) {
     derr << __FILE__ << ":" << __LINE__ << " " << mdb_strerror(rc) << dendl;
     mdb_env_close(env.get());
@@ -49,7 +59,7 @@ int LMDBStore::do_open(ostream &out, bool create_if_missing)
     return -1;
   }
 
-  rc = mdb_dbi_open(txn, NULL, flags, &dbi);
+  rc = mdb_dbi_open(txn, NULL, NULL, &dbi);
   if (rc != 0) {
     derr << __FILE__ << ":" << __LINE__ << " " << mdb_strerror(rc) << dendl;
     mdb_txn_abort(txn);
