@@ -1186,6 +1186,7 @@ unsigned KeyValueStore::_do_transaction(Transaction& transaction,
   uint64_t op_num = 0;
   bool exist_clone = false;
 
+  return 0;
   while (i.have_op()) {
     if (handle)
       handle->reset_tp_timeout();
