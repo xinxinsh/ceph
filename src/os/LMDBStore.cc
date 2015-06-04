@@ -43,7 +43,9 @@ int LMDBStore::do_open(ostream &out, bool create_if_missing)
   if (options.nomeminit)
     flags |= MDB_NOMEMINIT;
   flags |= MDB_NOTLS;
-
+  
+  flags |= MDB_LIFORECLAIM;
+  flags |= MDB_COALESCE;
   rc = mdb_env_open(env.get(), path.c_str(), flags, 0644);
   if (rc != 0) {
     derr << __FILE__ << ":" << __LINE__ << " " << mdb_strerror(rc) << dendl;
@@ -59,7 +61,7 @@ int LMDBStore::do_open(ostream &out, bool create_if_missing)
     return -1;
   }
 
-  rc = mdb_dbi_open(txn, NULL, NULL, &dbi);
+  rc = mdb_dbi_open(txn, NULL, 0, &dbi);
   if (rc != 0) {
     derr << __FILE__ << ":" << __LINE__ << " " << mdb_strerror(rc) << dendl;
     mdb_txn_abort(txn);
@@ -162,7 +164,7 @@ LMDBStore::LMDBStore(CephContext *c, const string &path) :
   if (rc != 0) {
     derr << __FILE__ << ":" << __LINE__ << dendl;
   }
-  env.reset(_env, mdb_env_close);
+  env.reset(_env, env_deleter(0));
 }
 
 LMDBStore::~LMDBStore()

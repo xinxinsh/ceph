@@ -71,6 +71,15 @@ public:
     {}
   } options;
 
+  class env_deleter {
+    public:
+      unsigned sync;
+      env_deleter(unsigned sync):sync(sync) {}
+      void operator()(MDB_env *_env) {
+        mdb_env_close(_env);
+      }
+  };
+  friend class env_deleter;
   LMDBStore(CephContext *c, const string &path);
 
   ~LMDBStore();
