@@ -44,6 +44,7 @@ int LMDBStore::do_open(ostream &out, bool create_if_missing)
     flags |= MDB_NOMEMINIT;
   flags |= MDB_NOTLS;
   flags |= MDB_NOSYNC;
+  flags |= MDB_NOMETASYNC;
   
   flags |= MDB_LIFORECLAIM;
 //  flags |= MDB_COALESCE;
@@ -165,7 +166,7 @@ LMDBStore::LMDBStore(CephContext *c, const string &path) :
   if (rc != 0) {
     derr << __FILE__ << ":" << __LINE__ << dendl;
   }
-  env.reset(_env, env_deleter(0));
+  env.reset(_env, mdb_env_close);
 }
 
 LMDBStore::~LMDBStore()
@@ -201,7 +202,7 @@ int LMDBStore::submit_transaction_sync(KeyValueDB::Transaction t)
     static_cast<LMDBTransactionImpl *>(t.get());
   rc = mdb_txn_commit(_t->txn);
   MDB_env *_env = mdb_txn_env(_t->txn);
-  rc = mdb_env_sync(_env, 1);
+//  rc = mdb_env_sync(_env, 1);
   logger->inc(l_lmdb_txns);
   return (rc == 0) ? 0 : -1;
 }
