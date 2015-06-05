@@ -43,9 +43,10 @@ int LMDBStore::do_open(ostream &out, bool create_if_missing)
   if (options.nomeminit)
     flags |= MDB_NOMEMINIT;
   flags |= MDB_NOTLS;
+  flags |= MDB_NOSYNC;
   
   flags |= MDB_LIFORECLAIM;
-  flags |= MDB_COALESCE;
+//  flags |= MDB_COALESCE;
   rc = mdb_env_open(env.get(), path.c_str(), flags, 0644);
   if (rc != 0) {
     derr << __FILE__ << ":" << __LINE__ << " " << mdb_strerror(rc) << dendl;
@@ -199,6 +200,8 @@ int LMDBStore::submit_transaction_sync(KeyValueDB::Transaction t)
   LMDBTransactionImpl * _t =
     static_cast<LMDBTransactionImpl *>(t.get());
   rc = mdb_txn_commit(_t->txn);
+  MDB_env *_env = mdb_txn_env(_t->txn);
+  rc = mdb_env_sync(_env, 1);
   logger->inc(l_lmdb_txns);
   return (rc == 0) ? 0 : -1;
 }
