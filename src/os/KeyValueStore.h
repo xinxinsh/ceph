@@ -466,6 +466,7 @@ class KeyValueStore : public ObjectStore,
   void queue_op(OpSequencer *osr, Op *o);
   void op_queue_reserve_throttle(Op *o, ThreadPool::TPHandle *handle = NULL);
   void _do_op(OpSequencer *osr, ThreadPool::TPHandle &handle);
+  void _do_op(OpSequencer *osr);
   void op_queue_release_throttle(Op *o);
   void _finish_op(OpSequencer *osr);
 
@@ -539,7 +540,6 @@ class KeyValueStore : public ObjectStore,
   int queue_transactions(Sequencer *osr, list<Transaction*>& tls,
                          TrackedOpRef op = TrackedOpRef(),
                          ThreadPool::TPHandle *handle = NULL);
-
 
   // ------------------
   // objects

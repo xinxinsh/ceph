@@ -1005,7 +1005,10 @@ int KeyValueStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
   Op *o = build_op(tls, ondisk, onreadable, onreadable_sync, osd_op);
   op_queue_reserve_throttle(o, handle);
   dout(5) << "queue_transactions (trailing journal) " << " " << tls <<dendl;
-  queue_op(osr, o);
+ // queue_op(osr, o);
+  osr->queue(o);
+  _do_op(osr);
+  _finish_op(osr);
 
   return 0;
 }
@@ -1121,6 +1124,28 @@ void KeyValueStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
     }
   }
 }
+
+void KeyValueStore::_do_op(OpSequencer *osr)
+{
+  // FIXME: Suppose the collection of transaction only affect objects in the
+  // one PG, so this lock will ensure no other concurrent write operation
+  osr->apply_lock.Lock();
+  Op *o = osr->peek_queue();
+  dout(5) << "_do_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << " start" << dendl;
+  int r = _do_transactions(o->tls, o->op, NULL);
+  dout(10) << "_do_op " << o << " seq " << o->op << " r = " << r
+           << ", finisher " << o->onreadable << " " << o->onreadable_sync << dendl;
+
+  if (o->ondisk) {
+    if (r < 0) {
+      delete o->ondisk;
+      o->ondisk = 0;
+    } else {
+      ondisk_finisher.queue(o->ondisk, r);
+    }
+  }
+}
+
 
 void KeyValueStore::_finish_op(OpSequencer *osr)
 {
