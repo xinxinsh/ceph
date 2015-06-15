@@ -43,6 +43,10 @@ int LMDBStore::do_open(ostream &out, bool create_if_missing)
   if (options.nomeminit)
     flags |= MDB_NOMEMINIT;
   flags |= MDB_NOTLS;
+  flags |= MDB_NOSYNC;
+  flags |= MDB_NOMETASYNC;
+  flags |= MDB_LIFORECLAIM;
+  flags |= MDB_COALESCE;
 
   rc = mdb_env_open(env.get(), path.c_str(), flags, 0644);
   if (rc != 0) {
