@@ -739,7 +739,7 @@ int DBObjectMap::clear_keys_header(const ghobject_t &oid,
     return r;
 
   // create new header
-  Header newheader = generate_new_header(oid, Header());
+  Header newheader = generate_new_header(oid, Header(), t);
   set_map_header(hl, oid, *newheader, t);
   if (!attrs.empty())
     t->set(xattr_prefix(newheader), attrs);
@@ -914,8 +914,8 @@ int DBObjectMap::clone(const ghobject_t &oid,
   if (!parent)
     return db->submit_transaction(t);
 
-  Header source = generate_new_header(oid, parent);
-  Header destination = generate_new_header(target, parent);
+  Header source = generate_new_header(oid, parent, t);
+  Header destination = generate_new_header(target, parent, t);
   if (spos)
     destination->spos = *spos;
 
@@ -1105,7 +1105,7 @@ DBObjectMap::Header DBObjectMap::_lookup_map_header(
 }
 
 DBObjectMap::Header DBObjectMap::_generate_new_header(const ghobject_t &oid,
-						      Header parent)
+						      Header parent, KeyValueDB::Transaction _t)
 {
   Header header = Header(new _Header(), RemoveOnDelete(this));
   header->seq = state.seq++;
@@ -1118,7 +1118,7 @@ DBObjectMap::Header DBObjectMap::_generate_new_header(const ghobject_t &oid,
   assert(!in_use.count(header->seq));
   in_use.insert(header->seq);
 
-  write_state();
+  write_state(_t);
   return header;
 }
 
@@ -1161,7 +1161,7 @@ DBObjectMap::Header DBObjectMap::lookup_create_map_header(
   Mutex::Locker l(header_lock);
   Header header = _lookup_map_header(hl, oid);
   if (!header) {
-    header = _generate_new_header(oid, Header());
+    header = _generate_new_header(oid, Header(), t);
     set_map_header(hl, oid, *header, t);
   }
   return header;

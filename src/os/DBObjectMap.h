@@ -451,10 +451,10 @@ private:
    *
    * Has the side effect of syncronously saving the new DBObjectMap state
    */
-  Header _generate_new_header(const ghobject_t &oid, Header parent);
-  Header generate_new_header(const ghobject_t &oid, Header parent) {
+  Header _generate_new_header(const ghobject_t &oid, Header parent, KeyValueDB::Transaction _t);
+  Header generate_new_header(const ghobject_t &oid, Header parent, KeyValueDB::Transaction _t) {
     Mutex::Locker l(header_lock);
-    return _generate_new_header(oid, parent);
+    return _generate_new_header(oid, parent, _t);
   }
 
   /// Lookup leaf header for c oid
