@@ -819,6 +819,9 @@ int NewStore::_open_db()
   assert(!db);
   char fn[PATH_MAX];
   snprintf(fn, sizeof(fn), "%s/db", path.c_str());
+  int ret = ::mkdir(fn, 0755);
+  if (ret < 0)
+    return ret;
   db = KeyValueDB::create(g_ceph_context,
 			  g_conf->newstore_backend,
 			  fn);
