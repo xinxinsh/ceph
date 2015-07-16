@@ -70,12 +70,14 @@ bool HeartbeatMap::_check(const heartbeat_handle_d *h, const char *who, time_t n
   if (was && was < now) {
     ldout(m_cct, 1) << who << " '" << h->name << "'"
 		    << " had timed out after " << h->grace << dendl;
+    h->print_timeout_message(false);
     healthy = false;
   }
   was = h->suicide_timeout.read();
   if (was && was < now) {
     ldout(m_cct, 1) << who << " '" << h->name << "'"
 		    << " had suicide timed out after " << h->suicide_grace << dendl;
+    h->print_timeout_message(true);
     assert(0 == "hit suicide timeout");
   }
   return healthy;
@@ -154,3 +156,13 @@ void HeartbeatMap::check_touch_file()
 }
 
 }
+
+void heartbeat_handle_d::print_timeout_message(bool suicide)
+{
+  tp->get_last_work_queue()->_print(suicide);
+}
+void heartbeat_handle_d::set_threadpool(ThreadPool *tp)
+{
+  tp = tp;
+}
+

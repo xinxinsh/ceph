@@ -24,8 +24,10 @@
 #include "include/atomic.h"
 
 #include "RWLock.h"
+#include "common/WorkQueue.h"
 
 class CephContext;
+class ThreadPool;
 
 namespace ceph {
 
@@ -45,10 +47,14 @@ struct heartbeat_handle_d {
   atomic_t timeout, suicide_timeout;
   time_t grace, suicide_grace;
   std::list<heartbeat_handle_d*>::iterator list_item;
+  ThreadPool *tp;
 
   heartbeat_handle_d(const std::string& n)
     : name(n), grace(0), suicide_grace(0)
   { }
+  public:
+    void print_timeout_message(bool suicide);
+    void set_threadpool(ThreadPool *tp);
 };
 
 class HeartbeatMap {

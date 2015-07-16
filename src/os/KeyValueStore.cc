@@ -3016,6 +3016,16 @@ void KeyValueStore::dump_transactions(list<ObjectStore::Transaction*>& ls, uint6
   m_keyvaluestore_dump_fmt.flush(m_keyvaluestore_dump);
   m_keyvaluestore_dump.flush();
 }
+void KeyValueStore::OpWQ::_print(bool suicide)
+{
+  if (suicide) {
+    dout(0) << "WARNING : KeyValueStore threads exceed suicide timeout " << g_conf->keyvaluestore_op_thread_suicide_timeout
+    << " please check keyvaluestore_op_thread_suicide_timeout " << dendl;
+  } else {
+    dout(0) << "WARNING : KeyValueStore threads exceed timeout " << g_conf->keyvaluestore_op_thread_timeout
+    << " please check keyvaluestore_op_thread_timeout " << dendl;
+  }
+}
 
 
 // -- KVSuperblock --

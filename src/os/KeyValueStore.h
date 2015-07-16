@@ -423,6 +423,7 @@ class KeyValueStore : public ObjectStore,
 
   ThreadPool op_tp;
   struct OpWQ : public ThreadPool::WorkQueue<OpSequencer> {
+    friend class KeyValueStore;
     KeyValueStore *store;
     OpWQ(KeyValueStore *fs, time_t timeout, time_t suicide_timeout,
          ThreadPool *tp) :
@@ -456,6 +457,7 @@ class KeyValueStore : public ObjectStore,
     void _clear() {
       assert(store->op_queue.empty());
     }
+    void _print();
   } op_wq;
 
   Op *build_op(list<Transaction*>& tls, Context *ondisk, Context *onreadable,

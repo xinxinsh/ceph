@@ -22,6 +22,9 @@
 #include "common/HeartbeatMap.h"
 
 class CephContext;
+namespace ceph {
+  struct heartbeat_handle_d;
+}
 
 class ThreadPool : public md_config_obs_t {
   CephContext *cct;
@@ -47,10 +50,11 @@ public:
       CephContext *cct,
       heartbeat_handle_d *hb,
       time_t grace,
-      time_t suicide_grace)
-      : cct(cct), hb(hb), grace(grace), suicide_grace(suicide_grace) {}
+      time_t suicide_grace,
+      ThreadPool *tp);
     void reset_tp_timeout();
     void suspend_tp_timeout();
+    void print_time_message(bool suicide);
   };
 private:
 
@@ -66,6 +70,7 @@ private:
     virtual void *_void_dequeue() = 0;
     virtual void _void_process(void *item, TPHandle &handle) = 0;
     virtual void _void_process_finish(void *) = 0;
+    virtual void _print(bool suicide) = 0;
   };
 
   // track thread pool size changes
@@ -92,6 +97,7 @@ public:
       _process(items);
     }
     virtual void _process_finish(const list<T*> &) {}
+    virtual void _print(bool suicide) {}
 
     void *_void_dequeue() {
       list<T*> *out(new list<T*>);
@@ -170,6 +176,7 @@ public:
       _process(u);
     }
     virtual void _process_finish(U) {}
+    virtual void _print(bool suicide) {}
 
     void *_void_dequeue() {
       {
@@ -248,6 +255,7 @@ public:
       _process(t);
     }
     virtual void _process_finish(T *) {}
+    virtual void _print(bool suicide) {}
     
     void *_void_dequeue() {
       return (void *)_dequeue();
@@ -351,6 +359,10 @@ public:
       work_queues[i-1] = work_queues[i];
     assert(i == work_queues.size());
     work_queues.resize(i-1);
+  }
+  /// get last working queue
+  WorkQueue_ * get_last_work_queue() {
+    return work_queues[last_work_queue];
   }
 
   /// take thread pool lock

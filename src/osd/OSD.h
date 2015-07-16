@@ -1758,6 +1758,7 @@ private:
     void _clear() {
       assert(peering_queue.empty());
     }
+    void _print(bool suicide);
   } peering_wq;
 
   void process_peering_events(
@@ -2131,6 +2132,7 @@ protected:
 	delete c;
       }
     }
+    void _print(bool suicide);   
   } command_wq;
 
   void handle_command(class MMonCommand *m);
@@ -2186,6 +2188,7 @@ protected:
 	pg->put("RecoveryWQ");
       }
     }
+    void _print(bool suicide);
   } recovery_wq;
 
   void start_recovery_op(PG *pg, const hobject_t& soid);
@@ -2237,6 +2240,7 @@ protected:
     void _clear() {
       remove_queue.clear();
     }
+    void _print(bool suicide);
   } remove_wq;
 
  private:

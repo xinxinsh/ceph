@@ -5623,6 +5623,17 @@ void FileStore::set_xattr_limits_via_conf()
     m_filestore_max_inline_xattrs = fs_xattrs;
 }
 
+void FileStore::OpWQ::_print(bool suicide)
+{
+  if (suicide) {
+    dout(0) << "WARNING : FileStore threads exceed suicide timeout " << g_conf->filestore_op_thread_suicide_timeout
+    << " please check filestore_op_thread_suicide_timeout " << dendl;
+  } else {
+    dout(0) << "WARNING : FileStore threads exceed timeout " << g_conf->filestore_op_thread_timeout
+    << " please check filestore_op_thread_timeout " << dendl;
+  }
+}
+
 // -- FSSuperblock --
 
 void FSSuperblock::encode(bufferlist &bl) const

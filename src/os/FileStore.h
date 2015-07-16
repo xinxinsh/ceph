@@ -339,6 +339,7 @@ private:
 
   ThreadPool op_tp;
   struct OpWQ : public ThreadPool::WorkQueue<OpSequencer> {
+    friend class FileStore;
     FileStore *store;
     OpWQ(FileStore *fs, time_t timeout, time_t suicide_timeout, ThreadPool *tp)
       : ThreadPool::WorkQueue<OpSequencer>("FileStore::OpWQ", timeout, suicide_timeout, tp), store(fs) {}
@@ -369,6 +370,7 @@ private:
     void _clear() {
       assert(store->op_queue.empty());
     }
+    void _print(bool suicide);
   } op_wq;
 
   void _do_op(OpSequencer *o, ThreadPool::TPHandle &handle);

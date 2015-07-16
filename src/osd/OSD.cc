@@ -8690,3 +8690,46 @@ void OSD::PeeringWQ::_dequeue(list<PG*> *out) {
   }
   in_use.insert(got.begin(), got.end());
 }
+void OSD::PeeringWQ::_print(bool suicide) {
+  if (suicide) {
+    dout(0) << "WARNING : OSD op threads exceed suicide timeout when processing PeeringWQ ops " 
+    << g_conf->osd_op_thread_suicide_timeout
+    << " please check osd_op_thread_suicide_timeout " << dendl;
+  } else {
+    dout(0) << "WARNING : OSD op threads exceed timeout when process PeeringWQ ops " << g_conf->osd_op_thread_timeout
+    << " please check osd_op_thread_timeout " << dendl;
+  }
+}
+
+void OSD::CommandWQ::_print(bool suicide) {
+  if (suicide) {
+    dout(0) << "WARNING : OSD op threads exceed suicide timeout when processing CommandWQ ops " 
+    << g_conf->osd_op_thread_suicide_timeout
+    << " please check osd_op_thread_suicide_timeout " << dendl;
+  } else {
+    dout(0) << "WARNING : OSD op threads exceed timeout when process CommandWQ ops " << g_conf->osd_op_thread_timeout
+    << " please check osd_op_thread_timeout " << dendl;
+  }
+}
+
+void OSD::RecoveryWQ::_print(bool suicide) {
+  if (suicide) {
+    dout(0) << "WARNING : OSD op threads exceed suicide timeout when processing RecoveryWQ ops " 
+    << g_conf->osd_op_thread_suicide_timeout
+    << " please check osd_op_thread_suicide_timeout " << dendl;
+  } else {
+    dout(0) << "WARNING : OSD op threads exceed timeout when process RecoveryWQ ops " << g_conf->osd_op_thread_timeout
+    << " please check osd_op_thread_timeout " << dendl;
+  }
+}
+
+void OSD::RemoveWQ::_print(bool suicide) {
+  if (suicide) {
+    dout(0) << "WARNING : OSD op threads exceed suicide timeout when processing RemoveWQ ops " 
+    << g_conf->osd_op_thread_suicide_timeout
+    << " please check osd_op_thread_suicide_timeout " << dendl;
+  } else {
+    dout(0) << "WARNING : OSD op threads exceed timeout when process RemoveWQ ops " << g_conf->osd_op_thread_timeout
+    << " please check osd_op_thread_timeout " << dendl;
+  }
+}
