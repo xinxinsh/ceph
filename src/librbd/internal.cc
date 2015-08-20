@@ -644,6 +644,39 @@ int invoke_async_request(ImageCtx *ictx, const std::string& request_type,
     return 0;
   }
 
+  int snap_rename_helper(ImageCtx* ictx, Context* ctx,
+                         const char* src_name,
+                         const char* dst_name) {
+    assert(ictx->owner_lock.is_locked());
+    assert(!ictx->image_watcher->is_lock_supported() ||
+	   ictx->image_watcher->is_lock_owner());
+
+    ldout(ictx->cct, 20) << __func__ << " " << ictx << " from " 
+			 << src_name << " to " << dst_name << dendl;
+
+    int r = ictx_check(ictx, true);
+    if (r < 0) {
+      return r;
+    }
+    snap_t snap_id;
+    {
+      RWLock::RLocker snap_locker(ictx->snap_lock);
+      snap_id = ictx->get_snap_id(src_name);
+      if (snap_id == CEPH_NOSNAP)
+        return -ENOENT;
+    }
+    r = rename_snap(ictx, snap_id, dst_name);
+
+    if (r < 0) {
+      return r;
+    }
+
+    if (ctx != NULL) {
+      ctx->complete(0);
+    }
+    return 0;
+  }
+
   static int scan_for_parents(ImageCtx *ictx, parent_spec &pspec,
 			      snapid_t oursnap_id)
   {
@@ -2100,6 +2133,53 @@ reprotect_and_return_err:
       return r;
     }
 
+    return 0;
+  }
+  int rename_snap(ImageCtx *ictx, uint64_t src_snap_id, const char *dst_name)
+  {
+    assert(ictx->owner_lock.is_locked());
+    assert(ictx->md_lock.is_wlocked());
+
+    int r;
+    map<snap_t, SnapInfo>::iterator it;
+    {
+      RWLock::RLocker(ictx->snap_lock);
+      it = ictx->snap_info.find(src_snap_id);
+      if (it == ictx->snap_info.end())
+        ldout(ictx->cct, 20) << __func__ << " can not find snap with snap id "
+                             << src_snap_id << dendl;
+    }
+    bool lock_owner = ictx->image_watcher->is_lock_owner();
+    if (ictx->image_watcher->is_lock_supported()) {
+      assert(lock_owner);
+    }
+
+
+    if (ictx->old_format) {
+      r = cls_client::old_snapshot_rename(&ictx->md_ctx, ictx->header_oid,
+				       src_snap_id, dst_name);
+    } else {
+      librados::ObjectWriteOperation op;
+      if (lock_owner) {
+	ictx->image_watcher->assert_header_locked(&op);
+      }
+      cls_client::snapshot_rename(&op, src_snap_id, dst_name);
+      r = ictx->md_ctx.operate(ictx->header_oid, &op);
+    }
+
+    if (r < 0) {
+      lderr(ictx->cct) << "rename snapshot name failed: "
+		       << cpp_strerror(r) << dendl;
+      return r;
+    }
+
+    if (!ictx->old_format) {
+      if (lock_owner) {
+        ictx->snap_ids.erase(it->second.name);
+        it->second.name = dst_name;
+        ictx->snap_ids.insert(make_pair(dst_name,it->first));
+      }
+    }
     return 0;
   }
 
