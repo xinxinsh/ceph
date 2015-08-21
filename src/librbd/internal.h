@@ -34,6 +34,7 @@ enum {
   l_librbd_snap_create,
   l_librbd_snap_remove,
   l_librbd_snap_rollback,
+  l_librbd_snap_rename,
 
   l_librbd_notify,
   l_librbd_resize,
@@ -110,6 +111,7 @@ namespace librbd {
 		    ProgressContext& prog_ctx);
   int snap_remove(ImageCtx *ictx, const char *snap_name);
   int snap_remove_helper(ImageCtx *ictx, Context* ctx, const char *snap_name);
+  int snap_rename(ImageCtx *ictx, const char *srcname, const char *dstname);
   int snap_rename_helper(ImageCtx *ictx, Context* ctx, const char *src_name,
 			 const char *dst_name);
   int snap_protect(ImageCtx *ictx, const char *snap_name);
