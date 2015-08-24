@@ -147,7 +147,7 @@ void usage()
 "  snap purge <image-spec>                     deletes all snapshots\n"
 "  snap protect <snap-spec>                    prevent a snapshot from being deleted\n"
 "  snap unprotect <snap-spec>                  allow a snapshot to be deleted\n"
-"  snap rename <snap-spec> <snap-spec>         allow a snapshot to be renamed\n"
+"  snap rename <src snap-spec> <dst snap-spec> rename a snapshot\n"
 "  watch <image-spec>                          watch events on image\n"
 "  status <image-spec>                         show the status of this image\n"
 "  map <image-spec> | <snap-spec>              map image to a block device\n"
@@ -3528,7 +3528,7 @@ if (!set_conf_param(v, p1, p2, p3)) { \
     return EXIT_FAILURE;
   }
   if (opt_cmd == OPT_SNAP_RENAME && !dest_snapname) {
-    cerr << "rbd: destinationsnap name was not specified" << std::endl;
+    cerr << "rbd: destination snap name was not specified" << std::endl;
     return EXIT_FAILURE;
   }
 
