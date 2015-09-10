@@ -31,7 +31,7 @@ AioImageRequestWQ::AioImageRequestWQ(ImageCtx *image_ctx, const string &name,
   tp->add_work_queue(this);
 }
 
-ssize_t ImageRequestWQ::read(uint64_t off, uint64_t len,
+ssize_t AioImageRequestWQ::read(uint64_t off, uint64_t len,
                              ReadResult &&read_result, int op_flags) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "read: ictx=" << &m_image_ctx << ", off=" << off << ", "
@@ -62,7 +62,7 @@ ssize_t AioImageRequestWQ::write(uint64_t off, uint64_t len, const char *buf,
 
   C_SaferCond cond;
   AioCompletion *c = AioCompletion::create(&cond);
-  aio_write(c, off, len, std::move(bl), op_flags, false);
+  aio_write(c, off, len, buf, op_flags, false);
 
   r = cond.wait();
   if (r < 0) {
@@ -95,7 +95,7 @@ int AioImageRequestWQ::discard(uint64_t off, uint64_t len) {
   return len;
 }
 
-void ImageRequestWQ::aio_read(AioCompletion *c, uint64_t off, uint64_t len,
+void AioImageRequestWQ::aio_read(AioCompletion *c, uint64_t off, uint64_t len,
                               ReadResult &&read_result, int op_flags,
                               bool native_async) {
   c->init_time(&m_image_ctx, AIO_TYPE_READ);

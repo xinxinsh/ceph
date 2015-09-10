@@ -7,7 +7,6 @@
 #include "include/int_types.h"
 #include "include/buffer_fwd.h"
 #include "include/Context.h"
-#include "librbd/io/Types.h"
 #include "osdc/Striper.h"
 #include <sys/uio.h>
 #include <boost/variant/variant.hpp>
@@ -15,10 +14,12 @@
 struct CephContext;
 
 namespace librbd {
-namespace io {
+
+typedef std::vector<std::pair<uint64_t, uint64_t> > Extents;
+typedef std::map<uint64_t, uint64_t> ExtentMap;
 
 struct AioCompletion;
-template <typename> struct ObjectReadRequest;
+template <typename> struct AioObjectRead;
 
 class ReadResult {
 private:
@@ -56,7 +57,7 @@ public:
 
   template <typename ImageCtxT>
   struct C_SparseReadRequest : public C_SparseReadRequestBase {
-    ObjectReadRequest<ImageCtxT> *request;
+    AioObjectRead<ImageCtxT> *request;
 
     C_SparseReadRequest(AioCompletion *aio_completion)
       : C_SparseReadRequestBase(aio_completion) {
@@ -119,7 +120,6 @@ private:
 
 };
 
-} // namespace io
 } // namespace librbd
 
 #endif // CEPH_LIBRBD_IO_READ_RESULT_H

@@ -89,8 +89,13 @@ target_link_libraries(librbd PRIVATE
   udev
   ${CMAKE_DL_LIBS}
   ${EXTRALIBS})
-if(${ENABLE_SHARED})
-  set_target_properties(librbd PROPERTIES VERSION "1.0.0" SOVERSION "1"
-    OUTPUT_NAME rbd)
-endif(${ENABLE_SHARED})
-install(TARGETS librbd DESTINATION lib)
+if(ENABLE_SHARED)
+  set_target_properties(librbd PROPERTIES
+    OUTPUT_NAME rbd
+    VERSION 1.12.0
+    SOVERSION 1
+    COMPILE_FLAGS "-fvisibility=hidden -fvisibility-inlines-hidden"
+    LINK_FLAGS "-Wl,--exclude-libs,ALL")
+endif(ENABLE_SHARED)
+install(TARGETS librbd DESTINATION ${CMAKE_INSTALL_LIBDIR})
+

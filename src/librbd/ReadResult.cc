@@ -1,10 +1,10 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#include "librbd/io/ReadResult.h"
+#include "librbd/ReadResult.h"
 #include "include/buffer.h"
 #include "common/dout.h"
-#include "librbd/io/AioCompletion.h"
+#include "librbd/AioCompletion.h"
 #include <boost/variant/apply_visitor.hpp>
 #include <boost/variant/static_visitor.hpp>
 
@@ -13,7 +13,6 @@
 #define dout_prefix *_dout << "librbd::io::ReadResult: "
 
 namespace librbd {
-namespace io {
 
 struct ReadResult::SetClipLengthVisitor : public boost::static_visitor<void> {
   size_t length;
@@ -160,6 +159,5 @@ void ReadResult::assemble_result(CephContext *cct) {
   boost::apply_visitor(AssembleResultVisitor(cct, m_destriper), m_buffer);
 }
 
-} // namespace io
 } // namespace librbd
 

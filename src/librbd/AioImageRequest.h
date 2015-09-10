@@ -25,13 +25,13 @@ public:
   typedef std::vector<std::pair<uint64_t,uint64_t> > Extents;
 
   virtual ~AioImageRequest() {}
-	ssize_t read(uint64_t off, uint64_t len, char *buf, int op_flags);
-  ssize_t write(uint64_t off, uint64_t len, const char *buf, int op_flags);
-  int discard(uint64_t off, uint64_t len);
 
   static void aio_read(ImageCtxT *ictx, AioCompletion *c,
-                       uint64_t off, uint64_t len, ReadResult &&read_result,
+                       Extents&& image_extents, ReadResult &&read_result,
                        int op_flags);
+  static void aio_read(ImageCtxT *ictx, AioCompletion *c,
+                       uint64_t off, size_t len, char *buf, 
+                       bufferlist *pbl, int op_flags);
   static void aio_write(ImageCtxT *ictx, AioCompletion *c, uint64_t off,
                         size_t len, const char *buf, int op_flags);
   static void aio_discard(ImageCtxT *ictx, AioCompletion *c, uint64_t off,

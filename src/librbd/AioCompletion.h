@@ -64,7 +64,7 @@ struct AioCompletion {
   utime_t start_time;
   aio_type_t aio_type;
 
-  ReadResult read_result;
+	librbd::ReadResult read_result;
 
   AsyncOperation async_op;
 

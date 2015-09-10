@@ -118,10 +118,10 @@ TEST_F(TestJournalReplay, AioDiscardEvent) {
   aio_comp->release();
 
   std::string read_payload(4096, '\0');
-  librbd::ReadResult read_result{&read_payload[0], read_payload.size()};
+  librbd::ReadResult read_result1{&read_payload[0], read_payload.size()};
   aio_comp = new librbd::AioCompletion();
   ictx->aio_work_queue->aio_read(aio_comp, 0, read_payload.size(),
-                                 std::move(read_result), 0);
+                                 std::move(read_result1), 0);
   ASSERT_EQ(0, aio_comp->wait_for_complete());
   aio_comp->release();
   ASSERT_EQ(payload, read_payload);

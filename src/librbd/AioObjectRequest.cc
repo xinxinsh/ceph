@@ -219,7 +219,7 @@ bool AioObjectRead<I>::should_complete(int r)
             m_state = LIBRBD_AIO_READ_COPYUP;
           }
 
-          read_from_parent(parent_extents);
+          read_from_parent(std::move(parent_extents));
           finished = false;
         }
       }
@@ -328,7 +328,7 @@ void AioObjectRead<I>::send_copyup()
 }
 
 template <typename I>
-void AioObjectRead<I>::read_from_parent(const Extents& parent_extents)
+void AioObjectRead<I>::read_from_parent(Extents&& parent_extents)
 {
   ImageCtx *image_ctx = this->m_ictx;
   assert(!m_parent_completion);
@@ -345,9 +345,9 @@ void AioObjectRead<I>::read_from_parent(const Extents& parent_extents)
                             << " extents " << parent_extents
                             << dendl;
   RWLock::RLocker owner_locker(image_ctx->parent->owner_lock);
-  AioImageRequest<>::aio_read(image_ctx->parent, parent_completion,
+  AioImageRequest<>::aio_read(image_ctx->parent, m_parent_completion,
                            std::move(parent_extents),
-                           ReadResult{&m_read_data}, 0);
+                           librbd::ReadResult{&m_read_data}, 0);
 }
 
 /** write **/

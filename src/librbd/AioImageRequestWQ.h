@@ -24,13 +24,13 @@ public:
 
   ssize_t read(uint64_t off, uint64_t len, ReadResult &&read_result,
                int op_flags);
-  ssize_t write(uint64_t off, uint64_t len, bufferlist &&bl, int op_flags);
+  ssize_t write(uint64_t off, uint64_t len, const char *buf, int op_flags);
   int discard(uint64_t off, uint64_t len);
 
   void aio_read(AioCompletion *c, uint64_t off, uint64_t len,
                 ReadResult &&read_result, int op_flags, bool native_async=true);
   void aio_write(AioCompletion *c, uint64_t off, uint64_t len,
-                 bufferlist &&bl, int op_flags, bool native_async=true);
+                 const char *buf, int op_flags, bool native_async=true);
   void aio_discard(AioCompletion *c, uint64_t off, uint64_t len,
                    bool native_async=true);
   void aio_flush(AioCompletion *c, bool native_async=true);

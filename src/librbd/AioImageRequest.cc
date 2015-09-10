@@ -82,7 +82,7 @@ struct C_FlushJournalCommit : public Context {
 template <typename ImageCtxT>
 class C_ObjectCacheRead : public Context {
 public:
-  explicit C_ObjectCacheRead(ImageCtxT &ictx, ObjectReadRequest<ImageCtxT> *req)
+  explicit C_ObjectCacheRead(ImageCtxT &ictx, AioObjectRead<ImageCtxT> *req)
     : m_image_ctx(ictx), m_req(req), m_enqueued(false) {}
 
   virtual void complete(int r) {
@@ -109,76 +109,12 @@ private:
 
 } // anonymous namespace
 
-ssize_t AioImageRequestWQ::read(uint64_t off, uint64_t len, char *buf,
-                                int op_flags) {
-  CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 20) << "read: ictx=" << &m_image_ctx << ", off=" << off << ", "
-                 << "len = " << len << dendl;
-
-  std::vector<std::pair<uint64_t,uint64_t> > image_extents;
-  image_extents.push_back(make_pair(off, len));
-
-  C_SaferCond cond;
-  AioCompletion *c = AioCompletion::create(&cond);
-  aio_read(c, off, len, buf, NULL, op_flags, false);
-  return cond.wait();
-}
-
-ssize_t AioImageRequestWQ::write(uint64_t off, uint64_t len, const char *buf,
-                                 int op_flags) {
-  CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 20) << "write: ictx=" << &m_image_ctx << ", off=" << off << ", "
-                 << "len = " << len << dendl;
-
-  m_image_ctx.snap_lock.get_read();
-  int r = clip_io(util::get_image_ctx(&m_image_ctx), off, &len);
-  m_image_ctx.snap_lock.put_read();
-  if (r < 0) {
-    lderr(cct) << "invalid IO request: " << cpp_strerror(r) << dendl;
-    return r;
-  }
-
-  C_SaferCond cond;
-  AioCompletion *c = AioCompletion::create(&cond);
-  aio_write(c, off, len, buf, op_flags, false);
-
-  r = cond.wait();
-  if (r < 0) {
-    return r;
-  }
-  return len;
-}
-
-int AioImageRequestWQ::discard(uint64_t off, uint64_t len) {
-  CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 20) << "discard: ictx=" << &m_image_ctx << ", off=" << off << ", "
-                 << "len = " << len << dendl;
-
-  m_image_ctx.snap_lock.get_read();
-  int r = clip_io(util::get_image_ctx(&m_image_ctx), off, &len);
-  m_image_ctx.snap_lock.put_read();
-  if (r < 0) {
-    lderr(cct) << "invalid IO request: " << cpp_strerror(r) << dendl;
-    return r;
-  }
-
-  C_SaferCond cond;
-  AioCompletion *c = AioCompletion::create(&cond);
-  aio_discard(c, off, len, false);
-
-  r = cond.wait();
-  if (r < 0) {
-    return r;
-  }
-  return len;
-}
-
 template <typename I>
 void AioImageRequest<I>::aio_read(
     I *ictx, AioCompletion *c,
     Extents &&image_extents, ReadResult &&read_result,
     int op_flags) {
-  AioImageRead<I> req(*ictx, c, extents, ReadResult{&pbl}, op_flags);
+  AioImageRead<I> req(*ictx, c, image_extents, std::move(read_result), op_flags);
   req.send();
 }
 
@@ -186,7 +122,9 @@ template <typename I>
 void AioImageRequest<I>::aio_read(I *ictx, AioCompletion *c,
                                   uint64_t off, size_t len, char *buf,
                                   bufferlist *pbl, int op_flags) {
-  AioImageRead<I> req(*ictx, c, {{off, len}}, ReadResult{&pbl}, op_flags);
+	Extents image_extents;
+	image_extents.push_back(std::make_pair(off, len));
+  AioImageRead<I> req(*ictx, c, image_extents, librbd::ReadResult{pbl}, op_flags);
   req.send();
 }
 
@@ -300,16 +238,16 @@ void AioImageRead<I>::send_request() {
                      << extent.length << " from " << extent.buffer_extents
                      << dendl;
 
-      auto req_comp = new io::ReadResult::C_SparseReadRequest<I>(
+      auto req_comp = new ReadResult::C_SparseReadRequest<I>(
         aio_comp);
-      ObjectReadRequest<I> *req = ObjectReadRequest<I>::create(
+      AioObjectRead<I> *req = AioObjectRead<I>::create(
         &image_ctx, extent.oid.name, extent.objectno, extent.offset,
         extent.length, extent.buffer_extents, snap_id, true, req_comp,
         m_op_flags);
       req_comp->request = req;
 
       if (image_ctx.object_cacher) {
-        C_CacheRead<I> *cache_comp = new C_CacheRead<I>(image_ctx, req);
+        C_ObjectCacheRead<I> *cache_comp = new C_ObjectCacheRead<I>(image_ctx, req);
         image_ctx.aio_read_from_cache(extent.oid, extent.objectno,
                                       &req->data(), extent.length,
                                       extent.offset, cache_comp, m_op_flags);

@@ -190,7 +190,7 @@ void CopyupRequest::send()
                          << ", oid " << m_oid
                          << ", extents " << m_image_extents
                          << dendl;
-  ImageRequest<>::aio_read(m_ictx->parent, comp, std::move(m_image_extents),
+  AioImageRequest<>::aio_read(m_ictx->parent, comp, std::move(m_image_extents),
                            ReadResult{&m_copyup_data}, 0);
 }
 
