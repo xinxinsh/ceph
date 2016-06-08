@@ -1208,6 +1208,7 @@ OPTION(rbd_throttle_ops_read_max_length, OPT_INT, 1)    //max length for read bu
 OPTION(rbd_throttle_ops_write_max, OPT_LONGLONG, 0)		//write burst I/O operations limit, default is 0 which means that bursts are not allowd
 OPTION(rbd_throttle_ops_write_max_length, OPT_INT, 1)   //max length for write burst I/O operations, it can be set if total burst I/O operations is set as well, default is 1 second
 OPTION(rbd_throttle_op_size, OPT_LONGLONG, 0)			//size of an operation in bytes
+OPTION(rbd_auto_exclusive_lock_until_manual_request, OPT_BOOL, true) // whether to automatically acquire/release exclusive lock until it is explicitly requested, i.e. before we know the user of librbd is properly using the lock API
 
 /*
  * The following options change the behavior for librbd's image creation methods that

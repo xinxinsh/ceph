@@ -667,25 +667,24 @@ bool ImageWatcher<I>::handle_payload(const RequestLockPayload &payload,
   }
 
   RWLock::RLocker l(m_image_ctx.owner_lock);
-  if (m_image_ctx.exclusive_lock != nullptr) {
-    int r;
-    if (m_image_ctx.exclusive_lock->accept_requests(&r)) {
-      // need to send something back so the client can detect a missing leader
-      ::encode(ResponseMessage(0), ack_ctx->out);
+  if (m_image_ctx.exclusive_lock != nullptr &&
+      m_image_ctx.exclusive_lock->is_lock_owner()) {
+    int r = 0;
+    bool accept_request = m_image_ctx.exclusive_lock->accept_requests(&r);
 
-      {
-        Mutex::Locker owner_client_id_locker(m_owner_client_id_lock);
-        if (!m_owner_client_id.is_valid()) {
-	  return true;
-        }
+    if (accept_request) {
+      assert(r == 0);
+      Mutex::Locker owner_client_id_locker(m_owner_client_id_lock);
+      if (!m_owner_client_id.is_valid()) {
+        return true;
       }
 
       ldout(m_image_ctx.cct, 10) << this << " queuing release of exclusive lock"
                                  << dendl;
-      m_image_ctx.get_exclusive_lock_policy()->lock_requested(payload.force);
-    } else if (r < 0) {
-      ::encode(ResponseMessage(r), ack_ctx->out);
+      r = m_image_ctx.get_exclusive_lock_policy()->lock_requested(
+        payload.force);
     }
+    ::encode(ResponseMessage(r), ack_ctx->out);
   }
   return true;
 }

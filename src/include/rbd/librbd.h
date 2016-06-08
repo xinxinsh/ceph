@@ -139,6 +139,31 @@ typedef struct {
   bool up;
 } rbd_mirror_image_status_t;
 
+typedef enum {
+  GROUP_IMAGE_STATE_ATTACHED,
+  GROUP_IMAGE_STATE_INCOMPLETE
+} rbd_group_image_state_t;
+
+typedef struct {
+  char *name;
+  int64_t pool;
+} rbd_group_image_spec_t;
+
+typedef struct {
+  rbd_group_image_spec_t spec;
+  rbd_group_image_state_t state;
+} rbd_group_image_status_t;
+
+typedef struct {
+  char *name;
+  int64_t pool;
+} rbd_group_spec_t;
+
+typedef enum {
+  RBD_LOCK_MODE_EXCLUSIVE = 0,
+  RBD_LOCK_MODE_SHARED = 1,
+} rbd_lock_mode_t;
+
 CEPH_RBD_API void rbd_version(int *major, int *minor, int *extra);
 
 /* image options */
@@ -302,6 +327,8 @@ CEPH_RBD_API int rbd_set_image_notification(rbd_image_t image, int fd, int type)
 
 /* exclusive lock feature */
 CEPH_RBD_API int rbd_is_exclusive_lock_owner(rbd_image_t image, int *is_owner);
+CEPH_RBD_API int rbd_lock_acquire(rbd_image_t image, rbd_lock_mode_t lock_mode);
+CEPH_RBD_API int rbd_lock_release(rbd_image_t image);
 
 /* object map feature */
 CEPH_RBD_API int rbd_rebuild_object_map(rbd_image_t image,
