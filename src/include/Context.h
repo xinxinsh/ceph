@@ -58,6 +58,7 @@ class Context {
   virtual void finish(int r) = 0;
 
  public:
+  utime_t gen;
   Context() {}
   virtual ~Context() {}       // we want a virtual destructor!!!
   virtual void complete(int r) {

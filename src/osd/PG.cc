@@ -2748,20 +2748,33 @@ void PG::init(
 
 void PG::upgrade(ObjectStore *store)
 {
-  assert(info_struct_v <= 8);
+  assert(info_struct_v <= 9);
   ObjectStore::Transaction t;
+  if(info_struct_v >= 8) {
+  // 8 -> 9
+    std::set<string> keys;
+    std::map<string, bufferlist> values;
+    keys.insert(info_key);
+    int r = store->omap_get_values(coll, pgmeta_oid, keys, &values);
+    if (r < 0) {
+      derr << __func__ << " omap_get_values returned " << cpp_strerror(r) << dendl;
+      assert(0);
+    }
+    pg_log.mark_log_for_rewrite();
+    t.omap_rmkeys(coll, pgmeta_oid, keys);
+  }
+  if (info_struct_v == 7) {
+  // 7 -> 9
+    pg_log.mark_log_for_rewrite();
+    ghobject_t log_oid(OSD::make_pg_log_oid(pg_id));
+    ghobject_t biginfo_oid(OSD::make_pg_biginfo_oid(pg_id));
+    t.remove(coll_t::meta(), log_oid);
+    t.remove(coll_t::meta(), biginfo_oid);
+    
+    t.collection_rmattr(coll, "info");
 
-  assert(info_struct_v == 7);
-
-  // 7 -> 8
-  pg_log.mark_log_for_rewrite();
-  ghobject_t log_oid(OSD::make_pg_log_oid(pg_id));
-  ghobject_t biginfo_oid(OSD::make_pg_biginfo_oid(pg_id));
-  t.remove(coll_t::meta(), log_oid);
-  t.remove(coll_t::meta(), biginfo_oid);
-  t.collection_rmattr(coll, "info");
-
-  t.touch(coll, pgmeta_oid);
+    t.touch(coll, pgmeta_oid);
+  }
   map<string,bufferlist> v;
   __u8 ver = cur_struct_v;
   ::encode(ver, v[infover_key]);
@@ -2966,11 +2979,19 @@ int PG::peek_map_epoch(ObjectStore *store,
 void PG::write_if_dirty(ObjectStore::Transaction& t)
 {
   map<string,bufferlist> km;
+  map<string,bufferlist> attrs;
   if (dirty_big_info || dirty_info)
     prepare_write_info(&km);
   pg_log.write_log(t, &km, coll, pgmeta_oid, pool.info.require_rollback());
-  if (!km.empty())
-    t.omap_setkeys(coll, pgmeta_oid, km);
+  if (!km.empty()) {
+    std::map<string,bufferlist>::iterator it = km.find(info_key);
+    if (it != km.end()) {
+      t.setattr(coll, pgmeta_oid, it->first, it->second);
+      km.erase(it);
+    }
+    if (!km.empty())
+      t.omap_setkeys(coll, pgmeta_oid, km);
+  }
 }
 
 void PG::trim_peers()
@@ -3095,7 +3116,8 @@ std::string PG::get_corrupt_pg_log_name() const
   out += stringify(info.pgid);
   return out;
 }
-
+#undef dout_prefix
+#define dout_prefix *_dout 
 int PG::read_info(
   ObjectStore *store, spg_t pgid, const coll_t &coll, bufferlist &bl,
   pg_info_t &info, map<epoch_t,pg_interval_t> &past_intervals,
@@ -3110,14 +3132,25 @@ int PG::read_info(
   map<string,bufferlist> values;
   int r = store->omap_get_values(coll, pgmeta_oid, keys, &values);
   if (r == 0) {
-    assert(values.size() == 3);
-
-    bufferlist::iterator p = values[infover_key].begin();
+    bufferlist::iterator p;
+    p = values[infover_key].begin();
     ::decode(struct_v, p);
-    assert(struct_v >= 8);
-
-    p = values[info_key].begin();
-    ::decode(info, p);
+    ldout(g_ceph_context, 10) << "value size is " << values.size() << " struct_v " << struct_v << dendl;
+    for(map<string,bufferlist>::iterator it = values.begin(); it != values.end(); it++)
+      ldout(g_ceph_context, 10) << "map key is " << it->first << dendl;
+    if (values.size() == 3) {
+     // assert(struct_v == 8);
+      p = values[info_key].begin();
+      ::decode(info, p);
+    }
+    if (values.size() == 2) {
+    // read info from pg dirctory 
+      assert(struct_v == 9);
+      bufferlist bp;
+      store->getattr(coll, pgmeta_oid, info_key, bp);
+      p = bp.begin();
+      ::decode(info, p);
+    }
 
     p = values[biginfo_key].begin();
     ::decode(past_intervals, p);
@@ -3151,13 +3184,15 @@ int PG::read_info(
   ::decode(info.purged_snaps, p);
   return 0;
 }
-
+#undef dout_prefix
+#define dout_prefix _prefix(_dout, this)
 void PG::read_state(ObjectStore *store, bufferlist &bl)
 {
   int r = read_info(store, pg_id, coll, bl, info, past_intervals,
 		    info_struct_v);
   assert(r >= 0);
 
+  dout(0) << "pg is " << pg_id << " info_struct_v " << info_struct_v << dendl;
   ostringstream oss;
   pg_log.read_log(store,
 		  coll,

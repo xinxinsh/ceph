@@ -627,8 +627,12 @@ void ReplicatedBackend::op_applied(
   InProgressOp *op)
 {
   dout(10) << __func__ << ": " << op->tid << dendl;
-  if (op->op)
+  if (op->op) {
     op->op->mark_event("op_applied");
+    utime_t lat = ceph_clock_now(g_ceph_context);
+    lat -= op->op->get_req()->get_recv_stamp();
+    get_parent()->get_logger()->tinc(l_osd_op_rw_wait_pa_lat, lat);
+  }
 
   op->waiting_for_applied.erase(get_parent()->whoami_shard());
   parent->op_applied(op->v);
@@ -647,8 +651,12 @@ void ReplicatedBackend::op_commit(
   InProgressOp *op)
 {
   dout(10) << __func__ << ": " << op->tid << dendl;
-  if (op->op)
+  if (op->op) {
     op->op->mark_event("op_commit");
+    utime_t lat = ceph_clock_now(g_ceph_context);
+    lat -= op->op->get_req()->get_recv_stamp();
+    get_parent()->get_logger()->tinc(l_osd_op_rw_wait_pc_lat, lat);
+  }
 
   op->waiting_for_commit.erase(get_parent()->whoami_shard());
 
@@ -702,16 +710,32 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
         ostringstream ss;
         ss << "sub_op_commit_rec from " << from;
 	ip_op.op->mark_event(ss.str());
+        utime_t lat = ceph_clock_now(g_ceph_context);
+        lat -= ip_op.op->get_req()->get_recv_stamp();
+        if (ip_op.waiting_for_commit.size() > 0) {
+          get_parent()->get_logger()->tinc(l_osd_op_rw_wait_sc_lat, lat);
+        } else {
+          get_parent()->get_logger()->tinc(l_osd_op_rw_wait_tc_lat, lat);
+        }
       }
     } else {
       assert(ip_op.waiting_for_applied.count(from));
+      ip_op.waiting_for_applied.erase(from);
       if (ip_op.op) {
         ostringstream ss;
         ss << "sub_op_applied_rec from " << from;
 	ip_op.op->mark_event(ss.str());
+        utime_t lat = ceph_clock_now(g_ceph_context);
+        lat -= ip_op.op->get_req()->get_recv_stamp();
+        if (ip_op.waiting_for_applied.size() > 0) {
+          get_parent()->get_logger()->tinc(l_osd_op_rw_wait_sa_lat, lat);
+        } else {
+          get_parent()->get_logger()->tinc(l_osd_op_rw_wait_ta_lat, lat);
+        }
       }
     }
-    ip_op.waiting_for_applied.erase(from);
+    if (ip_op.waiting_for_applied.count(from))
+      ip_op.waiting_for_applied.erase(from);
 
     parent->update_peer_last_complete_ondisk(
       from,

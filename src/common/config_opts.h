@@ -599,6 +599,7 @@ OPTION(osd_uuid, OPT_UUID, uuid_d())
 OPTION(osd_data, OPT_STR, "/var/lib/ceph/osd/$cluster-$id")
 OPTION(osd_journal, OPT_STR, "/var/lib/ceph/osd/$cluster-$id/journal")
 OPTION(osd_journal_size, OPT_INT, 5120)         // in mb
+OPTION(osd_journal_multiple, OPT_INT, 2)         // in mb
 // flags for specific control purpose during osd mount() process. 
 // e.g., can be 1 to skip over replaying journal
 // or 2 to skip over mounting omap or 3 to skip over both.
@@ -843,6 +844,9 @@ OPTION(rocksdb_db_paths, OPT_STR, "")   // path,size( path,size)*
 OPTION(rocksdb_log_to_ceph_log, OPT_BOOL, true)  // log to ceph log
 OPTION(rocksdb_cache_size, OPT_INT, 128*1024*1024)  // default leveldb cache size
 OPTION(rocksdb_block_size, OPT_INT, 4*1024)  // default rocksdb block size
+OPTION(rocksdb_bloom_size, OPT_INT, 10)  // default bloom filter size
+OPTION(rocksdb_block_checksum, OPT_INT, 1)  // default rocksdb block checksum kCRC32c:1 kxxHash:2
+OPTION(rocksdb_cache_index_and_filter_blocks, OPT_INT, 0)  // cache_index_and_filter_blocks for table factory
 // rocksdb options that will be used for omap(if omap_backend is rocksdb)
 OPTION(filestore_rocksdb_options, OPT_STR, "")
 // rocksdb options that will be used in monstore

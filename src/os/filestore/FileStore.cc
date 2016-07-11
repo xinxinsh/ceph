@@ -602,6 +602,7 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   plb.add_u64_counter(l_os_j_ops, "journal_ops", "Total journal entries written");
   plb.add_u64(l_os_jq_bytes, "journal_queue_bytes", "Size of journal queue");
   plb.add_u64_counter(l_os_j_bytes, "journal_bytes", "Total operations size in journal");
+  plb.add_time_avg(l_os_j_wlat, "journal_wait_latency", "Average journal wait latency in queue");
   plb.add_time_avg(l_os_j_lat, "journal_latency", "Average journal queue completing latency");
   plb.add_u64_counter(l_os_j_wr, "journal_wr", "Journal write IOs");
   plb.add_u64_avg(l_os_j_wr_bytes, "journal_wr_bytes", "Journal data written");
@@ -619,6 +620,11 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   plb.add_time_avg(l_os_commit_lat, "commitcycle_latency", "Average latency of commit");
   plb.add_u64_counter(l_os_j_full, "journal_full", "Journal writes while full");
   plb.add_time_avg(l_os_queue_lat, "queue_transaction_latency_avg", "Store operation queue latency");
+  plb.add_time_avg(l_os_op_lat, "do_op_latency_avg", "do op latency");
+  plb.add_time_avg(l_os_write_lat, "write_latency_avg", "write latency");
+  plb.add_time_avg(l_os_setattr_lat, "setattr_latency_avg", "setattr latency");
+  plb.add_time_avg(l_os_setattrs_lat, "setattrs_latency_avg", "setattrs latency");
+  plb.add_time_avg(l_os_setomap_lat, "setomap_latency_avg", "set omap latency");
 
   logger = plb.create_perf_counters();
 
@@ -1882,6 +1888,7 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
 
   osr->apply_lock.Lock();
   Op *o = osr->peek_queue();
+  o->deq = ceph_clock_now(g_ceph_context);
   apply_manager.op_apply_start(o->op);
   dout(5) << "_do_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << " start" << dendl;
   int r = _do_transactions(o->tls, o->op, &handle);
@@ -1897,17 +1904,17 @@ void FileStore::_finish_op(OpSequencer *osr)
 {
   list<Context*> to_queue;
   Op *o = osr->dequeue(&to_queue);
-
-  utime_t lat = ceph_clock_now(g_ceph_context);
-  lat -= o->start;
-
-  dout(10) << "_finish_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << " lat " << lat << dendl;
   osr->apply_lock.Unlock();  // locked in _do_op
 
   // called with tp lock held
   op_queue_release_throttle(o);
 
-  logger->tinc(l_os_apply_lat, lat);
+  utime_t lat = ceph_clock_now(g_ceph_context);
+
+  dout(10) << "_finish_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << " lat " << lat << dendl;
+
+  logger->tinc(l_os_apply_lat, lat - o->start);
+  logger->tinc(l_os_op_lat, lat - o->deq);
 
   if (o->onreadable_sync) {
     o->onreadable_sync->complete(0);
@@ -2113,11 +2120,8 @@ int FileStore::_do_transactions(
 
   for (vector<Transaction>::iterator p = tls.begin();
        p != tls.end();
-       ++p, trans_num++) {
+       ++p, trans_num++)
     _do_transaction(*p, op_seq, trans_num, handle);
-    if (handle)
-      handle->reset_tp_timeout();
-  }
 
   return 0;
 }
@@ -2422,6 +2426,7 @@ void FileStore::_do_transaction(
 
     case Transaction::OP_WRITE:
       {
+        utime_t s = ceph_clock_now(g_ceph_context);
         coll_t cid = i.get_cid(op->cid);
         ghobject_t oid = i.get_oid(op->oid);
 	_kludge_temp_object_collection(cid, oid);
@@ -2434,6 +2439,8 @@ void FileStore::_do_transaction(
         if (_check_replay_guard(cid, oid, spos) > 0)
           r = _write(cid, oid, off, len, bl, fadvise_flags);
         tracepoint(objectstore, write_exit, r);
+        utime_t t = ceph_clock_now(g_ceph_context) - s;
+        logger->tinc(l_os_write_lat, t);
       }
       break;
 
@@ -2484,6 +2491,7 @@ void FileStore::_do_transaction(
 
     case Transaction::OP_SETATTR:
       {
+        utime_t s = ceph_clock_now(g_ceph_context);
         coll_t cid = i.get_cid(op->cid);
         ghobject_t oid = i.get_oid(op->oid);
 	_kludge_temp_object_collection(cid, oid);
@@ -2500,11 +2508,14 @@ void FileStore::_do_transaction(
                     << " name " << name << " size " << bl.length() << dendl;
         }
         tracepoint(objectstore, setattr_exit, r);
+        utime_t t = ceph_clock_now(g_ceph_context) - s;
+        logger->tinc(l_os_setattr_lat, t);
       }
       break;
 
     case Transaction::OP_SETATTRS:
       {
+        utime_t s = ceph_clock_now(g_ceph_context);
         coll_t cid = i.get_cid(op->cid);
         ghobject_t oid = i.get_oid(op->oid);
 	_kludge_temp_object_collection(cid, oid);
@@ -2516,6 +2527,8 @@ void FileStore::_do_transaction(
         tracepoint(objectstore, setattrs_exit, r);
         if (r == -ENOSPC)
           dout(0) << " ENOSPC on setxattrs on " << cid << "/" << oid << dendl;
+        utime_t t = ceph_clock_now(g_ceph_context) - s;
+        logger->tinc(l_os_setattrs_lat, t);
       }
       break;
 
@@ -2749,6 +2762,7 @@ void FileStore::_do_transaction(
       break;
     case Transaction::OP_OMAP_SETKEYS:
       {
+        utime_t s = ceph_clock_now(g_ceph_context);
         coll_t cid = i.get_cid(op->cid);
         ghobject_t oid = i.get_oid(op->oid);
 	_kludge_temp_object_collection(cid, oid);
@@ -2757,6 +2771,8 @@ void FileStore::_do_transaction(
         tracepoint(objectstore, omap_setkeys_enter, osr_name);
         r = _omap_setkeys(cid, oid, aset, spos);
         tracepoint(objectstore, omap_setkeys_exit, r);
+        utime_t t = ceph_clock_now(g_ceph_context) - s;
+        logger->tinc(l_os_setomap_lat, t);
       }
       break;
     case Transaction::OP_OMAP_RMKEYS:
