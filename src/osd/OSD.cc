@@ -2448,6 +2448,18 @@ void OSD::create_logger()
       "Latency of read-modify-write operation (excluding queue time)");   // client rmw process latency
   osd_plb.add_time_avg(l_osd_op_rw_prepare_lat, "op_rw_prepare_latency",
       "Latency of read-modify-write operations (excluding queue time and wait for finished)"); // client rmw prepare latency
+  osd_plb.add_time_avg(l_osd_op_rw_wait_pc_lat, "op_rw_wait_pc_latency",
+      "Latency of read-modify-write operations of waiting primary copy to complete");
+  osd_plb.add_time_avg(l_osd_op_rw_wait_pa_lat, "op_rw_wait_pa_latency",
+      "Latency of read-modify-write operations of waiting primary copy to apply");
+  osd_plb.add_time_avg(l_osd_op_rw_wait_sc_lat, "op_rw_wait_sc_latency",
+      "Latency of read-modify-write operations of waiting second copy to complete");
+  osd_plb.add_time_avg(l_osd_op_rw_wait_sa_lat, "op_rw_wait_sa_latency",
+      "Latency of read-modify-write operations of waiting second copy to apply");
+  osd_plb.add_time_avg(l_osd_op_rw_wait_tc_lat, "op_rw_wait_tc_latency",
+      "Latency of read-modify-write operations of waiting third copy to complete");
+  osd_plb.add_time_avg(l_osd_op_rw_wait_ta_lat, "op_rw_wait_ta_latency",
+      "Latency of read-modify-write operations of waiting third copy to apply");
 
   osd_plb.add_u64_counter(l_osd_sop,       "subop", "Suboperations");         // subops
   osd_plb.add_u64_counter(l_osd_sop_inb,   "subop_in_bytes", "Suboperations total size");     // subop in bytes

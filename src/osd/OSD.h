@@ -89,6 +89,12 @@ enum {
   l_osd_op_rw_lat,
   l_osd_op_rw_process_lat,
   l_osd_op_rw_prepare_lat,
+  l_osd_op_rw_wait_pc_lat,
+  l_osd_op_rw_wait_pa_lat,
+  l_osd_op_rw_wait_sc_lat,
+  l_osd_op_rw_wait_sa_lat,
+  l_osd_op_rw_wait_tc_lat,
+  l_osd_op_rw_wait_ta_lat,
 
   l_osd_sop,
   l_osd_sop_inb,
