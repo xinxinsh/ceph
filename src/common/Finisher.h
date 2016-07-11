@@ -28,6 +28,8 @@ enum {
   l_finisher_first = 997082,
   l_finisher_queue_len,
   l_finisher_complete_lat,
+  l_finisher_avg_len,
+  l_finisher_avg_lat,
   l_finisher_last
 };
 
@@ -78,8 +80,11 @@ class Finisher {
       finisher_queue.push_back(NULL);
     } else
       finisher_queue.push_back(c);
-    if (logger)
+    if (logger) {
+      c->gen = ceph_clock_now();
       logger->inc(l_finisher_queue_len);
+      logger->inc(l_finisher_avg_len, 1);
+    }
     finisher_lock.Unlock();
   }
   void queue(vector<Context*>& ls) {
@@ -88,8 +93,10 @@ class Finisher {
       finisher_cond.Signal();
     }
     finisher_queue.insert(finisher_queue.end(), ls.begin(), ls.end());
-    if (logger)
+    if (logger) {
       logger->inc(l_finisher_queue_len, ls.size());
+      logger->inc(l_finisher_avg_len, ls.size());
+    }
     finisher_lock.Unlock();
     ls.clear();
   }
@@ -99,8 +106,10 @@ class Finisher {
       finisher_cond.Signal();
     }
     finisher_queue.insert(finisher_queue.end(), ls.begin(), ls.end());
-    if (logger)
+    if (logger) {
       logger->inc(l_finisher_queue_len, ls.size());
+      logger->inc(l_finisher_avg_len, ls.size());
+    }
     finisher_lock.Unlock();
     ls.clear();
   }
@@ -110,8 +119,10 @@ class Finisher {
       finisher_cond.Signal();
     }
     finisher_queue.insert(finisher_queue.end(), ls.begin(), ls.end());
-    if (logger)
+    if (logger) {
       logger->inc(l_finisher_queue_len, ls.size());
+      logger->inc(l_finisher_avg_len, ls.size());
+    }
     finisher_lock.Unlock();
     ls.clear();
   }
@@ -150,6 +161,8 @@ class Finisher {
 			  l_finisher_first, l_finisher_last);
     b.add_u64(l_finisher_queue_len, "queue_len");
     b.add_time_avg(l_finisher_complete_lat, "complete_latency");
+    b.add_u64_avg(l_finisher_avg_len, "avg_len");
+    b.add_time_avg(l_finisher_avg_lat, "avg_latency");
     logger = b.create_perf_counters();
     cct->get_perfcounters_collection()->add(logger);
     logger->set(l_finisher_queue_len, 0);

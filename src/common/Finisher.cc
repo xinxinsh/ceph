@@ -44,7 +44,7 @@ void *Finisher::finisher_thread_entry()
   finisher_lock.Lock();
   ldout(cct, 10) << "finisher_thread start" << dendl;
 
-  utime_t start;
+  utime_t start,wait;
   while (!finisher_stop) {
     /// Every time we are woken up, we process the queue until it is empty.
     while (!finisher_queue.empty()) {
@@ -64,6 +64,8 @@ void *Finisher::finisher_thread_entry()
       for (vector<Context*>::iterator p = ls.begin();
 	   p != ls.end();
 	   ++p) {
+        if (logger)
+          wait = (*p)->gen;
 	if (*p) {
 	  (*p)->complete(0);
 	} else {
@@ -79,6 +81,7 @@ void *Finisher::finisher_thread_entry()
 	if (logger) {
 	  logger->dec(l_finisher_queue_len);
           logger->tinc(l_finisher_complete_lat, ceph_clock_now(cct) - start);
+          logger->tinc(l_finisher_avg_lat, ceph_clock_now(cct) - wait);
         }
       }
       ldout(cct, 10) << "finisher_thread done with " << ls << dendl;
