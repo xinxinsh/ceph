@@ -341,44 +341,101 @@ private:
 
   atomic_t next_osr_id;
   bool m_disable_wbthrottle;
-  deque<OpSequencer*> op_queue;
+  //deque<OpSequencer*> op_queue;
   BackoffThrottle throttle_ops, throttle_bytes;
   const int m_ondisk_finisher_num;
   const int m_apply_finisher_num;
   vector<Finisher*> ondisk_finishers;
   vector<Finisher*> apply_finishers;
 
-  ThreadPool op_tp;
-  struct OpWQ : public ThreadPool::WorkQueue<OpSequencer> {
+  ShardedThreadPool op_tp;
+  class ShardedFopWQ : public ShardedThreadPool::ShardedWQ<OpSequencer*> {
     FileStore *store;
-    OpWQ(FileStore *fs, time_t timeout, time_t suicide_timeout, ThreadPool *tp)
-      : ThreadPool::WorkQueue<OpSequencer>("FileStore::OpWQ", timeout, suicide_timeout, tp), store(fs) {}
 
-    bool _enqueue(OpSequencer *osr) {
-      store->op_queue.push_back(osr);
-      return true;
+    class ShardFData {
+    public:
+      Mutex lock;
+      Mutex order_lock;
+      Cond cond;
+      deque<OpSequencer*> op_queue;
+      ShardFData(string lock_name, string order_lock, CephContext *cct)
+      : lock(lock_name.c_str(), false, true, false, cct), 
+        order_lock(order_lock.c_str(), false, true, false, cct) {}
+    };
+
+    uint32_t num_shards;
+    vector<ShardFData*> shards;
+
+  public:
+    ShardedFopWQ(uint32_t num_shards, FileStore *fs, time_t timeout, time_t suicide_timeout, ShardedThreadPool *tp):
+      ShardedThreadPool::ShardedWQ<OpSequencer*>(timeout, suicide_timeout, tp), store(fs), num_shards(num_shards) {
+      for(uint32_t i = 0; i < num_shards; i++) {
+        char lock_name[32]={0};
+        char order_lock_name[32]={0};
+        snprintf(lock_name, sizeof(lock_name), "%s.%d", "FileStore:ShardedFopWQ", i);
+        snprintf(order_lock_name, sizeof(order_lock_name), "%s.%d", "FileStore:ShardedFopWQ::order", i);
+        ShardFData* data = new ShardFData(lock_name, order_lock_name, g_ceph_context);
+        shards.push_back(data);
+      }
     }
-    void _dequeue(OpSequencer *o) {
+    ~ShardedFopWQ() {
+      while(!shards.empty()) {
+        delete shards.back();
+        shards.pop_back();
+      }
+    }
+
+    void _enqueue(OpSequencer *osr) {
+      uint32_t shard_index = osr->id % num_shards;
+      ShardFData *data = shards[shard_index];
+      assert(NULL != data);
+      Mutex::Locker locker(data->order_lock);
+      data->op_queue.push_back(osr);
+    }
+    void _enqueue_front(OpSequencer *osr) {
       assert(0);
     }
-    bool _empty() {
-      return store->op_queue.empty();
+    bool is_shard_empty(uint32 thread_index) {
+      uint32_t shard_index = thread_index % num_shards;
+      ShardFData *data = shards[shard_index];
+      assert(NULL != data);
+      Mutex::Locker locker(data->order_lock);
+      return data->op_queue.empty();
     }
-    OpSequencer *_dequeue() {
-      if (store->op_queue.empty())
-	return NULL;
-      OpSequencer *osr = store->op_queue.front();
-      store->op_queue.pop_front();
-      return osr;
+    void return_waiting_threads() {
+      for(uint32_t i = 0; i < num_shards; i++) {
+        ShardFData* data = shards[i];
+        assert(NULL != data);
+        data->lock.Lock();
+        data->cond.Signal();
+        data->lock.Unlock();
+      }
     }
-    void _process(OpSequencer *osr, ThreadPool::TPHandle &handle) override {
-      store->_do_op(osr, handle);
-    }
-    void _process_finish(OpSequencer *osr) {
+    void _process(uint32_t thread_index, heartbeat_handle_d* hb) override {
+    // TODO 
+      uint32_t shard_index = thread_index % num_shards;
+      ShardFData *data = shards[shard_index];
+      assert(NULL != data);
+      data->order_lock.Lock();
+      if (data->op_queue.empty()) {
+        data->order_lock.Unlock();
+        g_ceph_context->get_heartbeat_map()->reset_timeout(hb, g_conf->threadpool_default_timeout, 0);
+        data->lock.Lock();
+        data->cond.WaitInterval(g_ceph_context, data->lock,
+        utime_t(g_conf->threadpool_empty_queue_max_wait, 0));
+        data->lock.Unlock();
+        data->order_lock.Lock();
+        if(data->op_queue.empty()) {
+          data->order_lock.Unlock();
+          return;
+        }
+      }
+      OpSequencer *osr = data->op_queue.front();
+      data->op_queue.pop_front();
+      data->order_lock.Unlock();
+      ThreadPool::TPHandle *tp_handle = new ThreadPool::TPHandle(g_ceph_context, hb, timeout_interval, suicide_interval);
+      store->_do_op(osr, *tp_handle);
       store->_finish_op(osr);
-    }
-    void _clear() {
-      assert(store->op_queue.empty());
     }
   } op_wq;
 
