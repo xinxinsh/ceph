@@ -602,6 +602,7 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   plb.add_u64_counter(l_os_j_ops, "journal_ops", "Total journal entries written");
   plb.add_u64(l_os_jq_bytes, "journal_queue_bytes", "Size of journal queue");
   plb.add_u64_counter(l_os_j_bytes, "journal_bytes", "Total operations size in journal");
+  plb.add_time_avg(l_os_j_wlat, "journal_wait_latency", "Average journal wait latency in queue");
   plb.add_time_avg(l_os_j_lat, "journal_latency", "Average journal queue completing latency");
   plb.add_u64_counter(l_os_j_wr, "journal_wr", "Journal write IOs");
   plb.add_u64_avg(l_os_j_wr_bytes, "journal_wr_bytes", "Journal data written");
