@@ -51,6 +51,7 @@ enum {
   l_os_jq_bytes,
   l_os_j_ops,
   l_os_j_bytes,
+  l_os_j_wlat,
   l_os_j_lat,
   l_os_j_wr,
   l_os_j_wr_bytes,

@@ -55,9 +55,10 @@ public:
     uint64_t seq;
     bufferlist bl;
     uint32_t orig_len;
+    utime_t start;
     TrackedOpRef tracked_op;
-    write_item(uint64_t s, bufferlist& b, int ol, TrackedOpRef opref) :
-      seq(s), orig_len(ol), tracked_op(opref) {
+    write_item(uint64_t s, bufferlist& b, int ol, utime_t t, TrackedOpRef opref) :
+      seq(s), orig_len(ol), start(t), tracked_op(opref) {
       bl.claim(b, buffer::list::CLAIM_ALLOW_NONSHAREABLE); // potential zero-copy
     }
     write_item() : seq(0), orig_len(0) {}

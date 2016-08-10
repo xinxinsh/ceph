@@ -1007,6 +1007,7 @@ void FileJournal::queue_completions_thru(uint64_t seq)
 
 int FileJournal::prepare_single_write(write_item &next_write, bufferlist& bl, off64_t& queue_pos, uint64_t& orig_ops, uint64_t& orig_bytes)
 {
+  logger->tinc(l_os_j_wlat, ceph_clock_now(g_ceph_context) - next_write.start);
   uint64_t seq = next_write.seq;
   bufferlist &ebl = next_write.bl;
   off64_t size = ebl.length();
@@ -1694,7 +1695,7 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, uint32_t orig_len,
 	seq, oncommit, ceph_clock_now(g_ceph_context), osd_op));
     if (writeq.empty())
       writeq_cond.Signal();
-    writeq.push_back(write_item(seq, e, orig_len, osd_op));
+    writeq.push_back(write_item(seq, e, orig_len, ceph_clock_now(g_ceph_context), osd_op));
   }
 }
 
