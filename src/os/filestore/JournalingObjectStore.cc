@@ -148,8 +148,20 @@ void JournalingObjectStore::ApplyManager::op_apply_finish(uint64_t op)
   // there can be multiple applies in flight; track the max value we
   // note.  note that we can't _read_ this value and learn anything
   // meaningful unless/until we've quiesced all in-flight applies.
-  if (op > max_applied_seq)
-    max_applied_seq = op;
+  if (op == (max_applied_seq + 1)) {
+    assert(max_applied_seq > 0);
+    uint64_t s = op + 1;
+    std::set<uint64_t>::iterator it = seqs.find(s);
+    while (it != seqs.end()){
+      seqs.erase(it);
+      s++;
+      it = seqs.find(s);
+    }
+    max_applied_seq = s - 1;
+  } else {
+    seqs.insert(op);
+  }
+  dout(10) << "op_apply_finish max_applied_seq is " << max_applied_seq << dendl; 
 }
 
 uint64_t JournalingObjectStore::SubmitManager::op_submit_start()
