@@ -122,6 +122,7 @@ noinst_HEADERS += \
 	librbd/exclusive_lock/AcquireRequest.h \
 	librbd/exclusive_lock/AutomaticPolicy.h \
 	librbd/exclusive_lock/Policy.h \
+	librbd/exclusive_lock/ReacquireRequest.h \
 	librbd/exclusive_lock/ReleaseRequest.h \
 	librbd/exclusive_lock/StandardPolicy.h \
 	librbd/image/CloseRequest.h \
