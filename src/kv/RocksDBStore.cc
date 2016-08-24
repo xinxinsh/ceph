@@ -310,12 +310,15 @@ int RocksDBStore::submit_transaction(KeyValueDB::Transaction t)
 int RocksDBStore::submit_transaction_sync(KeyValueDB::Transaction t)
 {
   utime_t start = ceph_clock_now(g_ceph_context);
+  rocksdb::Status s;
   RocksDBTransactionImpl * _t =
     static_cast<RocksDBTransactionImpl *>(t.get());
-  rocksdb::WriteOptions woptions;
-  woptions.sync = true;
-  woptions.disableWAL = disableWAL;
-  rocksdb::Status s = db->Write(woptions, _t->bat);
+  if (disableWAL) {
+    rocksdb::FlushOptions options;
+    s = db->Flush(options);
+  } else {
+    s = db->SyncWAL();
+  } 
   utime_t lat = ceph_clock_now(g_ceph_context) - start;
   logger->inc(l_rocksdb_txns);
   logger->tinc(l_rocksdb_submit_sync_latency, lat);

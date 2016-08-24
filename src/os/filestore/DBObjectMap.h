@@ -117,7 +117,8 @@ public:
 
   explicit DBObjectMap(KeyValueDB *db) : db(db), header_lock("DBOBjectMap"),
            	                         cache_lock("DBObjectMap::CacheLock"),
-      	                                 caches(g_conf->filestore_omap_header_cache_size)
+      	                                 caches(g_conf->filestore_omap_header_cache_size),
+      	                                 state_changed(false)
     {}
 
   int set_keys(
@@ -269,6 +270,7 @@ public:
       o.push_back(new State(20));
     }
   } state;
+  bool state_changed;
 
   struct _Header {
     uint64_t seq;

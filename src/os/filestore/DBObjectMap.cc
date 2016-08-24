@@ -984,6 +984,7 @@ int DBObjectMap::upgrade_to_v2()
   }
 
   state.v = 2;
+  state_changed = true;
 
   Mutex::Locker l(header_lock);
   KeyValueDB::Transaction t = db->get_transaction();
@@ -1063,13 +1064,18 @@ int DBObjectMap::sync(const ghobject_t *oid,
 int DBObjectMap::write_state(KeyValueDB::Transaction _t) {
   assert(header_lock.is_locked_by_me());
   dout(20) << "dbobjectmap: seq is " << state.seq << dendl;
-  KeyValueDB::Transaction t = _t ? _t : db->get_transaction();
-  bufferlist bl;
-  state.encode(bl);
-  map<string, bufferlist> to_write;
-  to_write[GLOBAL_STATE_KEY] = bl;
-  t->set(SYS_PREFIX, to_write);
-  return _t ? 0 : db->submit_transaction(t);
+  int r = 0;
+  if (state_changed) {
+    KeyValueDB::Transaction t = _t ? _t : db->get_transaction();
+    bufferlist bl;
+    state.encode(bl);
+    map<string, bufferlist> to_write;
+    to_write[GLOBAL_STATE_KEY] = bl;
+    t->set(SYS_PREFIX, to_write);
+    r = db->submit_transaction(t);
+    state_changed = false;
+  }
+  return r;
 }
 
 
@@ -1115,6 +1121,7 @@ DBObjectMap::Header DBObjectMap::_generate_new_header(const ghobject_t &oid,
 {
   Header header = Header(new _Header(), RemoveOnDelete(this));
   header->seq = state.seq++;
+  state_changed = true;
   if (parent) {
     header->parent = parent->seq;
     header->spos = parent->spos;
