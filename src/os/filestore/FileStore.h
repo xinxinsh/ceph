@@ -190,6 +190,7 @@ private:
   // -- op workqueue --
   struct Op {
     utime_t start;
+    utime_t deq;
     uint64_t op;
     vector<Transaction> tls;
     Context *onreadable, *onreadable_sync;
