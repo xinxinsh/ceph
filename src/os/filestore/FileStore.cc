@@ -1903,14 +1903,14 @@ void FileStore::_finish_op(OpSequencer *osr)
 {
   list<Context*> to_queue;
   Op *o = osr->dequeue(&to_queue);
-
-  utime_t lat = ceph_clock_now(g_ceph_context);
-
-  dout(10) << "_finish_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << " lat " << lat << dendl;
   osr->apply_lock.Unlock();  // locked in _do_op
 
   // called with tp lock held
   op_queue_release_throttle(o);
+
+  utime_t lat = ceph_clock_now(g_ceph_context);
+
+  dout(10) << "_finish_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << " lat " << lat << dendl;
 
   logger->tinc(l_os_apply_lat, lat - o->start);
   logger->tinc(l_os_op_lat, lat - o->deq);
@@ -2119,11 +2119,8 @@ int FileStore::_do_transactions(
 
   for (vector<Transaction>::iterator p = tls.begin();
        p != tls.end();
-       ++p, trans_num++) {
+       ++p, trans_num++)
     _do_transaction(*p, op_seq, trans_num, handle);
-    if (handle)
-      handle->reset_tp_timeout();
-  }
 
   return 0;
 }

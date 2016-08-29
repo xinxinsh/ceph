@@ -995,7 +995,7 @@ void FileJournal::queue_completions_thru(uint64_t seq)
       logger->tinc(l_os_j_lat, lat);
     }
     if (next.finish)
-      finisher->queue(next.finish);
+      next.finish->complete(0);
     if (next.tracked_op)
       next.tracked_op->mark_event("journaled_completion_queued");
     items.erase(it++);
