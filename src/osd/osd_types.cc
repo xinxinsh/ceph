@@ -4705,10 +4705,8 @@ void object_info_t::encode(bufferlist& bl) const
        ++i) {
     old_watchers.insert(make_pair(i->first.second, i->second));
   }
-  ENCODE_START(15, 8, bl);
+  ENCODE_START(16, 8, bl);
   ::encode(soid, bl);
-  ::encode(myoloc, bl);	//Retained for compatibility
-  ::encode((__u32)0, bl); // was category, no longer used
   ::encode(version, bl);
   ::encode(prior_version, bl);
   ::encode(last_reqid, bl);
@@ -4738,14 +4736,16 @@ void object_info_t::encode(bufferlist& bl) const
 
 void object_info_t::decode(bufferlist::iterator& bl)
 {
-  object_locator_t myoloc;
-  DECODE_START_LEGACY_COMPAT_LEN(15, 8, 8, bl);
+  DECODE_START_LEGACY_COMPAT_LEN(16, 8, 8, bl);
   map<entity_name_t, watch_info_t> old_watchers;
   ::decode(soid, bl);
-  ::decode(myoloc, bl);
-  {
-    string category;
-    ::decode(category, bl);  // no longer used
+  object_locator_t myoloc(soid);
+  if (struct_v < 16) {
+    ::decode(myoloc, bl);
+    {
+      string category;
+      ::decode(category, bl);  // no longer used
+    }
   }
   ::decode(version, bl);
   ::decode(prior_version, bl);
