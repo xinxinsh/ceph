@@ -219,9 +219,13 @@ int RocksDBStore::do_open(ostream &out, bool create_if_missing)
   }
 
   auto cache = rocksdb::NewLRUCache(g_conf->rocksdb_cache_size);
+  auto filter = rocksdb::NewBloomFilterPolicy(g_conf->rocksdb_bloom_size);
   rocksdb::BlockBasedTableOptions bbt_opts;
   bbt_opts.block_size = g_conf->rocksdb_block_size;
   bbt_opts.block_cache = cache;
+  bbt_opts.filter_policy.reset(filter);
+  bbt_opts.cache_index_and_filter_blocks = g_conf->rocksdb_cache_index_and_filter_blocks;
+  bbt_opts.checksum = rocksdb::ChecksumType(g_conf->rocksdb_block_checksum);
   opt.table_factory.reset(rocksdb::NewBlockBasedTableFactory(bbt_opts));
   dout(10) << __func__ << " set block size to " << g_conf->rocksdb_block_size
            << " cache size to " << g_conf->rocksdb_cache_size << dendl;
@@ -392,15 +396,15 @@ int RocksDBStore::get(
     std::map<string, bufferlist> *out)
 {
   utime_t start = ceph_clock_now(g_ceph_context);
-  KeyValueDB::Iterator it = get_iterator(prefix);
+  rocksdb::ReadOptions opts;
+  opts.verify_checksums = false;
   for (std::set<string>::const_iterator i = keys.begin();
-       i != keys.end();
-       ++i) {
-    it->lower_bound(*i);
-    if (it->valid() && it->key() == *i) {
-      out->insert(make_pair(*i, it->value()));
-    } else if (!it->valid())
-      break;
+       i != keys.end(); ++i) {
+    std::string value;
+    std::string bound = combine_strings(prefix, *i);
+    auto status = db->Get(opts, rocksdb::Slice(bound), &value);
+    if (status.ok())
+      (*out)[*i].append(value);
   }
   utime_t lat = ceph_clock_now(g_ceph_context) - start;
   logger->inc(l_rocksdb_gets);
@@ -416,10 +420,14 @@ int RocksDBStore::get(
   assert(out && (out->length() == 0));
   utime_t start = ceph_clock_now(g_ceph_context);
   int r = 0;
-  KeyValueDB::Iterator it = get_iterator(prefix);
-  it->lower_bound(key);
-  if (it->valid() && it->key() == key) {
-    out->append(it->value_as_ptr());
+  string value, k;
+  rocksdb::Status s;
+  rocksdb::ReadOptions opts;
+  opts.verify_checksums = false;
+  k = combine_strings(prefix, key);
+  s = db->Get(opts, rocksdb::Slice(k), &value);
+  if (s.ok()) {
+    out->append(value);
   } else {
     r = -ENOENT;
   }
