@@ -70,6 +70,7 @@ enum {
   l_os_queue_lat,
   l_os_op_lat,
   l_os_write_lat,
+  l_os_setattr_lat,
   l_os_setattrs_lat,
   l_os_setomap_lat,
   l_os_last,
