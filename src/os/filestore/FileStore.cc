@@ -622,6 +622,7 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   plb.add_time_avg(l_os_queue_lat, "queue_transaction_latency_avg", "Store operation queue latency");
   plb.add_time_avg(l_os_op_lat, "do_op_latency_avg", "do op latency");
   plb.add_time_avg(l_os_write_lat, "write_latency_avg", "write latency");
+  plb.add_time_avg(l_os_setattr_lat, "setattr_latency_avg", "setattr latency");
   plb.add_time_avg(l_os_setattrs_lat, "setattrs_latency_avg", "setattrs latency");
   plb.add_time_avg(l_os_setomap_lat, "setomap_latency_avg", "set omap latency");
 
@@ -2490,6 +2491,7 @@ void FileStore::_do_transaction(
 
     case Transaction::OP_SETATTR:
       {
+        utime_t s = ceph_clock_now(g_ceph_context);
         coll_t cid = i.get_cid(op->cid);
         ghobject_t oid = i.get_oid(op->oid);
 	_kludge_temp_object_collection(cid, oid);
@@ -2506,6 +2508,8 @@ void FileStore::_do_transaction(
                     << " name " << name << " size " << bl.length() << dendl;
         }
         tracepoint(objectstore, setattr_exit, r);
+        utime_t t = ceph_clock_now(g_ceph_context) - s;
+        logger->tinc(l_os_setattr_lat, t);
       }
       break;
 
