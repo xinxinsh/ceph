@@ -226,6 +226,7 @@ int RocksDBStore::do_open(ostream &out, bool create_if_missing)
   bbt_opts.filter_policy.reset(filter);
   bbt_opts.cache_index_and_filter_blocks = g_conf->rocksdb_cache_index_and_filter_blocks;
   bbt_opts.checksum = rocksdb::ChecksumType(g_conf->rocksdb_block_checksum);
+  bbt_opts.index_type = rocksdb::BlockBasedTableOptions::kHashSearch;
   opt.table_factory.reset(rocksdb::NewBlockBasedTableFactory(bbt_opts));
   dout(10) << __func__ << " set block size to " << g_conf->rocksdb_block_size
            << " cache size to " << g_conf->rocksdb_cache_size << dendl;
