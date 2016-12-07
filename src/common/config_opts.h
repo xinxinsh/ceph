@@ -637,6 +637,7 @@ OPTION(osd_pool_default_erasure_code_profile,
        ) // default properties of osd pool create
 OPTION(osd_erasure_code_plugins, OPT_STR,
        "jerasure"
+       " mlxjerasure"
        " lrc"
 #ifdef HAVE_BETTER_YASM_ELF64
        " isa"

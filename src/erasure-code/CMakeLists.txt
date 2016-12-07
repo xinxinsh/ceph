@@ -70,6 +70,7 @@ include_directories(jerasure)
 add_subdirectory(jerasure)
 add_subdirectory(lrc)
 add_subdirectory(shec)
+add_subdirectory(mlxjerasure)
 
 if (HAVE_BETTER_YASM_ELF64)
   add_subdirectory(isa)
