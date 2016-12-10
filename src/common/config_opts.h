@@ -1177,6 +1177,14 @@ OPTION(rbd_enable_alloc_hint, OPT_BOOL, true) // when writing a object, it will 
 OPTION(rbd_tracing, OPT_BOOL, false) // true if LTTng-UST tracepoints should be enabled
 OPTION(rbd_validate_pool, OPT_BOOL, true) // true if empty pools should be validated for RBD compatibility
 OPTION(rbd_validate_names, OPT_BOOL, true) // true if image specs should be validated
+OPTION(rbd_ssd_cache, OPT_BOOL, false) //whether to enable local persistent cache
+OPTION(rbd_ssd_rcache, OPT_BOOL, false) //whether to enable read-only cache
+OPTION(rbd_ssd_cache_size, OPT_LONGLONG, 0) //cache size in bytes, default 1 out of 10 of image size
+OPTION(rbd_ssd_cache_max_dirty, OPT_LONGLONG, 0) //dirty limit in bytes, default 80% of cache size
+OPTION(rbd_ssd_cache_target_dirty, OPT_LONGLONG, 0) //target dirty limit in bytes, default 50% of cache size
+OPTION(rbd_ssd_cache_dirty_age, OPT_FLOAT, 1.0) //second in cache before evict
+OPTION(rbd_ssd_cache_chunk_order, OPT_INT, 13) //chunk size in bytes, must be less than Object size and greater than 4k
+OPTION(rbd_ssd_cache_path, OPT_STR, "/$cluster/LCache/") //local cache path
 
 /*
  * The following options change the behavior for librbd's image creation methods that

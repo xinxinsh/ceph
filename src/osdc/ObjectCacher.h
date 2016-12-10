@@ -8,6 +8,7 @@
 #include "include/Context.h"
 #include "include/xlist.h"
 
+#include "common/errno.h"
 #include "common/Cond.h"
 #include "common/Finisher.h"
 #include "common/Thread.h"
@@ -49,11 +50,13 @@ enum {
   l_objectcacher_last,
 };
 
+class LCache;
 class ObjectCacher {
   PerfCounters *perfcounter;
  public:
   CephContext *cct;
   class Object;
+  friend class LCache;
   struct ObjectSet;
   class C_ReadFinish;
 
@@ -237,6 +240,9 @@ class ObjectCacher {
     object_locator_t oloc;
     uint64_t truncate_size, truncate_seq;
 
+	//for local cache only: ObjMeta offset and first BufMeta
+	loff_t oft, data_l;	
+	
     bool complete;
     bool exists;
 
@@ -260,7 +266,7 @@ class ObjectCacher {
       ref(0),
       oc(_oc),
       oid(o), object_no(ono), oset(os), set_item(this), oloc(l),
-      truncate_size(ts), truncate_seq(tq),
+      truncate_size(ts), truncate_seq(tq), oft(-1), data_l(-1),
       complete(false), exists(true),
       last_write_tid(0), last_commit_tid(0),
       dirty_or_tx(0) {
@@ -347,7 +353,7 @@ class ObjectCacher {
                  map<loff_t, BufferHead*>& hits,
                  map<loff_t, BufferHead*>& missing,
                  map<loff_t, BufferHead*>& rx,
-		 map<loff_t, BufferHead*>& errors);
+		 map<loff_t, BufferHead*>& errors, bool external_call = true);
     BufferHead *map_write(ObjectExtent &ex, ceph_tid_t tid);
     
     void replace_journal_tid(BufferHead *bh, ceph_tid_t tid);
@@ -401,6 +407,10 @@ class ObjectCacher {
   uint64_t max_dirty, target_dirty, max_size, max_objects;
   ceph::timespan max_dirty_age;
   bool block_writes_upfront;
+
+  //Thomas added: for local cache only
+  bool local_cache, ro_cache;
+  LCache *lcache;
 
   flush_set_callback_t flush_set_callback;
   void *flush_set_callback_arg;
@@ -491,28 +501,13 @@ class ObjectCacher {
     bh_set_state(bh2, bh1->get_state());
   }
 
-  void mark_missing(BufferHead *bh) {
-    bh_set_state(bh,BufferHead::STATE_MISSING);
-  }
-  void mark_clean(BufferHead *bh) {
-    bh_set_state(bh, BufferHead::STATE_CLEAN);
-  }
-  void mark_zero(BufferHead *bh) {
-    bh_set_state(bh, BufferHead::STATE_ZERO);
-  }
-  void mark_rx(BufferHead *bh) {
-    bh_set_state(bh, BufferHead::STATE_RX);
-  }
-  void mark_tx(BufferHead *bh) {
-    bh_set_state(bh, BufferHead::STATE_TX); }
-  void mark_error(BufferHead *bh) {
-    bh_set_state(bh, BufferHead::STATE_ERROR);
-  }
-  void mark_dirty(BufferHead *bh) {
-    bh_set_state(bh, BufferHead::STATE_DIRTY);
-    bh_lru_dirty.lru_touch(bh);
-    //bh->set_dirty_stamp(ceph_clock_now(g_ceph_context));
-  }
+  void mark_missing(BufferHead *bh, bool update = true);
+  void mark_clean(BufferHead *bh, bool update = true);
+  void mark_zero(BufferHead *bh, bool update = true);
+  void mark_rx(BufferHead *bh, bool update = true);
+  void mark_tx(BufferHead *bh, bool update = true);
+  void mark_error(BufferHead *bh, bool update = true);
+  void mark_dirty(BufferHead *bh, bool update = true);
 
   void bh_add(Object *ob, BufferHead *bh);
   void bh_remove(Object *ob, BufferHead *bh);
@@ -641,15 +636,8 @@ class ObjectCacher {
   void start() {
     flusher_thread.create("flusher");
   }
-  void stop() {
-    assert(flusher_thread.is_started());
-    lock.Lock();  // hmm.. watch out for deadlock!
-    flusher_stop = true;
-    flusher_cond.Signal();
-    lock.Unlock();
-    flusher_thread.join();
-  }
 
+  void stop() ;
 
   class C_RetryRead : public Context {
     ObjectCacher *oc;
@@ -693,6 +681,18 @@ private:
   bool _flush_set_finish(C_GatherBuilder *gather, Context *onfinish);
 
 public:
+  bool is_enable_cache() { return local_cache; }
+  bool is_rw_cache() { return local_cache && !ro_cache; }
+  bool is_ro_cache() { return local_cache && ro_cache; }
+  bool can_merge_bh(BufferHead *left, BufferHead *right);
+  bool idle() {
+	return ((uint64_t)get_stat_dirty() > 0 && 
+	 	(uint64_t)get_stat_dirty() < target_dirty);
+  }
+  
+  void init_cache(uint64_t cache_size, uint32_t obj_order, const std::string &obj_prefix, 
+  	bool old_format, ObjectSet *oset, const file_layout_t &l);
+
   bool set_is_empty(ObjectSet *oset);
   bool set_is_cached(ObjectSet *oset);
   bool set_is_dirty_or_committing(ObjectSet *oset);
@@ -832,6 +832,700 @@ inline ostream& operator<<(ostream& out, ObjectCacher::Object &ob)
     out << " !EXISTS";
 
   out << "]";
+  return out;
+}
+
+/**************************************************************************
+  Author: Thomas.lee
+  Purpose: local cache
+  Date: 2016/10/8
+***************************************************************************/
+class LCache {
+public:
+  #define VER_LEN  16
+  #define FILE_VER "2016.10.8"
+  #define CHAR_BITS_SHIFT 		(3)
+  #define FILE_HEAD_ALIAN_SIZE  (512)
+  #define BITMAP_CHUNK_SIZE (4*1024) 	//4KB
+  #define MAX_OBJECTS		(1*1024) 	//1k
+  #define MAX_DIFRTY_RATIO 	 (0.8)
+  #define TARGET_DIRTY_RATIO (0.5)
+  #define OBJ_ORDER		(22)		//4MB
+  #define CHUNK_ORDER	(13)		//8kB
+  
+  // ******* FileHead *********
+  struct FileHead {
+	char ver[VER_LEN];		//version = FILE_VER
+	uint32_t size;			//size, in byte, of this structure, including bitmap size
+	uint64_t file_size;		//size, in byte, of cache file, including overhead
+	loff_t oft;				//in-file offset, where itself located in
+	loff_t obj_meta_offset;	//offset, in byte, of the first ObjMeta location
+	loff_t data_head_offset;//offset, in byte, of DataHead 
+	uint32_t obj_meta_size;	//size, in byte, of a ObjectMeta
+	uint32_t data_head_size; //size, in byte, of DataHead,including bitmap size
+	uint32_t max;			//maxium number of ObjectMetas in file
+	uint32_t cur;			//current account of ObjectMetas in file 
+	uint8_t obj_order;		//size, in byte, of a Object, default is 4MB
+	uint8_t chunk_order;	//default is 1MB, which means each OBJ is divided into 4 parts
+	char 	bitmap[];		//elastic array member for ObjMeta
+  }__attribute__((__packed__));
+  #define FILE_HEAD_SIZE	(sizeof(struct FileHead))
+
+
+  //******* DataHead *********
+  struct DataHead {
+	uint32_t size;			//size, in byte, of this structure, including bitmap
+	uint32_t meta_size;		//size, in byte of a BufMeta
+	loff_t oft;				//offset, in byte, of this structure, equal to FileHead::data_head_offset
+	loff_t chk_oft;			//base offset of data chk(oft+size)
+	uint32_t max;			//maxium number of BufMetas in file
+	uint32_t cur;			//current used account of BufMetas in file
+	char bitmap[];			//elastic array member for BufMeta
+  }__attribute__((__packed__));
+  #define DATA_HEAD_SIZE (sizeof(struct DataHead))
+
+  // ******* ObjMeta ***********
+  struct ObjMeta {
+	uint64_t oid;				//object id		
+	uint64_t truncate_size;
+	uint64_t truncate_seq;
+	int64_t pid;				//pool id
+	loff_t oft;					//absolute offset, in byte, of this structure in  file
+	loff_t data_l;				//point to the first BufMeta, all BufMeta linked into an ordered list
+	ceph_tid_t last_write_tid;  //version of bh (if non-zero)
+    ceph_tid_t last_commit_tid; //last update commited.
+    ceph_timespec l_access;		//last update / access time				
+    bool complete;			    //read op is completed
+    bool exists;				//for read op
+  }__attribute__ ((__packed__));
+  #define OBJ_META_SIZE (sizeof(struct ObjMeta))
+  
+  // ******* BufMeta ***********
+  struct BufMeta {
+	uint64_t oid;				//object id
+	loff_t oft;					//absolute offset, in byte, of this structure
+	struct {
+	  loff_t prev, next;	    //pointer to previous & next BufferMeta, default -1;
+	} mb;
+	struct {
+      loff_t start, length;     //bh extent in object
+    } ex;
+	ceph_tid_t last_write_tid;  //version of bh (if non-zero)
+    ceph_tid_t last_read_tid;   //tid of last read op (if any)
+	ceph_timespec l_write;		//last write time / access time
+	int stat;					//state
+	int error; 					//holds return value for failed reads
+  }__attribute__ ((__packed__));
+  #define BUF_META_SIZE (sizeof(struct BufMeta))
+
+public:
+  LCache(ObjectCacher *_oc, Mutex &l, uint64_t cache_size, 
+  	uint64_t max_dirty, uint64_t target_dirty, 
+  	double dirty_age, bool ro, std::string cache_path) 
+  	: fd(0), oc(_oc), cache_lock(l)
+  	, image_size(cache_size*20), cache_size(cache_size)
+  	, max_dirty(max_dirty), target_dirty(target_dirty), max_objects(MAX_OBJECTS)
+    , cache_hw(MAX_DIFRTY_RATIO), cache_lw(TARGET_DIRTY_RATIO), obj_order(OBJ_ORDER), chunk_order(CHUNK_ORDER)
+    , last_ios(0), io_freq(0), idle_tick(0), cache_age(ceph::make_timespan(dirty_age))
+  	, file_head(NULL), data_head(NULL), object_format(NULL), read_only(ro)
+  	, cache_file_path(cache_path), fh(NULL), dh(NULL)
+  	, reclaim_stat_waiting(0), reclaim_stop(false), reclaim_thread(this) {
+
+   	set_cache_wm(max_dirty, target_dirty);
+  }
+
+  virtual ~LCache() {
+  	close();
+	
+	if ( NULL != file_head )
+		delete [] file_head;
+	fh = NULL;
+	file_head = NULL;
+
+	if (NULL != data_head )
+		delete [] data_head;
+	dh = NULL;
+	data_head = NULL;
+
+	if ( NULL != object_format )
+		delete [] object_format;
+	object_format = NULL;
+  }
+
+  int start(ObjectCacher::ObjectSet *oset, const file_layout_t &l);
+
+  loff_t add_objmeta(ObjectCacher::Object *o);
+  int update_objmeta(ObjectCacher::Object *o);
+  int load_update_objmeta(ObjectCacher::Object *o);
+
+  int add_bufmeta(ObjectCacher::BufferHead *bh, loff_t oft, loff_t len);
+  int update_bufmeta(ObjectCacher::BufferHead* bh);
+  int load_bufmeta(ObjectCacher::Object *o, loff_t offset, loff_t len);
+
+  int add_chunk(ObjectCacher::BufferHead* bh);
+  int get_chunk(ObjectCacher::BufferHead* bh, loff_t oft, loff_t len, bufferlist &bl);
+
+  void set_image_size(uint64_t size) { image_size = size; }
+  uint64_t get_image_size() { return image_size; };
+
+  void set_cache_size(uint64_t size) { cache_size = size; }
+  uint64_t get_cache_size() { return cache_size; }
+  
+  void set_cache_path(const std::string& path) { cache_file_path = path; }
+  const std::string cache_path() { return cache_file_path; }
+  
+  void set_obj_order(uint32_t order) { obj_order = order; }
+  uint32_t get_obj_order() { return obj_order; }
+  
+  void set_chk_order(uint32_t order) { 
+	chunk_order = order;
+	if ( chunk_order == 0 
+		|| chunk_order > obj_order )
+		chunk_order = obj_order;
+  }
+  uint32_t get_chk_order() { return chunk_order; }
+  
+  void set_max_objects(uint64_t v) { max_objects = v; }
+  uint64_t get_max_objects() { return max_objects; }
+  
+  void set_cache_wm(uint64_t hw, uint64_t lw) {
+	if ( hw >= cache_size || hw == 0 )
+	  cache_hw = MAX_DIFRTY_RATIO;
+	else
+	  cache_hw = (float)hw/cache_size;
+  
+	if ( lw > hw || lw >= cache_size || lw == 0 )
+	  cache_lw = TARGET_DIRTY_RATIO;
+	else
+	  cache_lw = (float)lw/cache_size;
+
+	max_dirty =  cache_size*cache_hw;
+	target_dirty = cache_size*cache_lw;
+  }
+  
+  float get_cache_hw() { return cache_hw; }
+  float get_cache_lw() { return cache_lw; }
+  uint64_t get_max_dirty() { return max_dirty; }
+  uint64_t get_target_dirty() { return target_dirty; }
+
+  bool is_lw() {
+	if ( fh->cur > fh->max*cache_lw
+		|| dh->cur > dh->max*cache_lw )
+		return true;
+	return false;
+  }
+
+  bool is_hw () {
+	if ( fh->cur > fh->max*cache_hw
+		|| dh->cur > dh->max*cache_hw )
+		return true;
+	return false;
+  }
+
+  void reclaim_sig() { reclaim_cond.Signal(); }
+  void reclaim_stat_wait() { reclaim_stat_cond.Wait(cache_lock); }
+  void reclaim_stat_waiting_add(loff_t len) { reclaim_stat_waiting +=len; }
+  void reclaim_stat_waiting_sub(loff_t len) { reclaim_stat_waiting -=len; }
+
+  void stop() {
+	if ( reclaim_thread.is_started() ) {
+		cache_lock.Lock();  // hmm.. watch out for deadlock!
+		reclaim_stop = true;
+		reclaim_cond.Signal();
+		cache_lock.Unlock();
+		reclaim_thread.join();
+	}
+  }
+
+  void set_obj_prefix(const std::string &obj_prefix, bool old_format) {
+    object_prefix = obj_prefix;
+    size_t len = object_prefix.length() + 16;
+    object_format = new char[len];
+	if (old_format) {
+	  snprintf(object_format, len, "%s.%%012llx", object_prefix.c_str());
+	} else {
+	  snprintf(object_format, len, "%s.%%016llx", object_prefix.c_str());
+	}
+  }
+  
+  uint64_t oid_to_no(const std::string &oid) {
+	istringstream iss(oid);
+    // skip object prefix and separator
+	iss.ignore(object_prefix.length() + 1);
+	uint64_t num;
+	iss >> std::hex >> num;
+	return num; 
+  }
+
+ private:
+  int open(const std::string path, int flags = O_RDWR); 
+  int load(ObjectCacher::ObjectSet *oset, const file_layout_t &l);
+
+  int read(void* buf, uint32_t len, loff_t pos, int w = SEEK_SET) {
+    if ( NULL == buf || fd <= 0 )
+	  return -1;
+    int r = lseek(fd, pos, w);
+    if ( r == -1 ) {
+	  lderr(oc->cct) << "Failed to seek cache file " << cpp_strerror(r) << dendl;
+	  return r;
+    }
+
+    return ::read(fd, buf, len);
+  }
+  
+  int write(void* buf, uint32_t len, loff_t pos, int w = SEEK_SET) {
+    if ( NULL == buf || fd <= 0 )
+	  return -1;
+
+    int r = lseek(fd, pos, w);
+    if ( r == -1 ) {
+	  lderr(oc->cct) << "Failed to seek cache file " << cpp_strerror(r) << dendl;
+	  return r;
+    }
+
+    return ::write(fd, buf, len);
+  }
+  
+  int unlink() {
+    return ::unlink(cache_file_path.c_str());
+  }
+  
+  int close() {
+    if ( fd > 0 )
+  	  ::close(fd);
+    fd = 0;
+	return 0;
+  }
+
+  void init_objmeta(ObjectCacher::Object *o, ObjMeta &om);
+
+  /*get ObjMeta from local cache file
+  
+   return -1 if not exist.
+  */
+  int get_objmeta(loff_t offset, ObjMeta &om);
+  int get_objmeta(uint64_t oid, ObjMeta &om);
+
+  //insert om into cache file if it doesn't exist
+  loff_t insert_objmeta(ObjMeta &om);
+
+  /*check whether there is a ObjMeta in postion oft
+
+   return true if exist
+  */
+  bool is_exist(loff_t oft) {
+	if ( oft < fh->obj_meta_offset 
+		|| oft >= fh->data_head_offset )
+	  return false;
+
+	uint32_t pos = (oft - fh->obj_meta_offset)/fh->obj_meta_size;
+	if ( obj_map.test_bit(pos) )
+	  return true;
+
+	return false;
+  }
+
+  /*update ObjMeta in local cache file
+
+   return -1 if not exist
+  */
+  int update_objmeta(ObjMeta &om);
+
+  bool is_removable(ObjMeta &om) {
+    if ( om.data_l == -1 )
+	  return true;
+	return false;
+  }
+
+  int clear_objmeta(ObjMeta &om) {
+  	int r;
+	uint32_t pos = (om.oft - fh->obj_meta_offset)/fh->obj_meta_size;
+	obj_map.free_bit(pos);
+
+	//update FileHead
+	--fh->cur;
+	r = write(file_head, FILE_HEAD_ALIAN_SIZE, fh->oft);
+	assert(r == FILE_HEAD_ALIAN_SIZE);
+
+	uint32_t oft = FILE_HEAD_ALIAN_SIZE + (pos>>CHAR_BITS_SHIFT);
+	uint32_t size = (fh->size - oft) > BITMAP_CHUNK_SIZE? BITMAP_CHUNK_SIZE: (fh->size - oft);
+	r = write(file_head + oft, size, fh->oft + oft);
+	assert(r == (int)size);
+
+	del_mem_head(om.oid);
+	del_mem_object(om);
+	return r;
+  }
+  
+  /*remove ObjMeta and its relevant Object in memory
+   return -1 if failed
+  */
+  int remove_objmeta(ObjMeta &om);
+  
+  void init_bufmeta (ObjectCacher::BufferHead *bh, BufMeta &bm);
+  loff_t insert_bufmeta(BufMeta &bm);
+
+  /*get BufMeta from cache file(excluding file data)
+
+   return -1 if failed
+  */
+  int get_bufmeta(loff_t offset, BufMeta &bm);
+
+  /*update BufMeta in cache file
+
+   return -1 if failed
+  */
+  int update_bufmeta(BufMeta &bm);
+	
+  /*remove STATE_CLEAN/STATE_ZERO BufMeta and delete BufferHead
+
+   return -1 if failed
+  */
+  int free_clean_bufmeta(ObjMeta &om, BufMeta &bm, map<loff_t, BufMeta*>::iterator &p);
+  int free_bufmeta(ObjMeta &om, BufMeta &bm, map<loff_t, BufMeta*>::iterator &p);
+  int merge_left(BufMeta* bm, loff_t cur, loff_t len);
+  int merge_right(map<loff_t, BufMeta*>::iterator &p, BufMeta *bm);
+  
+  int clear_bufmeta(BufMeta &bm) {
+  	int r;
+	uint32_t pos = (bm.oft - dh->chk_oft)/(dh->meta_size+(1<<fh->chunk_order));
+	buf_map.free_bit(pos);
+
+	//update DataHead
+	--dh->cur;
+	r = write(data_head, FILE_HEAD_ALIAN_SIZE, dh->oft);
+	assert(r == FILE_HEAD_ALIAN_SIZE);
+
+    //update bitmap
+    uint32_t oft = FILE_HEAD_ALIAN_SIZE + (pos>>CHAR_BITS_SHIFT);
+    uint32_t size = (dh->size - oft) > BITMAP_CHUNK_SIZE? BITMAP_CHUNK_SIZE: (dh->size - oft);
+	r = write(data_head + oft, size, dh->oft + oft);
+	assert(r == (int)size);
+	
+	del_mem_data(bm);	
+	return r;
+  }
+
+  int add_mem_data(BufMeta &bm) {
+	assert(!data[bm.oid].count(bm.ex.start));
+	BufMeta *pm = new BufMeta;
+	
+	memcpy((char*)pm, (char*)&bm, sizeof(bm));
+	data[pm->oid][pm->ex.start] = pm;
+
+	return 0;
+  }
+
+  int del_mem_data(BufMeta &bm) {
+	map<loff_t, BufMeta*>::iterator p = get_mem_data(bm);
+	if ( p != data[bm.oid].end() ) {
+		data[bm.oid].erase(bm.ex.start);
+	    delete p->second;
+		p->second = NULL;
+	}
+	return 0;
+  }
+
+  int update_mem_data(BufMeta &bm) {
+  	if ( data.count(bm.oid) && data[bm.oid].count(bm.ex.start) ) 
+		memcpy((char*)data[bm.oid][bm.ex.start], (char*)&bm, sizeof(bm));
+	
+	return 0;
+  }
+
+  map<loff_t, BufMeta*>::iterator replace_mem_data(loff_t old_start, BufMeta &bm) {
+   	assert(data.count(bm.oid));
+	assert(data[bm.oid].count(old_start));
+
+	BufMeta *p = data[bm.oid][old_start];
+	data[bm.oid].erase(old_start);
+	data[bm.oid][bm.ex.start] = p;
+	return get_mem_data(bm);
+  }
+
+  map<loff_t, BufMeta*>::iterator get_mem_head(uint64_t oid) {
+	if ( !data.count(oid) )
+		return data[oid].end();
+	return data[oid].begin();
+  }
+
+  map<loff_t, BufMeta*>::iterator get_mem_tail(uint64_t oid) {
+  	return data[oid].end(); 
+  }
+  
+  int del_mem_head(uint64_t oid) {
+	if ( data.count(oid) )
+		data.erase(oid);
+	return 0;
+  }
+  
+  map<loff_t, BufMeta*>::iterator get_mem_data(BufMeta &bm) {
+  	if ( ! data.count(bm.oid) )
+		return data[bm.oid].end();
+	
+	map<loff_t,BufMeta*>::iterator p = data[bm.oid].lower_bound(bm.ex.start);
+    if (p != data[bm.oid].begin() &&
+	  (p == data[bm.oid].end() || p->first > bm.ex.start)) {
+		--p;     // might overlap!
+		if (p->first + p->second->ex.length <= bm.ex.start)
+	  		++p;   // doesn't overlap.
+     }
+	
+     return p;	
+  }
+  
+  map<loff_t, BufMeta*>::iterator get_mem_data(uint64_t oid, loff_t offset) {
+    if ( ! data.count(oid) )
+		return data[oid].end();
+	
+	map<loff_t,BufMeta*>::iterator p = data[oid].lower_bound(offset);
+    if (p != data[oid].begin() &&
+	  (p == data[oid].end() || p->first > offset)) {
+		--p;     // might overlap!
+		if (p->first + p->second->ex.length <= offset)
+	  		++p;   // doesn't overlap.
+     }
+	
+     return p;	
+  }
+
+  int add_mem_object(ObjMeta &om) {
+  	assert(!objects.count(om.oid));
+	
+  	ObjMeta *p = new ObjMeta;
+	memcpy((char*)p, (char*)&om, sizeof(om));
+	objects[om.oid] = p;
+
+	return 0;
+  }
+
+  int del_mem_object(ObjMeta &om) {
+  	if ( objects.count(om.oid) ) {
+		ObjMeta *p = objects[om.oid];
+
+		objects.erase(om.oid);
+		delete p;
+		p = NULL;
+  	}
+
+	return 0;
+  }
+
+  int update_mem_object(ObjMeta &om) {
+	if ( objects.count(om.oid) ) 
+		memcpy((char*)objects[om.oid], (char*)&om, sizeof(om));
+	return 0;
+  }
+
+  ObjMeta* get_mem_object(uint64_t oid) {
+  	if ( objects.count(oid) ) 
+		return objects[oid];
+	return NULL;
+  }
+
+  void evict_mem_object();
+  
+private:
+  int fd;
+  ObjectCacher *oc;
+  Mutex& cache_lock;
+  uint64_t image_size, cache_size;
+  uint64_t max_dirty, target_dirty, max_objects;
+  float cache_hw, cache_lw;
+  uint32_t obj_order, chunk_order;
+  uint32_t last_ios, io_freq, idle_tick;
+  ceph::timespan cache_age;
+  char *file_head, *data_head, *object_format;
+  bool read_only;
+  std::string cache_file_path;
+  std::string object_prefix;
+  FileHead *fh;
+  DataHead *dh;
+
+  ceph::unordered_map<uint64_t, map<loff_t, BufMeta*> > data;
+  ceph::unordered_map<uint64_t, ObjMeta*> objects;
+
+  //********* BitMap ******************
+  class BitMap {
+  public:
+	BitMap() 
+		: map_chunk(BITMAP_CHUNK_SIZE), map_c(0),
+		t_size(0), t_bits(0), t_free(0), map(NULL) {	
+       map_meta.clear();
+	}
+	
+	~BitMap() {
+		map = NULL;
+	}
+
+	void init_map(uint32_t chk_size, uint32_t map_size, 
+		uint32_t max_bits, uint32_t used_bits) {
+		map_chunk = chk_size;
+		t_size = map_size;
+		t_bits = max_bits;
+		t_free = t_bits - used_bits;
+	}
+
+	void set_map(void* _map, uint32_t size) {
+	  assert(size == t_size);
+	  
+	  uint32_t used = t_bits - t_free;
+      map_c = (t_size + map_chunk - 1) / map_chunk;
+      map_meta.resize(map_c);
+	  map = (char*)_map;
+
+	  map_c = 0;
+	  while ( size > 0 ) {
+		uint32_t chunk = (size > map_chunk)? map_chunk: size;
+
+		map_meta[map_c].size = chunk;
+		map_meta[map_c].free = chunk<<(CHAR_BITS_SHIFT);
+		map_meta[map_c].start = (map_c*map_chunk)<<(CHAR_BITS_SHIFT);
+		map_meta[map_c].end = map_meta[map_c].start + map_meta[map_c].free;
+
+		for (uint32_t i = map_meta[map_c].start; 
+			i < map_meta[map_c].end && used > 0; 
+			++i) {
+			if (test_bit(i)) {
+				--used;
+				--map_meta[map_c].free;
+			}
+		}
+		++map_c;
+		size -= chunk;
+	  }
+	}
+
+	char* get_map() { return map; }
+	uint32_t get_size() { return t_size; }
+	uint32_t get_bits() { return t_bits; }
+	uint32_t get_maps() { return map_c; }
+
+	bool test_bit(uint32_t n) {
+	  return ((map[n>>(CHAR_BITS_SHIFT)]) & (1<<(n&7))) != 0;
+	}
+
+	void set_bit(uint32_t n) {
+	  map[n>>(CHAR_BITS_SHIFT)] |= (1<<(n&7));
+	}
+
+	uint32_t try_get_pos(uint64_t oid) {
+		uint32_t pos = oid;
+		if ( oid >= t_bits ) {
+			oid = oid % t_bits;
+			pos = (oid / (map_chunk<<CHAR_BITS_SHIFT));
+			pos = (oid % map_meta[pos].size<<(CHAR_BITS_SHIFT)) + map_meta[pos].start;
+		}
+		
+		return pos;
+	}
+	
+	uint32_t test_set_bit(uint64_t oid) {
+	  uint32_t slot, pos;
+
+	  pos = (oid >= t_bits)? (oid % t_bits): oid;
+	  slot = pos = (pos / (map_chunk<<CHAR_BITS_SHIFT));
+	  
+	  while (slot < map_c && map_meta[slot].free == 0) ++slot;
+	  if (slot == map_c) {
+		slot = pos - 1;
+		while (slot < pos && map_meta[slot].free == 0) --slot;
+	  }
+		
+	  assert(map_meta[slot].free > 0);
+	  --map_meta[slot].free;
+	  --t_free;
+
+	  pos = oid;
+	  if (oid >= t_bits) {
+	  	pos = oid % (map_meta[slot].size<<(CHAR_BITS_SHIFT));
+	  	pos += map_meta[slot].start;
+	  }
+	  
+	  for (uint32_t i = pos; i < map_meta[slot].end; ++i) {
+		if (!test_bit(i)) {
+		  set_bit(i);
+		  return i;
+		}
+	  }
+
+	  for (uint32_t i = map_meta[slot].start; i < pos; ++i) {
+	  	if (!test_bit(i)) {
+		  set_bit(i);
+		  return i;
+	  	}
+	  }
+
+	  return t_bits;
+	}
+
+	void free_bit(uint32_t n) {
+	  uint32_t slot = n / (map_chunk<<(CHAR_BITS_SHIFT));
+	  if ( n >= map_meta[slot].end )
+	  	++slot;
+
+	  assert(slot < map_c);
+	  ++map_meta[slot].free;
+	  ++t_free;
+      map[n>>(CHAR_BITS_SHIFT)] &= ~(1<<(n&7));
+	}
+
+  private:
+  	struct MapMeta {
+		uint32_t size;  //size, in byte, of this chunk
+		uint32_t free;  //free bits, firstly it equals to size * 8
+		uint32_t start; //first bit
+		uint32_t end;   //last bit, = start + size * 8
+	};
+  	uint32_t map_chunk, map_c;
+  	uint32_t t_size, t_bits, t_free;
+	vector<MapMeta> map_meta; //stats of each map chunk
+  	char *map;
+  }obj_map, buf_map ;
+
+  //data reclaim thread  
+  Cond reclaim_cond;
+  Cond reclaim_stat_cond;
+  loff_t reclaim_stat_waiting;
+  bool reclaim_stop;
+  void reclaim_entry();
+  class ReClaimThread : public Thread {
+	LCache *lc;
+  public:
+	explicit ReClaimThread(LCache *_lc) : lc(_lc) {}
+	void *entry() {
+		lc->reclaim_entry();
+		return 0;
+	}
+  } reclaim_thread;
+};
+
+inline ostream& operator<<(ostream& out, LCache::ObjMeta &om)
+{
+  out << " ObjMeta["
+      << " oid    = " << om.oid 
+      << " pool   = " << om.pid 
+      << " oft    = " << om.oft
+      << " data_l = " << om.data_l
+      << " l_w_tid= " << om.last_write_tid 
+      << " l_c_tid= " << om.last_commit_tid
+      << "]   ";
+
+  return out;
+}
+
+inline ostream& operator<<(ostream& out, LCache::BufMeta &bm)
+{
+  out << " BufMeta["
+  	  << " oid= 	"<<bm.oid
+  	  << " oft= 	"<<bm.oft
+  	  << " mb   	" << bm.mb.prev << "/" << bm.mb.next
+  	  << " ex   	" << bm.ex.start << "~" << bm.ex.length
+  	  << " l_r_tid= " << bm.last_read_tid 
+  	  << " l_w_tid= " << bm.last_write_tid
+  	  << " stat=    "<<bm.stat
+  	  << "]"; 
+	
   return out;
 }
 

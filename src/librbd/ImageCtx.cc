@@ -707,7 +707,7 @@ struct C_InvalidateCache : public Context {
       md_lock.put_read();
 
       uint64_t max_dirty = cache_max_dirty;
-      if (!flushed_before && max_dirty > 0) {
+      if (!flushed_before && max_dirty > 0 && object_cacher->is_rw_cache()) {
 	md_lock.get_write();
 	flush_encountered = true;
 	md_lock.put_write();

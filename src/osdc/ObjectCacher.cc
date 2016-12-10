@@ -59,12 +59,15 @@ ObjectCacher::BufferHead *ObjectCacher::Object::split(BufferHead *left,
   oc->bh_add(this, right);
 
   // split buffers too
-  bufferlist bl;
-  bl.claim(left->bl);
-  if (bl.length()) {
-    assert(bl.length() == (left->length() + right->length()));
-    right->bl.substr_of(bl, left->length(), right->length());
-    left->bl.substr_of(bl, 0, left->length());
+  // local cache is enabled, no memory move is needed
+  if ( ! oc->is_enable_cache() ) {
+	  bufferlist bl;
+	  bl.claim(left->bl);
+	  if (bl.length()) {
+	    assert(bl.length() == (left->length() + right->length()));
+	    right->bl.substr_of(bl, left->length(), right->length());
+	    left->bl.substr_of(bl, 0, left->length());
+	  }
   }
 
   // move read waiters
@@ -109,7 +112,9 @@ void ObjectCacher::Object::merge_left(BufferHead *left, BufferHead *right)
   oc->bh_stat_add(left);
 
   // data
-  left->bl.claim_append(right->bl);
+  // if local cache enabled, no memory move is needed 
+  if ( ! oc->is_enable_cache() )
+	 left->bl.claim_append(right->bl);
 
   // version
   // note: this is sorta busted, but should only be used for dirty buffers
@@ -217,7 +222,7 @@ int ObjectCacher::Object::map_read(ObjectExtent &ex,
                                    map<loff_t, BufferHead*>& hits,
                                    map<loff_t, BufferHead*>& missing,
                                    map<loff_t, BufferHead*>& rx,
-				   map<loff_t, BufferHead*>& errors)
+				   map<loff_t, BufferHead*>& errors, bool external_call)
 {
   assert(oc->lock.is_locked());
   ldout(oc->cct, 10) << "map_read " << ex.oid 
@@ -228,6 +233,12 @@ int ObjectCacher::Object::map_read(ObjectExtent &ex,
   loff_t left = ex.length;
 
   map<loff_t, BufferHead*>::iterator p = data_lower_bound(ex.offset);
+
+  //load data from cache file
+  if (oc->is_enable_cache() && external_call)
+  	oc->lcache->load_bufmeta(this, cur, left);
+
+  p = data_lower_bound(ex.offset);
   while (left > 0) {
     // at end?
     if (p == data.end()) {
@@ -236,6 +247,9 @@ int ObjectCacher::Object::map_read(ObjectExtent &ex,
       n->set_start(cur);
       n->set_length(left);
       oc->bh_add(this, n);
+	  //add BufMeta
+	  if (oc->is_enable_cache()) 
+	  	oc->lcache->add_bufmeta(n, n->start(), n->length());
       if (complete) {
         oc->mark_zero(n);
         hits[cur] = n;
@@ -283,6 +297,9 @@ int ObjectCacher::Object::map_read(ObjectExtent &ex,
       n->set_start(cur);
       n->set_length(len);
       oc->bh_add(this,n);
+	  //add BufMeta
+	  if (oc->is_enable_cache())
+	  	oc->lcache->add_bufmeta(n, n->start(), n->length());
       if (complete) {
         oc->mark_zero(n);
         hits[cur] = n;
@@ -353,6 +370,10 @@ ObjectCacher::BufferHead *ObjectCacher::Object::map_write(ObjectExtent &ex,
   loff_t cur = ex.offset;
   loff_t left = ex.length;
 
+  //load bufmeta from cache file
+  if (oc->is_enable_cache()) 
+	oc->lcache->load_bufmeta(this, cur, left);
+
   map<loff_t, BufferHead*>::iterator p = data_lower_bound(ex.offset);
   while (left > 0) {
     loff_t max = left;
@@ -371,6 +392,10 @@ ObjectCacher::BufferHead *ObjectCacher::Object::map_write(ObjectExtent &ex,
         final->set_length(final->length() + max);
         oc->bh_stat_add(final);
       }
+
+	  if (oc->is_enable_cache())
+		oc->lcache->add_bufmeta(final, final->start(), final->length());
+	  
       left -= max;
       cur += max;
       continue;
@@ -408,8 +433,8 @@ ObjectCacher::BufferHead *ObjectCacher::Object::map_write(ObjectExtent &ex,
           split(bh, cur + max);        // just split
         }
         if (final) {
-          oc->mark_dirty(bh);
-          oc->mark_dirty(final);
+          oc->mark_dirty(bh, oc->is_rw_cache());
+          oc->mark_dirty(final, oc->is_rw_cache());
           --p;  // move iterator back to final
           assert(p->second == final);
           replace_journal_tid(bh, tid);
@@ -442,6 +467,9 @@ ObjectCacher::BufferHead *ObjectCacher::Object::map_write(ObjectExtent &ex,
         final->set_length( glen );
         oc->bh_add(this, final);
       }
+
+	  if (oc->is_enable_cache())
+		oc->lcache->add_bufmeta(final, final->start(), final->length());
 
       cur += glen;
       left -= glen;
@@ -510,6 +538,10 @@ void ObjectCacher::Object::discard(loff_t off, loff_t len)
     complete = false;
   }
 
+  //update ObjMeta
+  if ( oc->is_enable_cache() )
+  	oc->lcache->update_objmeta(this);
+
   map<loff_t, BufferHead*>::iterator p = data_lower_bound(off);
   while (p != data.end()) {
     BufferHead *bh = p->second;
@@ -558,6 +590,7 @@ ObjectCacher::ObjectCacher(CephContext *cct_, string name,
     max_size(max_bytes), max_objects(max_objects),
     max_dirty_age(ceph::make_timespan(max_dirty_age)),
     block_writes_upfront(block_writes_upfront),
+    local_cache(false), ro_cache(false), lcache(NULL),
     flush_set_callback(flush_callback),
     flush_set_callback_arg(flush_callback_arg),
     last_read_tid(0), flusher_stop(false), flusher_thread(this),finisher(cct),
@@ -583,6 +616,24 @@ ObjectCacher::~ObjectCacher()
   assert(bh_lru_dirty.lru_get_size() == 0);
   assert(ob_lru.lru_get_size() == 0);
   assert(dirty_or_tx_bh.empty());
+
+  //local cache
+  if ( NULL != lcache )
+	delete lcache;
+}
+
+void ObjectCacher::stop() 
+{
+  assert(flusher_thread.is_started());
+  lock.Lock();	// hmm.. watch out for deadlock!
+  flusher_stop = true;
+  flusher_cond.Signal();
+  lock.Unlock();
+  flusher_thread.join();
+
+  ldout(cct, 11)<<"Stop reclaim thread"<<dendl;
+  if ( local_cache )
+	  lcache->stop();
 }
 
 void ObjectCacher::perf_start()
@@ -637,23 +688,32 @@ ObjectCacher::Object *ObjectCacher::get_object(sobject_t oid,
   // XXX: Add handling of nspace in object_locator_t in cache
   assert(lock.is_locked());
   // have it?
+  Object *o;
   if ((uint32_t)l.pool < objects.size()) {
     if (objects[l.pool].count(oid)) {
-      Object *o = objects[l.pool][oid];
+      o = objects[l.pool][oid];
       o->object_no = object_no;
       o->truncate_size = truncate_size;
       o->truncate_seq = truncate_seq;
-      return o;
+
+      goto obj_meta;
     }
   } else {
     objects.resize(l.pool+1);
   }
 
   // create it.
-  Object *o = new Object(this, oid, object_no, oset, l, truncate_size,
-			 truncate_seq);
+  o = new Object(this, oid, object_no, oset, l, truncate_size, truncate_seq);
   objects[l.pool][oid] = o;
   ob_lru.lru_insert_top(o);
+
+obj_meta:
+  if ( is_enable_cache() ) {
+  	if ( o->oft > 0 )
+	  	lcache->load_update_objmeta(o);
+	else
+		lcache->add_objmeta(o);
+  }
   return o;
 }
 
@@ -676,8 +736,8 @@ void ObjectCacher::bh_read(BufferHead *bh, int op_flags)
   ldout(cct, 7) << "bh_read on " << *bh << " outstanding reads "
 		<< reads_outstanding << dendl;
 
-  mark_rx(bh);
   bh->last_read_tid = ++last_read_tid;
+  mark_rx(bh);
 
   // finisher
   C_ReadFinish *onfinish = new C_ReadFinish(this, bh->ob, bh->last_read_tid,
@@ -752,31 +812,35 @@ void ObjectCacher::bh_read_finish(int64_t poolid, sobject_t oid,
 	ob->complete = true;
 	ob->exists = false;
 
-	/* If all the bhs are effectively zero, get rid of them.  All
-	 * the waiters will be retried and get -ENOENT immediately, so
-	 * it's safe to clean up the unneeded bh's now. Since we know
-	 * it's safe to remove them now, do so, so they aren't hanging
-	 *around waiting for more -ENOENTs from rados while the cache
-	 * is being shut down.
-	 *
-	 * Only do this when all the bhs are rx or clean, to match the
-	 * condition in _readx(). If there are any non-rx or non-clean
-	 * bhs, _readx() will wait for the final result instead of
-	 * returning -ENOENT immediately.
-	 */
-	if (allzero) {
-	  ldout(cct, 10)
-	    << "bh_read_finish ENOENT and allzero, getting rid of "
-	    << "bhs for " << *ob << dendl;
-	  map<loff_t, BufferHead*>::iterator p = ob->data.begin();
-	  while (p != ob->data.end()) {
-	    BufferHead *bh = p->second;
-	    // current iterator will be invalidated by bh_remove()
-	    ++p;
-	    bh_remove(ob, bh);
-	    delete bh;
-	  }
-	}
+	    //update objmeta
+		if ( is_enable_cache() )
+			lcache->update_objmeta(ob);
+		
+		/* If all the bhs are effectively zero, get rid of them.  All
+		 * the waiters will be retried and get -ENOENT immediately, so
+		 * it's safe to clean up the unneeded bh's now. Since we know
+		 * it's safe to remove them now, do so, so they aren't hanging
+		 *around waiting for more -ENOENTs from rados while the cache
+		 * is being shut down.
+		 *
+		 * Only do this when all the bhs are rx or clean, to match the
+		 * condition in _readx(). If there are any non-rx or non-clean
+		 * bhs, _readx() will wait for the final result instead of
+		 * returning -ENOENT immediately.
+		 */
+		if (allzero) {
+		  ldout(cct, 10)
+		    << "bh_read_finish ENOENT and allzero, getting rid of "
+		    << "bhs for " << *ob << dendl;
+		  map<loff_t, BufferHead*>::iterator p = ob->data.begin();
+		  while (p != ob->data.end()) {
+		    BufferHead *bh = p->second;
+		    // current iterator will be invalidated by bh_remove()
+		    ++p;
+		    bh_remove(ob, bh);
+		    delete bh;
+		  }
+		}
       }
     }
 
@@ -854,7 +918,11 @@ void ObjectCacher::bh_read_finish(int64_t poolid, sobject_t oid,
 	bh->bl.substr_of(bl,
 			 bh->start() - start,
 			 bh->length());
-	mark_clean(bh);
+		mark_clean(bh);
+
+		//add data chunk
+	    if ( is_enable_cache() )
+	  		lcache->add_chunk(bh);
       }
 
       ldout(cct, 10) << "bh_read_finish read " << *bh << dendl;
@@ -976,7 +1044,7 @@ void ObjectCacher::bh_write_scattered(list<BufferHead*>& blist)
 void ObjectCacher::bh_write(BufferHead *bh)
 {
   assert(lock.is_locked());
-  ldout(cct, 7) << "bh_write " << *bh << dendl;
+  ldout(cct, 7) << "Start bh_write " << *bh << dendl;
 
   bh->ob->get();
 
@@ -984,6 +1052,11 @@ void ObjectCacher::bh_write(BufferHead *bh)
   C_WriteCommit *oncommit = new C_WriteCommit(this, bh->ob->oloc.pool,
 					      bh->ob->get_soid(), bh->start(),
 					      bh->length());
+  
+  //get data from cache file and clear it later
+  if (is_enable_cache())
+  	lcache->get_chunk(bh, bh->start(), bh->length(), bh->bl);
+  
   // go
   ceph_tid_t tid = writeback_handler.write(bh->ob->get_oid(),
 					   bh->ob->get_oloc(),
@@ -1003,7 +1076,14 @@ void ObjectCacher::bh_write(BufferHead *bh)
     perfcounter->inc(l_objectcacher_data_flushed, bh->length());
   }
 
-  mark_tx(bh);
+  mark_tx(bh, is_rw_cache());
+  
+  //update ObjMeta & BufMeta
+  if (is_enable_cache()) {
+	lcache->update_objmeta(bh->ob);
+	bh->bl.clear();
+  }
+  ldout(cct, 7) << "End bh_write " << *bh << dendl;
 }
 
 void ObjectCacher::bh_write_commit(int64_t poolid, sobject_t oid,
@@ -1046,7 +1126,7 @@ void ObjectCacher::bh_write_commit(int64_t poolid, sobject_t oid,
 	 ++p) {
       BufferHead *bh = p->second;
 
-      if (bh->start() > start+(loff_t)length)
+      if (bh->start() >= start+(loff_t)length)
 	break;
 
       if (bh->start() < start &&
@@ -1095,6 +1175,10 @@ void ObjectCacher::bh_write_commit(int64_t poolid, sobject_t oid,
   // update last_commit.
   assert(ob->last_commit_tid < tid);
   ob->last_commit_tid = tid;
+
+  //update ObjMeta
+  if (is_enable_cache())
+  	lcache->update_objmeta(ob);
 
   // waiters?
   list<Context*> ls;
@@ -1169,6 +1253,8 @@ void ObjectCacher::trim()
     if (ob->complete) {
       ldout(cct, 10) << "trim clearing complete on " << *ob << dendl;
       ob->complete = false;
+	  if ( is_enable_cache() )
+	  	lcache->update_objmeta(ob);
     }
   }
 
@@ -1233,6 +1319,8 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
   map<uint64_t, bufferlist> stripe_map;  // final buffer offset -> substring
   bool dontneed = rd->fadvise_flags & LIBRADOS_OP_FLAG_FADVISE_DONTNEED;
   bool nocache = rd->fadvise_flags & LIBRADOS_OP_FLAG_FADVISE_NOCACHE;
+
+  ldout(cct, 2)<<__func__<<" begin _readx" << dendl;
 
   /*
    * WARNING: we can only meaningfully return ENOENT if the read request
@@ -1315,7 +1403,7 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 
     // map extent into bufferheads
     map<loff_t, BufferHead*> hits, missing, rx, errors;
-    o->map_read(*ex_it, hits, missing, rx, errors);
+    o->map_read(*ex_it, hits, missing, rx, errors, external_call);
     if (external_call) {
       // retry reading error buffers
       missing.insert(errors.begin(), errors.end());
@@ -1328,23 +1416,28 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 
     if (!missing.empty() || !rx.empty()) {
       // read missing
+	  //local cache is enabled
+      uint64_t _max_size = max_size;
+      if ( is_enable_cache() )
+	  		_max_size = lcache->get_cache_size();
+	  
       map<loff_t, BufferHead*>::iterator last = missing.end();
       for (map<loff_t, BufferHead*>::iterator bh_it = missing.begin();
 	   bh_it != missing.end();
 	   ++bh_it) {
-	uint64_t rx_bytes = static_cast<uint64_t>(
-	  stat_rx + bh_it->second->length());
-	bytes_not_in_cache += bh_it->second->length();
-	if (!waitfor_read.empty() || (stat_rx > 0 && rx_bytes > max_size)) {
-	  // cache is full with concurrent reads -- wait for rx's to complete
-	  // to constrain memory growth (especially during copy-ups)
-	  if (success) {
-	    ldout(cct, 10) << "readx missed, waiting on cache to complete "
-			   << waitfor_read.size() << " blocked reads, "
-			   << (MAX(rx_bytes, max_size) - max_size)
-			   << " read bytes" << dendl;
-	    waitfor_read.push_back(new C_RetryRead(this, rd, oset, onfinish));
-	  }
+		uint64_t rx_bytes = static_cast<uint64_t>(
+	  		stat_rx + bh_it->second->length());
+		bytes_not_in_cache += bh_it->second->length();
+		if (!waitfor_read.empty() || (stat_rx > 0 && rx_bytes > _max_size)) {
+	  		// cache is full with concurrent reads -- wait for rx's to complete
+	  		// to constrain memory growth (especially during copy-ups)
+	  		if (success) {
+	    		ldout(cct, 10) << "readx missed, waiting on cache to complete "
+			   		<< waitfor_read.size() << " blocked reads, "
+			   		<< (MAX(rx_bytes, max_size) - max_size)
+			   		<< " read bytes" << dendl;
+	    		waitfor_read.push_back(new C_RetryRead(this, rd, oset, onfinish));
+	  		}
 
 	  bh_remove(o, bh_it->second);
 	  delete bh_it->second;
@@ -1436,17 +1529,22 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 			 << f_it->second << " +" << foff << "~" << len
 			 << dendl;
 
-	  bufferlist bit;
-	  // put substr here first, since substr_of clobbers, and we
-	  // may get multiple bh's at this stripe_map position
-	  if (bh->is_zero()) {
-	    stripe_map[f_it->first].append_zero(len);
-	  } else {
-	    bit.substr_of(bh->bl,
-		opos - bh->start(),
-		len);
-	    stripe_map[f_it->first].claim_append(bit);
-	  }
+	  		bufferlist bit;
+	  		// put substr here first, since substr_of clobbers, and we
+	  		// may get multiple bh's at this stripe_map position
+	  		if (bh->is_zero()) {
+	    		stripe_map[f_it->first].append_zero(len);
+	  		} else {
+	  			//local cache is enabled
+	  			if (is_enable_cache()) {
+					lcache->get_chunk(bh, opos, len, bit);
+				} else {
+		    		bit.substr_of(bh->bl,
+						opos - bh->start(),
+						len);
+				}
+	    		stripe_map[f_it->first].claim_append(bit);
+	  		}
 
 	  opos += len;
 	  bhoff += len;
@@ -1485,6 +1583,7 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 		     << dendl;
       delete rd;
     }
+	 ldout(cct, 2)<<__func__<<" end _readx" << dendl;
     return 0;  // wait!
   }
   if (perfcounter && external_call) {
@@ -1525,7 +1624,7 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
   delete rd;
 
   trim();
-
+   ldout(cct, 2)<<__func__<<" end _readx" << dendl;
   return ret;
 }
 
@@ -1551,6 +1650,9 @@ int ObjectCacher::writex(OSDWrite *wr, ObjectSet *oset, Context *onfreespace)
   bool dontneed = wr->fadvise_flags & LIBRADOS_OP_FLAG_FADVISE_DONTNEED;
   bool nocache = wr->fadvise_flags & LIBRADOS_OP_FLAG_FADVISE_NOCACHE;
 
+  ldout(cct, 2)<<__func__<<" - Begin writex"<<dendl;
+
+  //len(wr->extents) == 1 ?
   for (vector<ObjectExtent>::iterator ex_it = wr->extents.begin();
        ex_it != wr->extents.end();
        ++ex_it) {
@@ -1600,8 +1702,10 @@ int ObjectCacher::writex(OSDWrite *wr, ObjectSet *oset, Context *onfreespace)
       opos += f_it->second;
     }
 
-    // ok, now bh is dirty.
-    mark_dirty(bh);
+	//put data into cache file add clear memory data
+	if (is_enable_cache())
+		lcache->add_chunk(bh);
+	
     if (dontneed)
       bh->set_dontneed(true);
     else if (nocache && missing)
@@ -1610,7 +1714,10 @@ int ObjectCacher::writex(OSDWrite *wr, ObjectSet *oset, Context *onfreespace)
       touch_bh(bh);
 
     bh->last_write = now;
-
+	
+	// ok, now bh is dirty.
+    mark_dirty(bh, is_rw_cache());
+	
     o->try_merge_bh(bh);
   }
 
@@ -1627,6 +1734,7 @@ int ObjectCacher::writex(OSDWrite *wr, ObjectSet *oset, Context *onfreespace)
 
   //verify_stats();
   trim();
+  ldout(cct, 2)<<__func__<<" - End writex"<<dendl;
   return r;
 }
 
@@ -1647,19 +1755,54 @@ void ObjectCacher::maybe_wait_for_writeback(uint64_t len)
   //  - do not wait for bytes other waiters are waiting on.  this means that
   //    threads do not wait for each other.  this effectively allows the cache
   //    size to balloon proportional to the data that is in flight.
-  while (get_stat_dirty() + get_stat_tx() > 0 &&
-	 (uint64_t) (get_stat_dirty() + get_stat_tx()) >=
-	 max_dirty + get_stat_dirty_waiting()) {
-    ldout(cct, 10) << __func__ << " waiting for dirty|tx "
-		   << (get_stat_dirty() + get_stat_tx()) << " >= max "
-		   << max_dirty << " + dirty_waiting "
-		   << get_stat_dirty_waiting() << dendl;
-    flusher_cond.Signal();
-    stat_dirty_waiting += len;
-    stat_cond.Wait(lock);
-    stat_dirty_waiting -= len;
-    ++blocked;
-    ldout(cct, 10) << __func__ << " woke up" << dendl;
+
+  //if local cache is enabled, digital datas are kept in cache file, 
+  //it doesn't consume memory; while datas are being written back, 
+  //they'll comsume memory until they are on the wire.so here we wait for tx bytes only
+  if ( is_enable_cache() ) {
+	  uint64_t  _max_dirty = lcache->get_max_dirty();
+	  while (lcache->is_hw() || 
+	  	 (get_stat_dirty() + get_stat_tx() > 0 && 
+		 (uint64_t) (get_stat_dirty() + get_stat_tx()) >= 
+		 _max_dirty + get_stat_dirty_waiting())) {
+	    if (lcache->is_hw()) {
+			ldout(cct, 2) << __func__ << " waiting for hw " << dendl;
+			
+			lcache->reclaim_sig();
+	    	lcache->reclaim_stat_waiting_add(len);
+	    	lcache->reclaim_stat_wait();
+	    	lcache->reclaim_stat_waiting_sub(len);
+		} else if ((uint64_t) (get_stat_dirty() +get_stat_tx()) >= 
+		_max_dirty + get_stat_dirty_waiting()) {
+		    ldout(cct, 2) << __func__ << " waiting for dirty|tx "
+			   << (get_stat_dirty() + get_stat_tx()) << " >= max "
+			   << _max_dirty << " + dirty_waiting "
+			   << get_stat_dirty_waiting() << dendl;
+			
+	    	flusher_cond.Signal();
+	    	stat_dirty_waiting += len;
+	    	stat_cond.Wait(lock);
+	    	stat_dirty_waiting -= len;
+		} 
+	    ++blocked;
+	    ldout(cct, 10) << __func__ << " woke up" << dendl;
+	  }
+  	} else {
+  	  while (get_stat_dirty() + get_stat_tx() > 0 &&
+		 (uint64_t) (get_stat_dirty() + get_stat_tx()) >=
+		 max_dirty + get_stat_dirty_waiting()) {
+	    ldout(cct, 10) << __func__ << " waiting for dirty|tx "
+			   << (get_stat_dirty() + get_stat_tx()) << " >= max "
+			   << max_dirty << " + dirty_waiting "
+			   << get_stat_dirty_waiting() << dendl;
+	
+	    flusher_cond.Signal();
+	    stat_dirty_waiting += len;
+	    stat_cond.Wait(lock);
+	    stat_dirty_waiting -= len;
+	    ++blocked;
+	    ldout(cct, 10) << __func__ << " woke up" << dendl;
+  	}
   }
   if (blocked && perfcounter) {
     perfcounter->inc(l_objectcacher_write_ops_blocked);
@@ -1706,7 +1849,13 @@ int ObjectCacher::_wait_for_write(OSDWrite *wr, uint64_t len, ObjectSet *oset,
   }
 
   // start writeback anyway?
-  if (get_stat_dirty() > 0 && (uint64_t) get_stat_dirty() > target_dirty) {
+  uint64_t _target_dirty = target_dirty;
+  if ( is_enable_cache() )
+  	_target_dirty = lcache->get_target_dirty();
+  bool need_flush = get_stat_dirty() > 0 && (uint64_t) get_stat_dirty() > _target_dirty;
+  
+  if ( need_flush || 
+  	(is_enable_cache() && lcache->is_lw() && ((uint64_t)get_stat_dirty() > target_dirty)) ) {
     ldout(cct, 10) << "wait_for_write " << get_stat_dirty() << " > target "
 		   << target_dirty << ", nudging flusher" << dendl;
     flusher_cond.Signal();
@@ -1719,7 +1868,13 @@ void ObjectCacher::flusher_entry()
   ldout(cct, 10) << "flusher start" << dendl;
   writeback_handler.get_client_lock();
   lock.Lock();
+
+  const uint64_t _max_tx = 1024*1024*1024UL;
+  uint64_t _target_dirty = target_dirty;
   while (!flusher_stop) {
+  	if (is_enable_cache())
+  		_target_dirty = lcache->get_target_dirty();
+	
     loff_t all = get_stat_tx() + get_stat_rx() + get_stat_clean() +
       get_stat_dirty();
     ldout(cct, 11) << "flusher "
@@ -1731,13 +1886,23 @@ void ObjectCacher::flusher_entry()
 		   << target_dirty << " target, "
 		   << max_dirty << " max)"
 		   << dendl;
-    loff_t actual = get_stat_dirty() + get_stat_dirty_waiting();
-    if (actual > 0 && (uint64_t) actual > target_dirty) {
+
+	loff_t actual = get_stat_dirty() + get_stat_dirty_waiting();
+	if (is_enable_cache() && 
+		! lcache->is_hw() &&
+		(uint64_t)get_stat_tx() > _max_tx)
+		goto next;
+    
+    if ((actual > 0 && (uint64_t) actual > _target_dirty)
+		|| (is_enable_cache() && lcache->is_lw() && ((uint64_t)actual > target_dirty))) {
       // flush some dirty pages
       ldout(cct, 10) << "flusher " << get_stat_dirty() << " dirty + "
 		     << get_stat_dirty_waiting() << " dirty_waiting > target "
-		     << target_dirty << ", flushing some dirty bhs" << dendl;
-      flush(actual - target_dirty);
+		     << _target_dirty << ", flushing some dirty bhs" << dendl;
+	  if ( (uint64_t)actual > _target_dirty )
+      	flush(actual - _target_dirty);
+	  else 
+	  	flush(actual - target_dirty);
     } else {
       // check tail of lru for old dirty items
       ceph::real_time cutoff = ceph::real_clock::now();
@@ -1767,7 +1932,7 @@ void ObjectCacher::flusher_entry()
     }
     if (flusher_stop)
       break;
-
+next:
     writeback_handler.put_client_lock();
     flusher_cond.WaitInterval(cct, lock, seconds(1));
     lock.Unlock();
@@ -2182,6 +2347,9 @@ loff_t ObjectCacher::release(Object *ob)
     ob->exists = true;
   }
 
+  if ( is_enable_cache() )
+  	lcache->update_objmeta(ob);
+
   return o_unclean;
 }
 
@@ -2272,6 +2440,9 @@ void ObjectCacher::clear_nonexistence(ObjectSet *oset)
       ldout(cct, 10) << " setting exists and complete on " << *ob << dendl;
       ob->exists = true;
       ob->complete = false;
+
+	  if ( is_enable_cache() ) 
+	  	lcache->update_objmeta(ob);
     }
     for (xlist<C_ReadFinish*>::iterator q = ob->reads.begin();
 	 !q.end(); ++q) {
@@ -2486,6 +2657,85 @@ void ObjectCacher::bh_set_state(BufferHead *bh, int s)
   bh_stat_add(bh);
 }
 
+void ObjectCacher::mark_missing(BufferHead *bh, bool update) {
+   bh_set_state(bh,BufferHead::STATE_MISSING);
+   if (is_enable_cache() && update) {
+   		ldout(cct, 11)<<"mark missing, oid= "<<lcache->oid_to_no(bh->ob->get_oid().name)
+	   		<<" start= "<<bh->start()
+	   		<<" len=   "<<bh->length()
+	   		<<dendl;
+	    lcache->update_bufmeta(bh);
+   }
+ }
+
+ void ObjectCacher::mark_clean(BufferHead *bh, bool update) {
+   bh_set_state(bh, BufferHead::STATE_CLEAN);
+   if (is_enable_cache() && update) {
+   	   	ldout(cct, 11)<<"mark clean, oid= "<<lcache->oid_to_no(bh->ob->get_oid().name)
+	   		<<" start= "<<bh->start()
+	   		<<" len=   "<<bh->length()
+	   		<<dendl;
+	    lcache->update_bufmeta(bh);
+   }
+ }
+ 
+ void ObjectCacher::mark_zero(BufferHead *bh, bool update) {
+   bh_set_state(bh, BufferHead::STATE_ZERO);
+   if (is_enable_cache() && update) {
+   	    ldout(cct, 11)<<"mark zero, oid= "<<lcache->oid_to_no(bh->ob->get_oid().name)
+	   		<<" start= "<<bh->start()
+	   		<<" len=   "<<bh->length()
+	   		<<dendl;
+	    lcache->update_bufmeta(bh);
+   }
+ }
+ 
+ void ObjectCacher::mark_rx(BufferHead *bh, bool update) {
+   bh_set_state(bh, BufferHead::STATE_RX);
+   if (is_enable_cache() && update) {
+   		ldout(cct, 11)<<"mark rx, oid= "<<lcache->oid_to_no(bh->ob->get_oid().name)
+	   		<<" start= "<<bh->start()
+	   		<<" len=   "<<bh->length()
+	   		<<dendl;
+		lcache->update_bufmeta(bh);
+   }
+ }
+ 
+ void ObjectCacher::mark_tx(BufferHead *bh, bool update) {
+   bh_set_state(bh, BufferHead::STATE_TX); 
+   if (is_enable_cache() && update) {
+   		ldout(cct, 11)<<"mark tx, oid= "<<lcache->oid_to_no(bh->ob->get_oid().name)
+	   		<<" start= "<<bh->start()
+	   		<<" len=   "<<bh->length()
+	   		<<dendl;
+	    lcache->update_bufmeta(bh);
+   }
+ }
+ 
+ void ObjectCacher::mark_error(BufferHead *bh, bool update) {
+   bh_set_state(bh, BufferHead::STATE_ERROR);
+   if (is_enable_cache() && update) {
+   		ldout(cct, 11)<<"mark error, oid= "<<lcache->oid_to_no(bh->ob->get_oid().name)
+	   		<<" start= "<<bh->start()
+	   		<<" len=   "<<bh->length()
+	   		<<dendl;
+	    lcache->update_bufmeta(bh);
+   }
+ }
+ 
+ void ObjectCacher::mark_dirty(BufferHead *bh, bool update) {
+   bh_set_state(bh, BufferHead::STATE_DIRTY);
+   bh_lru_dirty.lru_touch(bh);
+   //bh->set_dirty_stamp(ceph_clock_now(g_ceph_context));
+   if (is_enable_cache() && update) {
+   		ldout(cct, 11)<<"mark dirty, oid= "<<lcache->oid_to_no(bh->ob->get_oid().name)
+	   		<<" start= "<<bh->start()
+	   		<<" len=   "<<bh->length()
+	   		<<dendl;
+	    lcache->update_bufmeta(bh);
+   }
+ }
+
 void ObjectCacher::bh_add(Object *ob, BufferHead *bh)
 {
   assert(lock.is_locked());
@@ -2524,5 +2774,1651 @@ void ObjectCacher::bh_remove(Object *ob, BufferHead *bh)
     dirty_or_tx_bh.erase(bh);
   }
   bh_stat_sub(bh);
+}
+
+/*********************************************************************************************
+  Author: Thomas.lee
+  Purpose: local cache
+  Date: 2016/10/8
+**********************************************************************************************/
+bool ObjectCacher::can_merge_bh(BufferHead *left, BufferHead *right) 
+{
+	assert(left && right);
+	if ( !is_enable_cache() )
+		return true;
+	
+	uint32_t chk_order = lcache->get_chk_order();
+	if ( left->start()>>chk_order == right->start()>>chk_order 
+		&& left->length() + right->length() <= (1<<chk_order) )
+		return true;
+	
+	return false;
+}
+
+void ObjectCacher::init_cache(uint64_t cache_size, uint32_t obj_order, 
+ 	const std::string &obj_prefix, bool old_format, 
+ 	ObjectSet *oset, const file_layout_t &l) 
+{
+  local_cache = cct->_conf->rbd_ssd_cache;
+  ro_cache = cct->_conf->rbd_ssd_rcache;
+  if ( is_enable_cache() ) {
+  	std::string cache_path(cct->_conf->rbd_ssd_cache_path);
+	cache_path += name;
+
+	uint64_t _max_dirty = cct->_conf->rbd_ssd_cache_max_dirty;
+	uint64_t _target_dirty = cct->_conf->rbd_ssd_cache_target_dirty;
+	uint64_t _cache_size = cct->_conf->rbd_ssd_cache_size;
+	if ( _cache_size == 0 ) {
+		_cache_size = cache_size;
+		_max_dirty = (uint64_t)_cache_size * 0.8;
+		_target_dirty = (uint64_t)_cache_size * 0.5;
+	}
+	
+	lcache = new LCache(this, lock, 
+		_cache_size, 
+		_max_dirty,
+		_target_dirty,
+		cct->_conf->rbd_ssd_cache_dirty_age,
+		ro_cache,
+		cache_path);
+
+	lcache->set_image_size(cache_size*20);
+	lcache->set_obj_order(obj_order);
+	lcache->set_chk_order(cct->_conf->rbd_ssd_cache_chunk_order);
+	lcache->set_obj_prefix(obj_prefix, old_format);
+
+	max_dirty = ro_cache? 0: max_dirty;
+	max_objects = (max_objects < 1024)? 1024: ((max_objects > 2048)? 2048: max_objects);
+	lcache->set_max_objects(max_objects);
+
+	lcache->start(oset, l);
+  }
+}
+
+int LCache::start(ObjectCacher::ObjectSet *oset, const file_layout_t &l)
+{
+	int r;
+
+	//1.open cache file
+	r = open(cache_file_path);
+	assert(r >= 0);
+
+	//2.load dirty data into memory, 
+	//or lazy loading as needed???
+	{
+		Mutex::Locker lock(cache_lock);
+		r = load(oset, l);
+		assert(r >= 0);
+	}
+	
+	//3.create reclaim thread
+	reclaim_thread.create("reclaim");
+	return 0;
+}
+
+int LCache::load(ObjectCacher::ObjectSet *oset, const file_layout_t &l)
+{
+	assert(cache_lock.is_locked());
+	if ( fd < 0 ) {
+		lderr(oc->cct)<<"Failed to load cache, please open cache firstly"<<dendl;
+		return -1;
+	}
+
+	//no data
+	if (fh->cur == 0 || read_only) 
+		return 0;
+
+	//load data from cache file
+	object_locator_t ol = OSDMap::file_to_object_locator(l);
+	for (uint32_t i = 0, c = 0; i < fh->max && c < fh->cur; ++i) {
+		if (! obj_map.test_bit(i))
+			continue;
+		++c;
+		
+		ObjMeta om;
+		get_objmeta(fh->obj_meta_offset+i*fh->obj_meta_size, om);
+		//all data has been written back
+		if (om.last_commit_tid == om.last_write_tid)
+			continue;
+
+		//1.create Object
+		char buf[strlen(object_format) + 16];
+    	snprintf(buf, sizeof(buf), object_format, (long long unsigned)om.oid);
+		sobject_t oid = sobject_t(object_t(buf), CEPH_NOSNAP);
+
+		oc->objects.resize(ol.pool+1);
+		ObjectCacher::Object *o = new ObjectCacher::Object(oc, oid, 0, oset, ol, om.truncate_size, om.truncate_seq);
+		o->oft = om.oft;
+		o->data_l = om.data_l;
+		oc->objects[ol.pool][oid] = o;
+		oc->ob_lru.lru_insert_top(o);	
+		add_mem_object(om);
+		
+		ldout(oc->cct, 11)<<__func__<<" Succeed to create an Obj, "<< om <<dendl;
+
+		//2.load BufMeta
+		BufMeta bm;
+		ObjectCacher::BufferHead *bh;
+		loff_t oft = om.data_l;
+		while (oft > 0) {
+			get_bufmeta(oft, bm);
+
+			//load dirty and tx data only
+			//remove missing, zeroed, rx and error data
+			//or let reclaim thread sweep them out later???
+			if (bm.stat != ObjectCacher::BufferHead::STATE_TX
+				&& bm.stat != ObjectCacher::BufferHead::STATE_DIRTY
+				&& bm.stat != ObjectCacher::BufferHead::STATE_CLEAN) {
+				ldout(oc->cct, 7)<<__func__<<" - remove, "<<bm<<dendl;
+				map<loff_t, BufMeta*>::iterator p = get_mem_tail(om.oid);
+				free_bufmeta(om, bm, p);
+				goto cont;
+			}
+
+			add_mem_data(bm);
+			bh = new ObjectCacher::BufferHead(o);
+			bh->set_start(bm.ex.start);
+			bh->set_length(bm.ex.length);
+			oc->bh_add(o, bh); //add reference
+			if (bm.stat == ObjectCacher::BufferHead::STATE_CLEAN)
+				oc->mark_clean(bh);
+			else
+			    oc->mark_dirty(bh);
+			oc->touch_bh(bh);
+			bh->last_write = ceph::real_clock::now();
+
+			bm.stat = bh->get_state();
+			update_bufmeta(bm);
+			ldout(oc->cct, 7)<<__func__<<" - Create BufferHead, "
+				<<" oid=   "<<bm.oid
+				<<" start= "<<bh->start()
+				<<" len=   "<<bh->length()
+				<<" stat=  "<<bh->get_state()
+				<<dendl;
+cont:
+			oft = bm.mb.next;
+		}
+
+		//bufmetas in om are possibly all clean,
+		//if so, they had been removed beforhand
+		//here we re-check om.data_l to determine om should 
+		//be remove or not
+		remove_objmeta(om);
+	}
+
+	return 0;
+}
+
+int LCache::open(const string path, int flags) 
+{
+  struct stat st;
+  int r = stat(path.c_str(), &st);
+  if ( r == -1 && (ENOENT != errno) ) {
+	lderr(oc->cct) << "Failed to stat cache file "<<path 
+		<<", err msg: "<<cpp_strerror(r)<<dendl;
+	return r;
+  }
+
+  fd = ::open(path.c_str(), flags|O_CREAT, 0666);
+  if ( fd == -1 ) {
+	lderr(oc->cct) << "Failed to create/open cache file "<<path
+		<<", err msg: "<<cpp_strerror(fd)<<dendl;
+	return fd;
+  }
+
+  //we add this line, to resolve 'permition denied' issue when 
+  //ceph used as openstack glance/nova/cinder backend
+  chmod(path.c_str(), S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH);
+
+  //performance tunning:
+  //perserve bit slot for each object, so we can get every object in ¦¯(1) in get_objmeta
+  uint64_t size = (get_image_size() + (1<<get_obj_order()));
+  uint32_t fbits = ((size & 0x01) == 0x01)? ((size>>get_obj_order()) + 1): (size>>get_obj_order());
+  uint32_t fbyte = (fbits % (1<<CHAR_BITS_SHIFT) != 0)? ((fbits>>CHAR_BITS_SHIFT) + 1): (fbits>>CHAR_BITS_SHIFT);
+  int32_t fh_size = FILE_HEAD_ALIAN_SIZE + fbyte;
+
+  size = get_cache_size();
+  uint32_t dbits = ((size & 0x01) == 0x01)? ((size>>get_chk_order()) + 1): (size>>get_chk_order());   
+  uint32_t dbyte = (dbits % (1<<CHAR_BITS_SHIFT) !=0)? ((dbits>>CHAR_BITS_SHIFT) + 1): (dbits>>CHAR_BITS_SHIFT);
+  int32_t dh_size = FILE_HEAD_ALIAN_SIZE + dbyte;
+  
+  file_head = new char[fh_size];
+  data_head = new char[dh_size];
+  memset(file_head, 0, fh_size);
+  memset(data_head, 0, dh_size);
+  fh = (FileHead*)file_head;
+  dh = (DataHead*)data_head;
+
+  if ( r == 0 ) {
+  	ldout(oc->cct, 10)<<"Open cache file: "<<path<<dendl;
+	
+	r = read(file_head, fh_size, 0);
+	if ( r == -1 || r != fh_size ) {
+	  lderr(oc->cct) << "Failed to read cache file, failed to read file_head "<< path 
+	  	<<", err msg: "<< cpp_strerror(r) <<dendl;
+	  goto err_end;
+	}
+
+	if (strncmp(fh->ver, FILE_VER, VER_LEN) ||
+	  fh->obj_order != get_obj_order() ||
+	  fh->chunk_order != get_chk_order()) {
+	  lderr(oc->cct) << "configuration mismatch!!!" 
+	  				<< " in file object order " << fh->obj_order <<" != " << get_obj_order()
+	  				<< " in file chunk order " << fh->chunk_order << " != " << get_chk_order() 
+	  				<< dendl;
+	  r = -1;
+	  goto err_end;
+	}
+  
+	r = read(data_head, fh->data_head_size, fh->data_head_offset);
+	if ( r == -1 || r != dh_size ) {
+	  lderr(oc->cct) << "Faile to read cache file, failed to read data_head "<< path 
+	  	<<", err msg: "<< cpp_strerror(r) <<dendl;
+	  goto err_end;
+	}
+
+	if (dh->max != dbits ||
+		fh->max != fbits) {
+	  lderr(oc->cct) << "configuration mismatch!!!" 
+	  				<< " in file bitmap size " << dh->max <<" != " << dbits
+	  				<< " in file bitmap size " << fh->max <<" != " << fbits
+	  				<< dendl;
+	  r = -1;
+	  goto err_end;
+	}
+
+	//initialize maps
+	obj_map.init_map(BITMAP_CHUNK_SIZE, fbyte, fh->max, fh->cur);
+  	obj_map.set_map(file_head+(FILE_HEAD_ALIAN_SIZE), fbyte);
+	buf_map.init_map(BITMAP_CHUNK_SIZE, dbyte, dh->max, dh->cur);
+  	buf_map.set_map(data_head+(FILE_HEAD_ALIAN_SIZE), dbyte);
+
+	ldout(oc->cct, 11)<<"Succeed to open cache file, file head oft= "<< fh->oft
+		<<" objmeta oft=   "<<fh->obj_meta_offset
+		<<" data head oft= "<<dh->oft
+		<<" chk oft= "<<dh->chk_oft
+		<<" obj meta size= "<<fh->obj_meta_size
+		<<" buf meta size= "<<dh->meta_size
+		<<dendl;
+  } else if ( r == -1 ) {		
+    //create new cache file
+	ldout(oc->cct, 10)<<"Create cache file: "<<path<<dendl;
+	
+	strncpy(fh->ver, FILE_VER, VER_LEN);
+	fh->size = fh_size; 		//including bitmap size
+	fh->oft = 0;
+	fh->obj_meta_offset = fh->size;
+	fh->data_head_offset = fh->size + fbits*OBJ_META_SIZE;
+	fh->obj_meta_size = OBJ_META_SIZE;
+	fh->data_head_size = dh_size;	//including bitmap size
+	fh->obj_order = get_obj_order();
+	fh->chunk_order = get_chk_order(); 
+	fh->max = fbits;
+	fh->cur = 0;
+	//sizeof(ALIGN_FileHead+bitmap)+sizoef(objmeta area)+sizeof(ALIGN_BufHead_bitmap)+sizeof(bufmeta area+cache_size)
+	fh->file_size = fh->data_head_offset + fh->data_head_size + dbits*BUF_META_SIZE + cache_size;
+
+	dh->size = dh_size; 		//including bitmap size
+	dh->meta_size = BUF_META_SIZE;
+	dh->oft = fh->data_head_offset;
+	dh->chk_oft = dh->oft + dh->size;
+	dh->max = dbits;
+	dh->cur = 0;
+
+	r = write(file_head, fh_size, fh->oft);
+	if ( r == -1 || r != fh_size ) {
+		lderr(oc->cct) << "Failed to write cache file, failed to write file head "<< path
+			<<", err msg: "<< cpp_strerror(r) <<dendl;
+		goto err_end;
+	}
+	
+	r = write(data_head, dh_size, dh->oft);
+	if ( r == -1 || (r != dh_size) ) {
+		lderr(oc->cct) << "Failed to write cache file, failed to write data head "<< path
+			<<", err msg: "<< cpp_strerror(r) <<dendl;
+		goto err_end;
+	}
+
+	//initialize maps
+	obj_map.init_map(BITMAP_CHUNK_SIZE, fbyte, fh->max, fh->cur);
+  	obj_map.set_map(file_head+(FILE_HEAD_ALIAN_SIZE), fbyte);
+	buf_map.init_map(BITMAP_CHUNK_SIZE, dbyte, dh->max, dh->cur);
+  	buf_map.set_map(data_head+(FILE_HEAD_ALIAN_SIZE), dbyte);
+
+	ldout(oc->cct, 11)<<"Succeed to create cache file, file head oft= "<< fh->oft
+		<<" objmeta oft=   "<<fh->obj_meta_offset
+		<<" data head oft= "<<dh->oft
+		<<" chk oft= "<<dh->chk_oft
+		<<" obj meta size= "<<fh->obj_meta_size
+		<<" buf meta size= "<<dh->meta_size
+		<<dendl;
+  }
+
+  return fd;
+
+err_end:
+  return r;
+}
+
+void LCache::init_objmeta(ObjectCacher::Object * o, ObjMeta & om) 
+{
+	if ( NULL == o )
+		return ;
+
+	om.oid = oid_to_no(o->get_oid().name);
+	om.pid = o->oloc.pool;
+	om.data_l = o->data_l;
+	om.oft = o->oft;
+	om.truncate_size = o->truncate_size;
+	om.truncate_seq = o->truncate_seq;
+	om.last_commit_tid = o->last_commit_tid;
+	om.last_write_tid = o->last_write_tid;
+	om.complete = o->complete;
+	om.exists = o->exists;
+	om.l_access = ceph::real_clock::to_ceph_timespec(ceph::real_clock::now());
+}
+
+int LCache::get_objmeta(loff_t offset, ObjMeta &om)
+{
+	assert(cache_lock.is_locked());
+	if ( offset < fh->obj_meta_offset || offset >= fh->data_head_offset ) {
+		lderr(oc->cct)<<"Failed to get objmeta, invalid parameter, oft= "<<offset<<dendl;
+		return -1;
+	}
+
+    //in memory ?
+	ObjMeta *pm  = get_mem_object(offset);
+	if ( NULL != pm ) {
+		memcpy((char*)&om, (char*)pm, sizeof(om));
+		return 0;
+	}
+
+    //read from cache file
+	uint32_t pos = (offset - fh->obj_meta_offset)/fh->obj_meta_size;
+	if ( obj_map.test_bit(pos) )
+		return read((char*)&om, sizeof(om), offset);
+
+	lderr(oc->cct)<<"Failed to get objmeta, pos= "<< pos << om <<dendl;
+	assert(0);
+	return -1;
+}
+
+int LCache::get_objmeta(uint64_t oid, ObjMeta & om) 
+{
+    assert(cache_lock.is_locked());
+	ldout(oc->cct, 5)<<__func__<<" - Try to get objmeta from cache, oid= "
+			<< oid << " max= "<< fh->cur << dendl;
+
+	//in memory ?
+	ObjMeta *pm = get_mem_object(oid);
+	if ( NULL != pm ) {
+		memcpy((char*)&om, (char*)pm, sizeof(om));
+		return 0;
+	}
+
+	/* get objmeta from cache file
+
+	  we ensure each objmeta has an exclusive bitmap position
+	  if this bit is set, the formula om.oid == oid should be satisfied
+	*/
+	uint32_t pos = obj_map.try_get_pos(oid);
+	if ( obj_map.test_bit(pos) ) {
+		read((char*)&om, sizeof(om), fh->obj_meta_offset + pos*fh->obj_meta_size);
+		assert(om.oid == oid);
+		goto load_meta;
+	}
+	
+    ldout(oc->cct, 5)<<__func__<<" - objmeta doesn't in cache, Need to create, oid= "
+		<< oid << dendl;
+	return -1;
+load_meta:
+    //load all data meta into memory?
+    ldout(oc->cct, 5)<<__func__<<" - Load bufmeta into memory, oid= "<< om.oid << dendl;
+	add_mem_object(om);
+
+    loff_t oft = om.data_l;
+	while ( oft > 0 ) {
+		BufMeta bm;
+		get_bufmeta(oft, bm);
+
+		add_mem_data(bm);
+		oft = bm.mb.next;
+	}
+
+	ldout(oc->cct, 5)<<__func__<<" - Succeed to get objmeta from cache, "<< om << dendl;
+	return 0;
+}
+
+loff_t LCache::add_objmeta(ObjectCacher::Object *o) 
+{
+	assert(cache_lock.is_locked());
+    assert(o && o->oft == -1);
+
+	ldout(oc->cct, 3)<<__func__<<" - Try to add objmeta, oid= "<<oid_to_no(o->get_oid().name)<<dendl;
+
+    ObjMeta om;
+	//in memory or in file?
+	if ( get_objmeta(oid_to_no(o->get_oid().name), om) == 0 ) {
+		o->oft = om.oft;
+		o->data_l = om.data_l;
+	} else {
+    	init_objmeta(o, om);
+    	o->oft = insert_objmeta(om);
+	}
+	
+    assert(o->oft > 0);
+	ldout(oc->cct, 3)<<__func__<<" - Succeed to add objmeta, oid= "<<oid_to_no(o->get_oid().name)<<dendl;
+    return o->oft;
+}
+
+loff_t LCache::insert_objmeta(ObjMeta & om)
+{
+	assert(cache_lock.is_locked());
+	assert(om.oft == -1);
+	
+	ldout(oc->cct, 5)<<__func__<<" - Try to insert objmeta, "<< om <<dendl;
+	
+	int r = 0;
+	uint32_t size, oft;
+	uint32_t pos = obj_map.test_set_bit(om.oid);
+	assert(pos < fh->max);
+	
+	om.oft = fh->obj_meta_offset + (loff_t)pos*fh->obj_meta_size;
+	r = write((char*)&om, sizeof(om), om.oft);
+	if ( r == -1 || r != sizeof(om) ) {
+		lderr(oc->cct)<<"Failed to insert ObjMeta, failed to write om, err msg: "
+			<<cpp_strerror(r)<<dendl;
+		goto err1;
+	}
+
+	//update FileHead
+	++fh->cur;
+	r = write(file_head, FILE_HEAD_ALIAN_SIZE, fh->oft);
+	if (r == -1 || r != FILE_HEAD_ALIAN_SIZE) {
+		lderr(oc->cct)<<"Failed to insert ObjMeta, failed to update file_head, err msg: "
+			<<cpp_strerror(r)<<dendl;
+		goto err2;
+	}
+
+    //update bitmap
+	oft = FILE_HEAD_ALIAN_SIZE + (pos>>CHAR_BITS_SHIFT);
+	size = (fh->size - oft) > BITMAP_CHUNK_SIZE? BITMAP_CHUNK_SIZE: (fh->size - oft);
+	r = write(file_head + oft, size, fh->oft + oft);
+	if (r == -1 || r != (int)size) {
+		lderr(oc->cct)<<"Failed to insert ObjMeta, failed to update bitmap, err msg: "
+			<<cpp_strerror(r)<<dendl;
+		goto err2;
+	}
+
+	add_mem_object(om);
+	ldout(oc->cct, 5)<<__func__<<" - Succeed to insert objmeta, "
+		<<" pos= "<< pos << om <<dendl;
+	return om.oft;
+err2:
+	--fh->cur;
+err1:
+	obj_map.free_bit(pos);
+	r = write(file_head, fh->size, fh->oft);
+	if ( r == -1 || r != (int)fh->size ) {
+		lderr(oc->cct)<<"Failed to insert ObjMeta, failed to rollback file_head, "
+			<<"data may be corrupted, err msg: "<<cpp_strerror(r)<<dendl;
+	}
+	assert(0);
+	return -1;
+}
+
+int LCache::update_objmeta(ObjMeta & om)
+{
+	assert(cache_lock.is_locked());
+	
+	if ( is_exist(om.oft) ) {
+		om.l_access = ceph::real_clock::to_ceph_timespec(ceph::real_clock::now());
+
+		update_mem_object(om);
+		return write((char*)&om, sizeof(om), om.oft);
+	}
+
+	lderr(oc->cct)<<"Failed to update objmeta, object doesn't exist, "<<om<<dendl;
+	assert(0);
+	return -1;
+}
+
+int LCache::update_objmeta(ObjectCacher::Object * o)
+{
+	assert(cache_lock.is_locked());
+	assert(o && o->oft > 0);
+
+	ObjMeta om;
+	init_objmeta(o, om);
+
+	return update_objmeta(om);
+}
+
+int LCache::load_update_objmeta(ObjectCacher::Object * o)
+{
+	assert(cache_lock.is_locked());
+	assert(o && o->oft > 0);
+
+	ObjMeta om;
+	init_objmeta(o, om);
+
+	ldout(oc->cct, 7)<<__func__<<" - Try to Load & update objmeta, oid= "<< om.oid << dendl;
+
+	//in cache file , but not in memory?
+	if ( get_mem_object(om.oid) == NULL && om.data_l > 0 ) {
+	    //load all data meta into memory?
+		add_mem_object(om);
+		
+	    loff_t oft = om.data_l;
+		while ( oft > 0 ) {
+			BufMeta bm;
+			get_bufmeta(oft, bm);
+
+			add_mem_data(bm);
+			oft = bm.mb.next;
+		}
+
+	}
+
+	update_objmeta(om);
+	ldout(oc->cct, 7)<<__func__<<" - Succeed to Load & update objmeta, oid= "<< om.oid << dendl;
+	return 0;
+}
+
+int LCache::remove_objmeta(ObjMeta & om)
+{
+	assert(cache_lock.is_locked());
+	if ( ! is_removable(om) )
+		return 0;
+
+	if ( (uint32_t)om.pid < oc->objects.size() ) {
+		char sid[strlen(object_format) + 16];
+    	snprintf(sid, sizeof(sid), object_format, (long long unsigned)om.oid);
+		sobject_t soid(object_t(sid), CEPH_NOSNAP);
+
+		//reset oft & data_l if Object still exists
+		if ( oc->objects[om.pid].count(soid) ) {
+			ObjectCacher::Object* o = oc->objects[om.pid][soid];
+			o->data_l = -1;
+			oc->close_object(o);
+			
+			ldout(oc->cct, 5)<<__func__<<" - Update objmeta, Reset oft and data_l, "<<om<<dendl;
+		}
+
+		ldout(oc->cct, 5)<<__func__<<"- Clean objmeta, oid= "<<om<<dendl;
+		return clear_objmeta(om);
+	}
+
+	lderr(oc->cct)<<"Code Exception!!!"<<dendl;
+	assert(0);
+	return -1;
+}
+
+void LCache::init_bufmeta(ObjectCacher::BufferHead* bh, BufMeta &bm)
+{
+	assert(bh);
+	if ( NULL == bh )
+		return ;
+
+	bm.oid = oid_to_no(bh->ob->get_oid().name);
+	bm.ex.start = bh->start();
+	bm.ex.length = bh->length();
+	bm.stat = bh->get_state();
+	bm.error = bh->error;
+	bm.last_read_tid = bh->last_read_tid;
+	bm.last_write_tid = bh->last_write_tid;
+	bm.l_write = ceph::real_clock::to_ceph_timespec(ceph::real_clock::now());
+	bm.mb.prev = -1; 	 //will be reset when calls add_bufmeta or update_bufmeta
+	bm.mb.next = -1;   	 //the same as above
+	bm.oft = -1;     	 //the same as above
+}
+
+int LCache::add_bufmeta(ObjectCacher::BufferHead * bh, loff_t _oft, loff_t _len)
+{
+	assert(cache_lock.is_locked());
+	assert(bh && bh->ob && bh->ob->oft > 0);
+
+	loff_t cur = _oft, chk_oft;
+	loff_t left = _len, len;
+	uint32_t chk_size = (1<<fh->chunk_order);
+	uint64_t oid = oid_to_no(bh->ob->get_oid().name);
+
+	ldout(oc->cct, 5)<<__func__<<" - Try to add bufmeta, "
+		<<" oid=    "<<oid
+		<<" oft=    "<<bh->ob->oft
+		<<" data_l= "<<bh->ob->data_l
+		<<" start=  "<<cur
+		<<" len=    "<<left
+		<<dendl;
+		
+	if ( bh->ob->data_l == -1 ) { //the first element
+	    BufMeta bm;	
+		init_bufmeta(bh, bm);
+		chk_oft = cur % chk_size;
+		len = (chk_oft + left > chk_size)? (chk_size - chk_oft): left;
+
+		bm.ex.start = cur;		
+		bm.ex.length = len; 
+		insert_bufmeta(bm);
+		
+		bh->ob->data_l = bm.oft;
+		update_objmeta(bh->ob);
+
+		cur += len;
+		left -= len;
+		ldout(oc->cct, 5)<<__func__<<" - Succeed to add bufmeta, "
+			<< bm <<" data_l= "<< bh->ob->data_l <<dendl;
+	}
+
+	BufMeta *bm = NULL;	
+	while ( left > 0 ) {
+		map<loff_t, BufMeta*>::iterator p = get_mem_data(oid, cur);
+		if ( p == data[oid].end() )
+			bm = (--p)->second;
+		else
+			bm = p->second;
+
+		chk_oft = cur % chk_size;  
+		len = (chk_oft + left > chk_size)? (chk_size - chk_oft): left;
+		
+		if ( cur > bm->ex.start + bm->ex.length 
+			|| ( cur == bm->ex.start + bm->ex.length && chk_oft == 0) ) {
+			//append new BufMeta
+			BufMeta nt;
+			init_bufmeta(bh, nt);
+			
+			nt.ex.start = cur;				
+			nt.ex.length = len; 
+			nt.mb.prev = bm->oft;
+			insert_bufmeta(nt);
+		
+			bm->mb.next = nt.oft;
+			update_bufmeta(*bm);
+
+			ldout(oc->cct, 5)<<__func__<<" Succeed to append bufmeta, "<< nt <<dendl;
+		} else if ( cur + len < bm->ex.start
+			|| (cur + len == bm->ex.start && bm->ex.start % chk_size == 0) ) { 
+			//insert new bufmeta
+			BufMeta prv;
+			BufMeta *pprv = NULL;
+
+			//check can be merged
+			if ( bm->mb.prev > 0 )
+				pprv = (--p)->second;
+
+			if (merge_left(pprv, cur, len) >= 0 ) {
+				cur += len;
+				left -= len;
+				continue;
+			} else {
+				init_bufmeta(bh, prv);
+				
+				prv.ex.start = cur;				
+				prv.ex.length = len;	
+				prv.mb.next = bm->oft;		//point to next element
+				if ( bm->mb.prev > 0 ) 
+					prv.mb.prev = pprv->oft; //point to previous element
+				insert_bufmeta(prv);
+
+				if ( bm->mb.prev > 0 ) {
+					pprv->mb.next = prv.oft; //point to next element
+					update_bufmeta(*pprv);
+				} else {
+					//now, prv is the new head element
+					bh->ob->data_l = prv.oft;
+					update_objmeta(bh->ob);
+				}
+
+				bm->mb.prev = prv.oft;		//point to previous element
+				update_bufmeta(*bm);
+				ldout(oc->cct, 5)<<__func__<<" - Succeed to insert bufmeta, "
+					<< prv <<" data_l= "<< bh->ob->data_l <<dendl;
+			}
+		} else {
+			// update an exising BufMeta
+			loff_t ppad = 0, tpad = 0;
+			if ( cur < bm->ex.start )
+				ppad = bm->ex.start - cur;
+			if ( cur + len > bm->ex.start + bm->ex.length )
+				tpad = (cur + len) - (bm->ex.start + bm->ex.length);
+
+			bm->ex.start -= ppad;
+			bm->ex.length += (ppad+tpad);
+			bm->last_read_tid = MAX(bm->last_read_tid, bh->last_read_tid);
+			bm->last_write_tid = MAX(bm->last_write_tid, bh->last_write_tid);
+  			ceph::real_time l_write = 
+				MAX(ceph::real_clock::from_ceph_timespec(bm->l_write), bh->last_write);
+			bm->l_write = ceph::real_clock::to_ceph_timespec(l_write);
+			bm->stat = bh->get_state();
+
+			if ( ppad != 0 ) 
+				p = replace_mem_data(bm->ex.start+ppad, *bm);
+			update_bufmeta(*bm);
+			merge_right(p, bm);
+			
+			ldout(oc->cct, 5)<<__func__<<" - Succeed to update bufmeta, "
+				<<" cur=   "<< cur <<" left=  "<< len << *bm <<dendl;
+		} 
+
+		//next round
+		cur += len;
+		left -= len;
+	}
+
+	assert(left == 0);
+	ldout(oc->cct, 5)<<__func__<<" - Succeed to add bufmeta, "
+		<<" start=  "<< bh->start() <<" len=    "<< bh->length() <<dendl;
+	return 0;
+}
+
+loff_t LCache::insert_bufmeta(BufMeta & bm)
+{
+	assert(cache_lock.is_locked());
+	assert(bm.oft == -1);
+
+	ldout(oc->cct, 5)<<__func__<<" - Try to insert BufMeta, "<< bm << dendl;
+	
+	int r = -1;
+	uint32_t size, oft;
+	uint64_t pos = bm.oid*(1<<(fh->obj_order - fh->chunk_order)) + (bm.ex.start>>fh->chunk_order);
+
+	pos = buf_map.test_set_bit(pos);
+	assert(pos < dh->max);
+
+	ldout(oc->cct, 5)<<__func__<<" - Succeed to find a slot, pos= "<< pos << dendl;
+	
+	bm.oft = dh->chk_oft + (loff_t)pos*(dh->meta_size+(1<<fh->chunk_order));
+	r = write((char*)&bm, sizeof(bm), bm.oft);
+	if ( r == -1 || r != sizeof(bm) ) {
+		lderr(oc->cct)<<"Failed to insert BufMeta, failed to write bm, err msg: "
+			<<cpp_strerror(r)<<dendl;
+		goto err1;
+	}
+
+	//update DataHead
+	++dh->cur;
+	r = write(data_head, FILE_HEAD_ALIAN_SIZE, dh->oft);
+	if (r == -1 || r != FILE_HEAD_ALIAN_SIZE) {
+		lderr(oc->cct)<<"Failed to insert BufMeta, failed to update data_head, err msg: "
+			<<cpp_strerror(r)<<dendl;
+		goto err2;
+	}
+
+    //update bitmap
+    oft = FILE_HEAD_ALIAN_SIZE + (pos>>CHAR_BITS_SHIFT);
+    size = (dh->size - oft) > BITMAP_CHUNK_SIZE? BITMAP_CHUNK_SIZE: (dh->size - oft);
+	r = write(data_head + oft, size, dh->oft + oft);
+	if (r == -1 || r != (int)size) {
+		lderr(oc->cct)<<"Failed to insert BufMeta, failed to update bitmap, err msg: "
+			<<cpp_strerror(r)<<dendl;
+		goto err2;
+	}
+	
+	add_mem_data(bm);
+	ldout(oc->cct, 5)<<__func__<<" - Succeed to insert BufMeta"<< dendl;
+	return bm.oft;
+
+err2:
+	--dh->cur;
+err1:
+	buf_map.free_bit(pos);
+	r = write(data_head, dh->size, dh->oft);
+	if ( r == -1 || r != (int)dh->size ) {
+		lderr(oc->cct)<<"Failed to insert BufMeta, failed to rollback data_head, "
+			<<"data may be corrupted, err msg: "<<cpp_strerror(r)<<dendl;
+	}
+	assert(0);
+	return -1;
+}
+
+int LCache::get_bufmeta(loff_t offset, BufMeta & bm)
+{
+	assert(cache_lock.is_locked());
+	if ( offset < dh->chk_oft || (uint64_t)offset >= fh->file_size ) {
+		lderr(oc->cct)<<"Failed to get BufMeta, invalid parameters, offset = "<<offset<<dendl;
+		return -1;
+	}
+
+	uint32_t pos = (offset - dh->chk_oft)/(dh->meta_size+(1<<fh->chunk_order));
+	if ( buf_map.test_bit(pos) ) 
+		return read((char*)&bm, sizeof(bm), offset);
+
+	lderr(oc->cct)<<" Failed to get BufMeta, pos = "<< pos << bm <<dendl;
+	assert(0);
+	return -1;
+}
+
+int LCache::update_bufmeta(BufMeta & bm)
+{
+	assert(cache_lock.is_locked());
+	uint32_t pos = (bm.oft - dh->chk_oft)/(dh->meta_size+(1<<fh->chunk_order));
+	if ( buf_map.test_bit(pos) ) {
+	    bm.l_write = ceph::real_clock::to_ceph_timespec(ceph::real_clock::now());
+		
+	    update_mem_data(bm);
+	    return write((char*)&bm, sizeof(bm), bm.oft);
+	}
+	
+    lderr(oc->cct)<<__func__<<" - Failed to update BufMeta, pos= "<< pos 
+		<< bm <<dendl;
+	assert(0);
+	return -1;
+}
+
+int LCache::update_bufmeta(ObjectCacher::BufferHead * bh)
+{
+	assert(cache_lock.is_locked());
+	assert(bh && bh->ob);
+	assert(bh->ob->oft > 0 && bh->ob->data_l > 0);
+
+	loff_t cur = bh->start(), left = bh->length();
+	uint64_t oid = oid_to_no(bh->ob->get_oid().name);
+
+	ldout(oc->cct, 10)<<__func__<<" - Try to update bufmeta, "
+		<<" oid=   "<<oid_to_no(bh->ob->get_oid().name)
+		<<" start= "<<cur
+		<<" len=   "<<left
+		<<dendl;
+
+	//in memory?
+	map<loff_t, BufMeta*>::iterator p = get_mem_data(oid, cur);
+	while ( left > 0 && p != data[oid].end() ) {
+		BufMeta *bm = p->second;
+		
+		if ( cur >= bm->ex.start + bm->ex.length ) {
+			++p;
+			continue;
+		}
+
+		if ( cur + left <= bm->ex.start )
+			break;
+
+		assert(cur >= bm->ex.start);
+		if ( bm->ex.start + bm->ex.length > cur ) {
+			loff_t end = bm->ex.start + bm->ex.length;
+			loff_t len = (cur + left) > end? (end - cur): left;
+			
+			if ( bm->last_read_tid != bh->last_read_tid ||
+				bm->last_write_tid != bh->last_write_tid ||
+				bm->error != bh->error ||
+				bm->stat != bh->get_state() ) {
+				bm->last_read_tid = bh->last_read_tid;
+				bm->last_write_tid = bh->last_write_tid;
+				bm->l_write = ceph::real_clock::to_ceph_timespec(bh->last_write);
+				bm->error = bh->error;
+				bm->stat = bh->get_state();
+
+				update_bufmeta(*bm);
+			} 
+
+			cur += len;
+			left -= len;
+		}
+		++p;
+	}
+
+    //in cache file, but not in memory
+    if ( left > 0 ) {
+		ldout(oc->cct, 5)<<__func__<<" Update bufmeta from cache file"<<dendl;
+		assert(cur == bh->start());
+		assert(left == bh->length());
+		
+		loff_t oft = bh->ob->data_l;
+	    while ( left > 0 && oft > 0 ) {
+			BufMeta bm;
+			get_bufmeta(oft, bm);
+
+			if ( cur >= bm.ex.start + bm.ex.length ) {
+				oft = bm.mb.next;
+				continue;
+			}
+
+			if ( cur + left <= bm.ex.start )
+				break;
+
+			assert(cur >= bm.ex.start);
+			if ( bm.ex.start + bm.ex.length > cur ) {
+				bm.last_read_tid = bh->last_read_tid;
+				bm.last_write_tid = bh->last_write_tid;
+				bm.l_write = ceph::real_clock::to_ceph_timespec(bh->last_write);
+				bm.error = bh->error;
+				bm.stat = bh->get_state();
+				loff_t end = bm.ex.start + bm.ex.length;
+				loff_t len = ((cur + left) > end)? (end - cur): left;
+				
+				update_bufmeta(bm);
+
+				cur += len;
+				left -= len;
+				ldout(oc->cct, 10)<<__func__<<" - Succeed to update bufmeta, "<<bm<<dendl;
+			}
+			oft = bm.mb.next;
+		}
+    }
+	
+	assert(left == 0);
+	ldout(oc->cct, 10)<<__func__<<" - Succeed to update bufmeta, "
+		<< " oid=   "<<oid_to_no(bh->ob->get_oid().name) <<dendl;
+	return 0;
+}
+
+int LCache::free_bufmeta(ObjMeta & om, BufMeta & bm, map<loff_t, BufMeta*>::iterator &p)
+{
+	assert(cache_lock.is_locked());
+	ldout(oc->cct, 11)<<"Begin to free bufmeta, "<<bm<<dendl;
+
+	ObjectCacher::Object* o = NULL;
+	if ( (uint32_t)om.pid < oc->objects.size() ) {
+		char sid[strlen(object_format) + 16];
+    	snprintf(sid, sizeof(sid), object_format, (long long unsigned)om.oid);
+		sobject_t soid(object_t(sid), CEPH_NOSNAP);
+
+		//reset data_l if Object still exists
+		if ( oc->objects[om.pid].count(soid) ) {
+			o = oc->objects[om.pid][soid];
+		}
+	}
+
+	if ( bm.mb.next > 0 ) { //the first element or middle
+		if ( p == data[om.oid].end() ) {
+			BufMeta bn;
+			get_bufmeta(bm.mb.next, bn);
+
+			bn.mb.prev = bm.mb.prev;
+			update_bufmeta(bn);
+		} else {
+			BufMeta *next = (++p)->second;
+			assert(next);
+
+			next->mb.prev = bm.mb.prev;
+			update_bufmeta(*next);
+			--p; 
+		}
+	} 
+
+	if ( bm.mb.prev > 0 ) { //the last element or middle 
+	 	if ( p == data[om.oid].end() ) {
+			BufMeta prv;
+			get_bufmeta(bm.mb.prev, prv);
+
+			prv.mb.next = bm.mb.next;
+			update_bufmeta(prv);
+	 	} else {
+			BufMeta *prv = (--p)->second;
+			assert(prv);
+
+			prv->mb.next = bm.mb.next;
+			update_bufmeta(*prv);
+			++p;
+	 	}
+	} 
+
+	if ( bm.mb.prev == -1 ) { //update ObjMeta
+		om.data_l = bm.mb.next;
+		update_objmeta(om);
+		if ( o ) 
+			o->data_l = om.data_l;
+		
+		ldout(oc->cct, 10)<<__func__<<" - Update objmeta, "<< om <<dendl;
+	} 
+
+	if ( p != data[om.oid].end() )
+		++p;
+    ldout(oc->cct, 11)<<__func__<<" - Succeed to free bufmeta, "<< bm <<dendl;
+	return clear_bufmeta(bm);
+}
+
+int LCache::free_clean_bufmeta(ObjMeta & om, BufMeta & bm, map<loff_t, BufMeta*>::iterator &p)
+{
+	assert(cache_lock.is_locked());
+
+	bool can_free = true;
+	if ( (uint32_t)om.pid < oc->objects.size() ) {
+		char sid[strlen(object_format) + 16];
+		snprintf(sid, sizeof(sid), object_format, (long long unsigned)om.oid);
+		sobject_t soid(object_t(sid), CEPH_NOSNAP);
+	
+		if ( oc->objects[om.pid].count(soid) ) {
+			ObjectCacher::BufferHead *bh;
+			ObjectCacher::Object *o = oc->objects[om.pid][soid];
+			
+			map<loff_t, ObjectCacher::BufferHead*>::iterator p = o->data_lower_bound(bm.ex.start);
+			while ( p != o->data.end() ) {
+				bh = p->second;
+				if ( bh->start() >= bm.ex.start + bm.ex.length )
+					break;
+
+				if ( (bh->is_clean() || bh->is_zero())
+					&& bh->start() >= bm.ex.start ) {
+					assert( bh->waitfor_read.empty() );
+					if ( bh->start() + bh->length() > bm.ex.start + bm.ex.length ) {
+						loff_t start = bm.ex.start + bm.ex.length;
+						loff_t end = bh->start() + bh->length();
+						
+					    ObjectCacher::BufferHead *b = new ObjectCacher::BufferHead(o);
+						b->set_start(start);
+						b->set_length(end - start);
+						b->set_dontneed(bh->get_dontneed());
+						b->set_nocache(bh->get_nocache());
+						b->set_state(bh->get_state());
+						b->last_read_tid = bh->last_read_tid;
+						b->last_write_tid = bh->last_write_tid;
+						b->last_write = bh->last_write;
+						b->error = bh->error;
+
+						oc->bh_stat_sub(bh);
+						bh->set_length(start - bh->start());
+						oc->bh_stat_add(bh);
+						oc->bh_add(o, b);
+
+						ldout(oc->cct, 5)<<__func__<<" Split bh, offset= "<<start
+							<<" start= "<<bh->start()
+							<<" len=   "<<bh->length()
+							<<dendl;
+					}
+
+					assert(bh->start() + bh->length() <= bm.ex.start + bm.ex.length);
+					ldout(oc->cct, 5)<<__func__<<" - Free BufferHead, "
+						<<" start= "<<bh->start()
+						<<" len=   "<<bh->length()
+						<<dendl;
+					oc->bh_lru_rest.lru_remove(bh);
+					oc->bh_remove(bh->ob, bh);
+					delete bh;
+				} else {
+					can_free = false;
+					break;
+				} 	
+				p = o->data_lower_bound(bm.ex.start); //next
+			}
+		}
+	}
+
+	return ((can_free == true)? free_bufmeta(om, bm, p): 0);
+}
+
+int LCache::merge_left(BufMeta *bm, loff_t cur, loff_t len)
+{
+	if ( NULL == bm )
+		return -1;
+
+	loff_t chk_size = (1<<fh->chunk_order);
+	loff_t chk_no = bm->ex.start / chk_size;
+	if ( (chk_no == cur / chk_size) 
+		&& (chk_no == (cur + len - 1) / chk_size)
+		&& (bm->ex.start + bm->ex.length == cur) ) {
+		ldout(oc->cct, 5)<<__func__<<" - Succeed to merge a bufmeta(before), "<<*bm<<dendl;
+		bm->ex.length += len;
+		update_bufmeta(*bm);
+		ldout(oc->cct, 5)<<__func__<<" - Succeed to merge a bufmeta(after), "<<*bm<<dendl;
+		return 0;
+	}
+	return -1;
+}
+
+int LCache::merge_right(map<loff_t, BufMeta*>::iterator &p, BufMeta *bm)
+{
+	assert(cache_lock.is_locked());
+	if ( bm->mb.next == -1 )
+		return 0;
+
+	map<loff_t, BufMeta*>::iterator lp = p;
+	BufMeta *bn = (++lp)->second; //next element
+	loff_t chk_size = (1<<fh->chunk_order);
+	loff_t chk_no = bm->ex.start / chk_size;
+	
+	if ( (chk_no == bn->ex.start / chk_size) 
+		&& (chk_no == (bn->ex.start + bn->ex.length - 1) / chk_size)
+		&& (bm->ex.start + bm->ex.length == bn->ex.start) ) {
+		bufferlist bl;
+		bl.append_zero(bn->ex.length);
+
+		char *buf = bl.c_str();
+		loff_t pad = bn->ex.start % chk_size;
+
+		ldout(oc->cct, 5)<<__func__<<" Succeed to merge a bufmeta, "
+			<<*bm
+			<<*bn
+			<<dendl;
+
+		read(buf, bn->ex.length, bn->oft + dh->meta_size + pad);
+		write(buf, bn->ex.length, bm->oft + dh->meta_size + pad);
+
+        bm->ex.length += bn->ex.length;
+		if ( bn->mb.next > 0 ) {
+			BufMeta *n = (++lp)->second; //next next element
+
+			n->mb.prev = bm->oft;
+			update_bufmeta(*n);
+
+			bm->mb.next = n->oft;
+			update_bufmeta(*bm);
+		} else {
+		   bm->mb.next = -1;
+		   update_bufmeta(*bm);
+		}
+
+		clear_bufmeta(*bn);
+		bl.clear();
+	}
+	return 0;
+}
+
+int LCache::load_bufmeta(ObjectCacher::Object *o, loff_t offset, loff_t len)
+{
+	assert(cache_lock.is_locked());
+	assert(o && o->oft > 0);
+
+	ldout(oc->cct, 7)<<__func__<<" - Try to load, ["<<offset<<" ~ "<<len<<"]"<<dendl;
+	
+	loff_t cur = offset, left = len;
+    uint64_t oid = oid_to_no(o->get_oid().name);
+
+	//load from memory cache
+	map<loff_t, BufMeta*>::iterator p = get_mem_data(oid, offset);
+	while ( left > 0 && p != data[oid].end() ) {
+		BufMeta *bm = p->second;
+
+		if ( bm->ex.start >= cur + left )
+			break;
+
+		if ( bm->stat != ObjectCacher::BufferHead::STATE_CLEAN
+			&& bm->stat != ObjectCacher::BufferHead::STATE_DIRTY
+			&& bm->stat != ObjectCacher::BufferHead::STATE_TX
+			&& bm->stat != ObjectCacher::BufferHead::STATE_ZERO ) {
+			ldout(oc->cct, 5)<<__func__<<" - Skip, "<<*bm<<dendl;
+			++p;
+			continue;
+		}
+
+		map<loff_t, ObjectCacher::BufferHead*>::iterator pb = o->data_lower_bound(bm->ex.start);
+		if ( pb == o->data.end() ) {
+			ObjectCacher::BufferHead *bh = new ObjectCacher::BufferHead(o);
+
+			loff_t end = cur + left;
+            loff_t bm_end = bm->ex.start + bm->ex.length;
+			cur = (cur >= bm->ex.start)? cur: bm->ex.start;
+			loff_t l = (end > bm_end)? (bm_end - cur): (end - cur);
+			bh->set_start(cur);
+			bh->set_length(l);
+			bh->last_read_tid = bm->last_read_tid;
+			bh->last_write_tid = bm->last_write_tid;
+			bh->set_state(bm->stat);
+			oc->bh_add(o, bh); //add reference
+			bh->last_write = ceph::real_clock::from_ceph_timespec(bm->l_write);
+			bh->error = bm->error;
+
+			ldout(oc->cct, 10)<<__func__<<" - Create BufferHead, "
+				<<" oid=   "<<bm->oid
+				<<" start= "<<bh->start()
+				<<" len=   "<<bh->length()
+				<<dendl;
+			cur += l;
+			left -= l;
+		}
+		++p;
+	}
+
+	ldout(oc->cct, 7)<<__func__<<" - Succeed to load, ["<<offset<<" ~ "<<len<<"]"<<dendl;
+	return 0;
+}
+
+int LCache::add_chunk(ObjectCacher::BufferHead * bh)
+{
+	assert(cache_lock.is_locked());
+	assert(bh && bh->ob);
+	assert(bh->ob->oft > 0 && bh->ob->data_l > 0);
+
+	loff_t d_oft = 0, len = 0;
+	loff_t cur = bh->start(), left = bh->length();
+	uint64_t oid = oid_to_no(bh->ob->get_oid().name);
+	
+	ldout(oc->cct, 10)<<__func__<<" - Try to add chunk, "
+		<<" oid=   "<<oid_to_no(bh->ob->get_oid().name)
+		<<" start= "<<cur
+		<<" len=   "<<left
+		<<dendl;
+
+    //in memory
+	map<loff_t, BufMeta*>::iterator p = get_mem_data(oid, cur);
+	while ( left > 0 && p != data[oid].end() ) {
+		BufMeta *bm = p->second;	
+
+		if ( cur >= bm->ex.start + bm->ex.length ) {
+			++p;
+			continue;
+		}
+
+		if ( bm->ex.start >= cur + left )
+			break;
+		
+		assert(cur >= bm->ex.start); 
+		if ( bm->ex.start + bm->ex.length > cur ) {
+			loff_t pad = cur % (1<<fh->chunk_order);
+			char *data = (char*)bh->bl.c_str() + d_oft;
+			loff_t end = bm->ex.start + bm->ex.length;
+			len = ((cur + left) > end)? (end - cur): left;
+
+			write(data, len, bm->oft + dh->meta_size + pad);
+
+			cur += len;
+			left -= len;
+			d_oft += len;
+		}
+		++p;	
+	}
+
+	//in cache file, but not in memory
+    if ( left > 0 ) {
+		ldout(oc->cct, 5)<<__func__<<" - Add chunk from cache file"<<dendl;
+		assert(cur == bh->start());
+		assert(left == bh->length());
+
+		loff_t oft = bh->ob->data_l;
+	    while ( left > 0 && oft > 0 ) {
+			BufMeta bm;
+			get_bufmeta(oft, bm);
+
+			if ( cur >= bm.ex.start + bm.ex.length ) {
+				oft = bm.mb.next;
+				continue;
+			}
+
+			if ( cur + left <= bm.ex.start )
+				break;
+			
+			assert(cur >= bm.ex.start); 
+			if ( bm.ex.start + bm.ex.length > cur ) {
+				loff_t pad = cur % (1<<fh->chunk_order);
+				char *data = (char*)bh->bl.c_str() + d_oft;
+				loff_t end = bm.ex.start + bm.ex.length;
+				len = ((cur + left) > end)? (end - cur): left;
+
+				write(data, len, bm.oft + dh->meta_size + pad);
+
+				cur += len;
+				left -= len;
+				d_oft += len;
+			}
+			oft = bm.mb.next;
+		}
+    }
+
+	bh->bl.clear();
+	assert(left == 0);
+	ldout(oc->cct, 10)<<__func__<<" - Succeed to add chunk, "
+		<<" oid=   "<<oid_to_no(bh->ob->get_oid().name) <<dendl;
+	return 0;
+}
+
+int LCache::get_chunk(ObjectCacher::BufferHead* bh, loff_t _oft, loff_t _len, bufferlist &bl) 
+{
+	assert(cache_lock.is_locked());
+	assert(bh && bh->ob);
+	assert(bh->ob->oft > 0 && bh->ob->data_l > 0);
+	
+	loff_t cur = _oft, left = _len;
+	loff_t d_oft = 0, len = 0;
+	bl.append_zero(left);
+	uint64_t oid = oid_to_no(bh->ob->get_oid().name);
+	
+	ldout(oc->cct, 10)<<__func__<<" - Try to get chunk, "
+		<<" oid= "<<oid
+		<<" oft= "<<_oft
+		<<" len= "<<_len
+		<<dendl;
+
+    //in memory ?
+	map<loff_t, BufMeta*>::iterator p = get_mem_data(oid, bh->start());
+	while ( left > 0 && p != data[oid].end() ) {
+		BufMeta *bm = p->second;
+
+		if ( cur >= bm->ex.start + bm->ex.length ) {
+			++p;
+			continue;
+		}
+
+		if ( bm->ex.start >= cur + left )
+			break;
+
+		assert(cur >= bm->ex.start); 
+		if ( bm->ex.start + bm->ex.length > cur ) {
+			loff_t pad = cur % (1<<fh->chunk_order);
+			char *data = (char*)bl.c_str() + d_oft;
+			loff_t end = bm->ex.start + bm->ex.length;
+			len = ((cur + left) > end)? (end - cur): left;
+		
+			read(data, len, bm->oft + dh->meta_size + pad);
+
+			cur += len;
+			left -= len;
+			d_oft += len;
+		}
+		++p;
+	}
+
+	//in cache file, but not in memory
+    if ( left > 0 ) {
+		ldout(oc->cct, 5)<<__func__<<" - Get chunk from cache file"<<dendl;
+		assert(cur == bh->start());
+		assert(left == bh->length());
+		
+		loff_t oft = bh->ob->data_l;
+	    while ( left > 0 && oft > 0 ) {
+			BufMeta bm;
+			get_bufmeta(oft, bm);
+
+			if ( cur >= bm.ex.start + bm.ex.length ) {
+				oft = bm.mb.next;
+				continue;
+			}
+
+			if ( cur + left <= bm.ex.start )
+				break;
+
+			assert(cur >= bm.ex.start); 
+			if ( bm.ex.start + bm.ex.length > cur ) {
+				loff_t pad = cur % (1<<fh->chunk_order);
+				char *data = (char*)bl.c_str() + d_oft;
+				loff_t end = bm.ex.start + bm.ex.length;
+				len = ((cur + left) > end)? (end - cur): left;
+			
+				read(data, len, bm.oft + dh->meta_size + pad);
+
+				cur += len;
+				left -= len;
+				d_oft += len;
+			}
+			oft = bm.mb.next;
+		}
+    }
+
+	assert(left == 0);
+	ldout(oc->cct, 10)<<__func__<<" - Succeed to get chunk, "
+		<<" oid= "<<oid_to_no(bh->ob->get_oid().name) <<dendl;
+	return 0;
+}
+
+void LCache::evict_mem_object()
+{
+    assert(cache_lock.is_locked());
+    if (objects.size() <=  max_objects)
+		return ;
+
+    ldout(oc->cct, 7)<<__func__<<" - Try to evict in memory objects, "
+		<< " cur= "<< objects.size()
+		<< " max= "<< max_objects
+		<<dendl;
+
+    //evict timeout data
+    ceph::real_time now = ceph::real_clock::now();		
+	now -= cache_age;
+    ceph::unordered_map<uint64_t, ObjMeta*>::iterator p = objects.begin();
+	while (p != objects.end() && objects.size() > max_objects) {
+        ObjMeta *om = p->second;
+
+        ++p;
+		ldout(oc->cct, 7)<<__func__<<" - evict, "<< *om << dendl;
+		if (ceph::real_clock::from_ceph_timespec(om->l_access) > now &&
+			om->last_commit_tid == om->last_write_tid) {
+            map<loff_t, BufMeta*>::iterator p1 = get_mem_head(om->oid);
+			while (p1 != data[om->oid].end()) {
+                BufMeta *bm = p1->second;
+
+				++p1;
+				del_mem_data(*bm);
+			}
+
+			del_mem_head(om->oid);
+			del_mem_object(*om);
+		}  
+	}
+
+    p = objects.begin();
+	while (p != objects.end() && objects.size() > max_objects) {
+        ObjMeta *om = p->second;
+
+        ++p;
+		ldout(oc->cct, 7)<<__func__<<" - evict, "<< *om << dendl;
+		if (ceph::real_clock::from_ceph_timespec(om->l_access) > now) {
+            map<loff_t, BufMeta*>::iterator p1 = get_mem_head(om->oid);
+			while (p1 != data[om->oid].end()) {
+                BufMeta *bm = p1->second;
+
+				++p1;
+				del_mem_data(*bm);
+			}
+
+			del_mem_head(om->oid);
+			del_mem_object(*om);
+		}  
+	}
+
+    ldout(oc->cct, 7)<<__func__<<" - Succeed to evict in memory objects, "
+		<< " cur= "<< objects.size()
+		<< " max= "<< max_objects
+		<<dendl;
+}
+
+#define GC_TIMEOUT(e_pos, o_max, e_num)	\
+do {	\
+	ObjMeta *pom = NULL, om;		\
+	BufMeta *pbm = NULL, bm;		\
+	uint32_t o_count = e_num, b_count = e_num; \
+	ceph::real_time now = ceph::real_clock::now();		\
+	now -= cache_age;									\
+	assert(cache_lock.is_locked());	\
+	for ( ; e_pos < o_max && o_count > 0 && b_count > 0; ++e_pos ) {		\
+		if ( ! obj_map.test_bit(e_pos) )		\
+			continue;							\
+												\
+		pom = get_mem_object(e_pos);			\
+		if ( pom )	{							\
+			map<loff_t, BufMeta*>::iterator p = get_mem_head(pom->oid);	\
+			while ( p != data[pom->oid].end() ) {\
+				pbm = p->second;				\
+				assert(pbm);					\
+												\
+				ldout(oc->cct, 7)<<"(gc_timeout)current pos= "<< e_pos	\
+					<< *pbm <<" now= "<< now <<dendl;	 	\
+															\
+				if ( ceph::real_clock::from_ceph_timespec(pbm->l_write) > now	\
+					&& free_clean_bufmeta(*pom, *pbm, p) ) 	\
+			    	--b_count;                  	\
+				else								\
+					++p;							\
+			}										\
+													\
+			if ( ceph::real_clock::from_ceph_timespec(pom->l_access) > now	\
+				&& remove_objmeta(*pom) )	\
+				--o_count;					\
+		} else {							\
+			loff_t oft = fh->obj_meta_offset + (loff_t)fh->obj_meta_size*e_pos;	\
+			get_objmeta(oft, om);	\
+			oft = om.data_l;		\
+			map<loff_t, BufMeta*>::iterator p = get_mem_tail(om.oid);		\
+			while ( oft > 0 ) {		\
+				get_bufmeta(oft, bm);		\
+				oft = bm.mb.next;			\
+											\
+				ldout(oc->cct, 7)<<"(gc_timeout)current pos= "<< e_pos		\
+					<< bm <<" now= "<< now <<dendl;	 	\
+														\
+				if ( ceph::real_clock::from_ceph_timespec(bm.l_write) > now	\
+					&& free_clean_bufmeta(om, bm, p) ) 	\
+			    	--b_count;                  		\
+			}								\
+											\
+			if ( ceph::real_clock::from_ceph_timespec(om.l_access) > now	\
+				&& remove_objmeta(om) )		\
+				--o_count;					\
+		}									\
+											\
+		cache_lock.Unlock();	\
+		cache_lock.Lock();  	\
+	}							\
+} while(0)	
+
+#define GC_CLEAN(e_pos, o_max) 	\
+do {	\
+	ObjMeta *pom = NULL, om;		\
+	BufMeta *pbm = NULL, bm;		\
+	assert(cache_lock.is_locked());	\
+	for ( ; e_pos < o_max; ++e_pos ) {			\
+		if ( ! obj_map.test_bit(e_pos) )		\
+			continue;							\
+												\
+		pom = get_mem_object(e_pos);			\
+		if ( pom )	{							\
+			map<loff_t, BufMeta*>::iterator p = get_mem_head(pom->oid);	\
+			while ( p != data[pom->oid].end() ) {\
+				pbm = p->second;				\
+				assert(pbm);					\
+												\
+				ldout(oc->cct, 7)<<"(gc_clean)current pos= "<< e_pos	\
+					<< *pbm <<dendl;	 	\
+															\
+				if ( !free_clean_bufmeta(*pom, *pbm, p) ) 	\
+					++p;							\
+			}										\
+													\
+			remove_objmeta(*pom);			\
+		} else {							\
+			loff_t oft = fh->obj_meta_offset + (loff_t)fh->obj_meta_size*e_pos;	\
+			get_objmeta(oft, om);	\
+			oft = om.data_l;		\
+			map<loff_t, BufMeta*>::iterator p = get_mem_tail(om.oid);	\
+			while ( oft > 0 ) {		\
+				get_bufmeta(oft, bm);		\
+				oft = bm.mb.next;			\
+											\
+				ldout(oc->cct, 7)<<"(gc_clean)current pos= "<< e_pos	\
+					<< bm <<dendl;	 	\
+													\
+				free_clean_bufmeta(om, bm, p);		\
+			}								\
+											\
+			remove_objmeta(om);				\
+		}									\
+											\
+		cache_lock.Unlock();\
+		cache_lock.Lock();  \
+		if ( ! is_lw() )	\
+			break;			\
+	}						\
+} while(0)	
+
+void LCache::reclaim_entry() 
+{
+	ldout(oc->cct, 10) << "reclaim start" << dendl;
+	cache_lock.Lock();
+
+	uint32_t e_pos = 0;
+	uint32_t count = 0;
+	while ( !reclaim_stop ) {
+		uint32_t o_max = fh->max;
+		uint32_t b_max = dh->max, e_num;
+
+		e_pos = (e_pos >= o_max)? (e_pos % o_max): e_pos;
+		if ( is_hw() ) {
+			count = 0;
+			e_num = dh->cur - (uint32_t)(b_max*cache_lw);
+			e_num = (fh->chunk_order <= 16)? e_num>>2: e_num>>4;
+			ldout(oc->cct, 2)<<__func__<<" - Upper hw, begin to GC timeout"
+				<< " ObjMeta_max= " << fh->max
+				<< " ObjMeta_hw=  " << fh->max*cache_hw 
+				<< " ObjMeta_cur= " << fh->cur 
+				<< " ObjMeta_lw=  " << fh->max*cache_lw
+				<< " BufMeta_max= " << dh->max
+				<< " BufMeta_hw=  " << dh->max*cache_hw
+				<< " BufMeta_cur= " << dh->cur
+				<< " BufMeta_lw=  " << dh->max*cache_lw
+				<< " e_pos=       " << e_pos
+				<< " e_num= 	  " << e_num
+				<<dendl;
+			
+			GC_TIMEOUT(e_pos, o_max, e_num);
+		}
+
+		e_pos = (e_pos >= o_max)? (e_pos % o_max): e_pos;
+		if ( is_hw() ) {
+			count = 0;
+			ldout(oc->cct, 2)<<__func__<<" - Upper hw, begin to GC clean, "
+				<< " ObjMeta_max= " << fh->max
+				<< " ObjMeta_hw=  " << fh->max*cache_hw 
+				<< " ObjMeta_cur= " << fh->cur 
+				<< " ObjMeta_lw=  " << fh->max*cache_lw
+				<< " BufMeta_max= " << dh->max
+				<< " BufMeta_hw=  " << dh->max*cache_hw
+				<< " BufMeta_cur= " << dh->cur
+				<< " BufMeta_lw=  " << dh->max*cache_lw
+				<< " e_pos=       " << e_pos
+				<< " e_num= 	  " << e_num
+				<<dendl;
+						
+			GC_CLEAN(e_pos, o_max);
+		} else if ( is_lw() ) {
+			count = 0;
+			//small chunk size (<= 64KB), small io
+			e_num = (fh->chunk_order <= 16)? (dh->cur>>4): (dh->cur>>2);
+			ldout(oc->cct, 2)<<__func__<<" - Upper lw, begin to GC timeout, "
+				<< " ObjMeta_max= " << fh->max
+				<< " ObjMeta_hw=  " << fh->max*cache_hw 
+				<< " ObjMeta_cur= " << fh->cur 
+				<< " ObjMeta_lw=  " << fh->max*cache_lw
+				<< " BufMeta_max= " << dh->max
+				<< " BufMeta_hw=  " << dh->max*cache_hw
+				<< " BufMeta_cur= " << dh->cur
+				<< " BufMeta_lw=  " << dh->max*cache_lw
+				<< " e_pos=       " << e_pos
+				<< " e_num= 	  " << e_num
+				<<dendl;
+			
+			GC_TIMEOUT(e_pos, o_max, e_num);
+		} else {
+			++count;
+		}
+		
+		//idle for 1min
+		e_pos = (e_pos >= o_max)? (e_pos % o_max): e_pos;
+		if ( count == 60 && oc->idle() ) {
+			count = 0;
+			e_num = dh->cur>>5;
+			ldout(oc->cct, 2)<<__func__<<" - Idle for 60s, begin to GC timeout, "
+				<< " ObjMeta_max= " << fh->max
+				<< " ObjMeta_hw=  " << fh->max*cache_hw 
+				<< " ObjMeta_cur= " << fh->cur 
+				<< " ObjMeta_lw=  " << fh->max*cache_lw
+				<< " BufMeta_max= " << dh->max
+				<< " BufMeta_hw=  " << dh->max*cache_hw
+				<< " BufMeta_cur= " << dh->cur
+				<< " BufMeta_lw=  " << dh->max*cache_lw
+				<< " e_pos=       " << e_pos
+				<< " e_num= 	  " << e_num
+				<<dendl;
+	
+			GC_TIMEOUT(e_pos, o_max, e_num);
+		}
+		
+		//check whether in memory objects need to be evicted out
+		evict_mem_object();
+
+		if ( reclaim_stat_waiting > 0 )
+			reclaim_stat_cond.Signal();
+		if ( !e_num ) {
+			cache_lock.Unlock();
+    		cache_lock.Lock();
+		}
+		
+		if (reclaim_stop)
+      		break;
+
+    	reclaim_cond.WaitInterval(oc->cct, cache_lock, seconds(1));
+    	cache_lock.Unlock();
+    	cache_lock.Lock();
+	}
+
+  cache_lock.Unlock();
+  ldout(oc->cct, 10) << "reclaim finish" << dendl;
 }
 
