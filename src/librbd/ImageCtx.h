@@ -27,6 +27,8 @@
 #include "librbd/AsyncRequest.h"
 #include "librbd/SnapInfo.h"
 #include "librbd/parent_types.h"
+#include "librbd/RbdThrottle.h"
+
 
 class CephContext;
 class ContextWQ;
@@ -106,7 +108,8 @@ namespace librbd {
     Mutex async_ops_lock; // protects async_ops and async_requests
     Mutex copyup_list_lock; // protects copyup_waiting_list
     Mutex completed_reqs_lock; // protects completed_reqs
-
+    Mutex throttle_lock; // protects throttle
+		
     unsigned extra_read_flags;
 
     bool old_format;
@@ -150,6 +153,7 @@ namespace librbd {
     EventSocket event_socket;
 
     ContextWQ *op_work_queue;
+    ThrottleState *throttlestate;
 
     // Configuration
     static const string METADATA_CONF_PREFIX;
@@ -162,6 +166,7 @@ namespace librbd {
     double cache_max_dirty_age;
     uint32_t cache_max_dirty_object;
     bool cache_block_writes_upfront;
+    bool throttle;
     uint32_t concurrent_management_ops;
     bool balance_snap_reads;
     bool localize_snap_reads;

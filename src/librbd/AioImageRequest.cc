@@ -12,6 +12,7 @@
 #include "include/rados/librados.hpp"
 #include "common/WorkQueue.h"
 #include "osdc/Striper.h"
+#include "librbd/RbdThrottle.h"
 
 #define dout_subsys ceph_subsys_rbd
 #undef dout_prefix
@@ -198,6 +199,15 @@ void AioImageRequest<I>::send() {
   ldout(cct, 20) << get_request_type() << ": ictx=" << &image_ctx << ", "
                  << "completion=" << aio_comp <<  dendl;
 
+  size_t m_len = get_request_len();
+  if(m_image_ctx.throttle) {
+    if(!strcmp(get_request_type(), "aio_write")) {
+      m_image_ctx.throttlestate->throttle_schedule_timer(true, m_len);
+    }
+    else if(!strcmp(get_request_type() ,"aio_read")) {
+      m_image_ctx.throttlestate->throttle_schedule_timer(false, m_len);
+    }
+  }
   aio_comp->get();
   send_request();
 }

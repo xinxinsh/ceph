@@ -60,6 +60,7 @@ protected:
   virtual void send_request() = 0;
   virtual aio_type_t get_aio_type() const = 0;
   virtual const char *get_request_type() const = 0;
+  virtual size_t get_request_len() = 0;
 };
 
 template <typename ImageCtxT = ImageCtx>
@@ -70,7 +71,7 @@ public:
   AioImageRead(ImageCtxT &image_ctx, AioCompletion *aio_comp, uint64_t off,
                size_t len, char *buf, bufferlist *pbl, int op_flags)
     : AioImageRequest<ImageCtxT>(image_ctx, aio_comp), m_buf(buf), m_pbl(pbl),
-      m_op_flags(op_flags) {
+      m_op_flags(op_flags), m_len(len) {
     m_image_extents.push_back(std::make_pair(off, len));
   }
 
@@ -90,11 +91,16 @@ protected:
   virtual const char *get_request_type() const {
     return "aio_read";
   }
+  virtual size_t get_request_len() {
+    return m_len;
+  }
+	
 private:
   Extents m_image_extents;
   char *m_buf;
   bufferlist *m_pbl;
   int m_op_flags;
+  size_t m_len;
 };
 
 template <typename ImageCtxT = ImageCtx>
@@ -123,6 +129,9 @@ protected:
   }
 
   virtual void send_request();
+  virtual size_t get_request_len() {
+    return m_len;
+  }
 
   virtual void prune_object_extents(ObjectExtents &object_extents) {
   }
@@ -240,6 +249,9 @@ protected:
   }
   virtual const char *get_request_type() const {
     return "aio_flush";
+  }
+  virtual size_t get_request_len() {
+    return 0;
   }
 };
 

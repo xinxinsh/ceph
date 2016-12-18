@@ -159,6 +159,7 @@ struct C_InvalidateCache : public Context {
       async_ops_lock(util::unique_lock_name("librbd::ImageCtx::async_ops_lock", this)),
       copyup_list_lock(util::unique_lock_name("librbd::ImageCtx::copyup_list_lock", this)),
       completed_reqs_lock(util::unique_lock_name("librbd::ImageCtx::completed_reqs_lock", this)),
+      throttle_lock(util::unique_lock_name("librbd::ImageCtx::throttle_lock", this)),
       extra_read_flags(0),
       old_format(true),
       order(0), size(0), features(0),
@@ -172,7 +173,7 @@ struct C_InvalidateCache : public Context {
       operations(new Operations<>(*this)),
       exclusive_lock(nullptr), object_map(nullptr),
       aio_work_queue(nullptr), op_work_queue(nullptr),
-      asok_hook(nullptr)
+      throttlestate(nullptr), asok_hook(nullptr)
   {
     md_ctx.dup(p);
     data_ctx.dup(p);
@@ -204,6 +205,10 @@ struct C_InvalidateCache : public Context {
 
     if (perfcounter) {
       perf_stop();
+    }
+    if (throttlestate) {
+      delete throttlestate;
+      throttlestate = NULL;
     }
     if (object_cacher) {
       delete object_cacher;
@@ -246,7 +251,19 @@ struct C_InvalidateCache : public Context {
     }
 
     perf_start(pname);
-
+		
+    if (throttle) {
+      ThrottleConfig cfg(cct);
+      cfg.throttle_config();
+      if ( cfg.throttle_is_valid() ) {
+        ldout(cct, 20) << "throttle is valid..." << dendl;
+        throttlestate = new ThrottleState(this);
+        throttlestate->cfg = cfg;
+      }
+      else
+        throttle = false;
+    }
+		
     if (cache) {
       Mutex::Locker l(cache_lock);
       ldout(cct, 20) << "enabling caching..." << dendl;
@@ -910,6 +927,7 @@ struct C_InvalidateCache : public Context {
         "rbd_cache_max_dirty_age", false)(
         "rbd_cache_max_dirty_object", false)(
         "rbd_cache_block_writes_upfront", false)(
+        "rbd_throttle", false)(
         "rbd_concurrent_management_ops", false)(
         "rbd_balance_snap_reads", false)(
         "rbd_localize_snap_reads", false)(
@@ -985,6 +1003,7 @@ struct C_InvalidateCache : public Context {
     ASSIGN_OPTION(journal_object_flush_age);
     ASSIGN_OPTION(journal_pool);
     ASSIGN_OPTION(journal_max_payload_bytes);
+    ASSIGN_OPTION(throttle);
   }
 
   ExclusiveLock<ImageCtx> *ImageCtx::create_exclusive_lock() {

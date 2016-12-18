@@ -64,7 +64,8 @@ librbd_internal_la_SOURCES = \
 	librbd/operation/SnapshotRenameRequest.cc \
 	librbd/operation/SnapshotRollbackRequest.cc \
 	librbd/operation/SnapshotUnprotectRequest.cc \
-	librbd/operation/TrimRequest.cc
+	librbd/operation/TrimRequest.cc \
+	librbd/RbdThrottle.cc
 noinst_LTLIBRARIES += librbd_internal.la
 
 librbd_api_la_SOURCES = \
@@ -154,7 +155,8 @@ noinst_HEADERS += \
 	librbd/operation/SnapshotRenameRequest.h \
 	librbd/operation/SnapshotRollbackRequest.h \
 	librbd/operation/SnapshotUnprotectRequest.h \
-	librbd/operation/TrimRequest.h
+	librbd/operation/TrimRequest.h \
+	librbd/RbdThrottle.h
 
 endif # WITH_RBD
 endif # WITH_RADOS
