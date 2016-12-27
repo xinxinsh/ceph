@@ -296,3 +296,33 @@ target_link_libraries(unittest_erasure_code_shec_arguments
   common
   ec_shec_generic
   )
+
+#unittest_erasure_code_mlxjerasure
+add_executable(unittest_erasure_code_mlxjerasure EXCLUDE_FROM_ALL
+  ${CMAKE_SOURCE_DIR}/src/erasure-code/ErasureCode.cc
+  TestErasureCodeMlxJerasure.cc
+  )
+add_ceph_unittest(unittest_erasure_code_mlxjerasure ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unittest_erasure_code_mlxjerasure)
+target_link_libraries(unittest_erasure_code_mlxjerasure
+  global
+  osd
+  common
+  ec_mlxjerasure
+  erasure_code
+  )
+
+#unittest_erasure_code_plugin_mlxjerasure
+add_executable(unittest_erasure_code_plugin_mlxjerasure EXCLUDE_FROM_ALL
+  ${CMAKE_SOURCE_DIR}/src/erasure-code/ErasureCode.cc
+  TestErasureCodePluginMlxJerasure.cc
+  )
+add_ceph_unittest(unittest_erasure_code_plugin_mlxjerasure ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unittest_erasure_code_plugin_mlxjerasure)
+target_link_libraries(unittest_erasure_code_plugin_mlxjerasure
+  global
+  osd
+  common
+  ec_mlxjerasure
+  crush
+  dl
+  erasure_code
+  )

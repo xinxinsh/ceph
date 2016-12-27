@@ -365,5 +365,26 @@ unittest_erasure_code_example_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 unittest_erasure_code_example_LDADD = $(LIBOSD) $(LIBCOMMON) $(UNITTEST_LDADD) $(CEPH_GLOBAL)
 check_TESTPROGRAMS += unittest_erasure_code_example
 
+unittest_erasure_code_mlxjerasure_SOURCES = \
+	erasure-code/ErasureCode.cc \
+	test/erasure-code/TestErasureCodeMlxJerasure.cc
+unittest_erasure_code_mlxjerasure_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
+unittest_erasure_code_mlxjerasure_LDADD = $(LIBOSD) $(LIBCOMMON) $(UNITTEST_LDADD) $(CEPH_GLOBAL) libmlxjerasure.la $(LIBERASURE_CODE)
+unittest_erasure_code_mlxjerasure_LDADD += -libverbs
+if LINUX
+unittest_erasure_code_mlxjerasure_LDADD += -ldl 
+endif
+check_TESTPROGRAMS += unittest_erasure_code_mlxjerasure
+
+unittest_erasure_code_plugin_mlxjerasure_SOURCES = \
+	erasure-code/ErasureCode.cc \
+	test/erasure-code/TestErasureCodePluginMlxJerasure.cc
+unittest_erasure_code_plugin_mlxjerasure_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
+unittest_erasure_code_plugin_mlxjerasure_LDADD = $(LIBOSD) $(LIBCOMMON) $(UNITTEST_LDADD) $(CEPH_GLOBAL) $(LIBERASURE_CODE)
+if LINUX
+unittest_erasure_code_plugin_mlxjerasure_LDADD += -ldl
+endif
+check_TESTPROGRAMS += unittest_erasure_code_plugin_mlxjerasure
+
 endif # WITH_OSD
 endif # ENABLE_SERVER
