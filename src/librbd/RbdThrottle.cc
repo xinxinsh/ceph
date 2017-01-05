@@ -3,16 +3,14 @@
 
 #define dout_subsys ceph_subsys_rbd
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::RbdThrottle: "
+#define dout_prefix *_dout << "librbd::RbdThrottle: " << __func__ << ":" << __LINE__ << " "
 
 namespace librbd {
 
 ThrottleState::ThrottleState(ImageCtx *image_ctx)
 : m_image_ctx(*image_ctx),cfg(image_ctx->cct)
 {
-  CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 20) << this << " " << ": ictx=" << image_ctx << dendl;
-
+  cct = m_image_ctx.cct;
   previous_leak = ceph_clock_now(cct);
 }  
 
@@ -28,29 +26,36 @@ bool ThrottleState::throttle_compute_timer(bool is_write,
                                    utime_t *next_timestamp)
 {
   uint64_t wait;
-  CephContext *cct = m_image_ctx.cct;
 
   /* leak proportionally to the time elapsed */
+  ldout(cct, 20) << " now: " << now << dendl;
   throttle_do_leak(now);
-  ldout(cct, 20) << __func__ << " now: " << now << dendl;
+  
   /* compute the wait time if any */
   wait = throttle_compute_wait_for(is_write);
-  ldout(cct, 20) << __func__ << " wait: " << wait << dendl;
+  ldout(cct, 20) << " wait: " << wait << dendl;
  
   /* if the code must wait compute when the next timer should fire */
   if (wait) {
-    uint64_t tmp_sec = wait/NANOSECONDS_PER_SECOND;
-    uint64_t tmp_nsec =  wait%NANOSECONDS_PER_SECOND;
-    if(tmp_sec) {
+    uint64_t tmp_sec = wait / NANOSECONDS_PER_SECOND;
+    uint64_t tmp_nsec = wait % NANOSECONDS_PER_SECOND;
+
+	now.tv.tv_nsec += tmp_nsec;
+	if (now.tv.tv_nsec > NANOSECONDS_PER_SECOND) {
+		now.tv.tv_nsec -= NANOSECONDS_PER_SECOND;
+		tmp_sec += 1;
+	}
+		
+	if(tmp_sec) {
       now.tv.tv_sec += tmp_sec;	
     }
-    now.tv.tv_nsec += tmp_nsec;
+	
     *next_timestamp += now;
-    ldout(cct, 20) << __func__ << " next_timestamp: " << *next_timestamp << dendl;
+    ldout(cct, 20) << " next_timestamp: " << *next_timestamp << dendl;
     return true;
   }
 
-    /* else no need to wait at all */
+  /* else no need to wait at all */
   *next_timestamp = now;
   return false;
 }
@@ -61,11 +66,10 @@ bool ThrottleState::throttle_compute_timer(bool is_write,
  */
 void ThrottleState::throttle_do_leak(utime_t now)
 {
-  CephContext *cct = m_image_ctx.cct;
   /* compute the time elapsed since the last leak */
   uint64_t delta_ns = now.to_nsec() - previous_leak.to_nsec();
-  int i;
-  ldout(cct, 20) << __func__ << " delta_ns: " << delta_ns << dendl;
+  ldout(cct, 20) << " delta_ns: " << delta_ns << dendl;
+  
   previous_leak = now;
 
   if (delta_ns <= 0) {
@@ -73,7 +77,7 @@ void ThrottleState::throttle_do_leak(utime_t now)
   }
 
   /* make each bucket leak */
-  for (i = 0; i < BUCKETS_COUNT; i++) {
+  for (int i = 0; i < BUCKETS_COUNT; i++) {
     cfg.throttle_leak_bucket(&cfg.buckets[i], delta_ns);    
   }
 }
@@ -94,18 +98,16 @@ uint64_t ThrottleState::throttle_compute_wait_for(bool is_write)
                                    THROTTLE_TPS_WRITE,
                                    THROTTLE_OPS_WRITE}, };
   uint64_t wait, max_wait = 0;
-  int i;
-  CephContext *cct = m_image_ctx.cct;
 
-  for (i = 0; i < 4; i++) {
+  for (int i = 0; i < 4; i++) {
     BucketType index = to_check[is_write][i];
     wait = cfg.throttle_compute_wait(&cfg.buckets[index]);
-    ldout(cct, 20) << __func__ << " wait: " << wait << dendl;
     if (wait > max_wait) {
     	max_wait = wait;
     }
   }
 
+  ldout(cct, 20) << " wait: " << wait << dendl;
   return max_wait;
 }
 
@@ -118,7 +120,6 @@ uint64_t ThrottleState::throttle_compute_wait_for(bool is_write)
 void ThrottleState::throttle_schedule_timer( bool is_write, size_t len)
 {
   utime_t now;
-  CephContext *cct = m_image_ctx.cct;
   now = ceph_clock_now(m_image_ctx.cct);
   utime_t next_timestamp;
   bool must_wait;
@@ -127,11 +128,12 @@ void ThrottleState::throttle_schedule_timer( bool is_write, size_t len)
                                      now,
                                      &next_timestamp);
 	
-  ldout(cct, 20) << __func__ << " must-wait:" << must_wait << " next_timestamp:" <<next_timestamp << dendl;
+  ldout(cct, 20) << " must-wait:" << must_wait << " next_timestamp:" <<next_timestamp << dendl;
   /* request not throttled */
-  if (must_wait) {      
+  if (must_wait) { 
+  	Cond cond;
     Mutex::Locker l(m_image_ctx.throttle_lock);
-    Cond cond;
+    
     cond.WaitUntil(m_image_ctx.throttle_lock, next_timestamp);
   }
 
@@ -154,15 +156,24 @@ void ThrottleState::throttle_account(bool is_write, size_t size)
       { THROTTLE_OPS_TOTAL, THROTTLE_OPS_WRITE }
   };
   double units = 1.0;
-  unsigned i;
+
+  /* if cfg.op_size is defined and smaller than size we compute unit count */
+  if (cfg.op_size && size > cfg.op_size) {
+        units = (double) size / cfg.op_size;
+  }
 	
-  for (i = 0; i < 2; i++) {
+  for (unsigned i = 0; i < 2; i++) {
     LeakyBucket *bkt;
 
     bkt = &cfg.buckets[bucket_types_size[is_write][i]];
     bkt->level += size;
+	if (bkt->burst_length > 1)
+		bkt->burst_level += size;
+	
     bkt = &cfg.buckets[bucket_types_units[is_write][i]];
     bkt->level += units;
+	if (bkt->burst_length > 1)
+		bkt->burst_level += units;
   }
 
 }
@@ -194,15 +205,23 @@ uint64_t ThrottleConfig::throttle_compute_wait(LeakyBucket *bkt)
   }
 
   /* If the bucket is full then we have to wait */
-  extra = bkt->level - bkt->max;
+  extra = bkt->level - bkt->max * bkt->burst_length;
     	
-  ldout(cct, 20) << __func__ << " avg: " << bkt->avg << " extra " << extra << dendl;
+  ldout(cct, 20) << " avg: " << bkt->avg << " extra: " << extra << dendl;
   if (extra > 0) {
     return throttle_do_compute_wait(bkt->avg, extra);
   }
 
-   /* If the bucket is not full yet we have to make sure that we
+  /* If the bucket is not full yet we have to make sure that we
    * fulfill the goal of bkt->max units per second. */
+  if (bkt->burst_length > 1) {
+    /* We use 1/10 of the max value to smooth the throttling.
+     * See throttle_fix_bucket() for more details. */
+    extra = bkt->burst_level - bkt->max / 10;
+    if (extra > 0) {
+        return throttle_do_compute_wait(bkt->max, extra);
+    }
+  }
     
   return 0;
 }
@@ -221,7 +240,15 @@ void ThrottleConfig::throttle_leak_bucket(LeakyBucket *bkt, uint64_t delta_ns)
 
   /* make the bucket leak */
   bkt->level = MAX(bkt->level - leak, 0);
-  ldout(cct, 20) << __func__ << " level: " << bkt->level << dendl;
+  ldout(cct, 20) << " level: " << bkt->level << dendl;
+
+  /* if we allow bursts for more than one second we also need to
+   * keep track of bkt->burst_level so the bkt->max goal per second
+   * is attained */
+  if (bkt->burst_length > 1) {
+    leak = (bkt->max * (double) delta_ns) / NANOSECONDS_PER_SECOND;
+    bkt->burst_level = MAX(bkt->burst_level - leak, 0);
+  }
 }
 
 /* check if a throttling configuration is valid
@@ -230,25 +257,68 @@ void ThrottleConfig::throttle_leak_bucket(LeakyBucket *bkt, uint64_t delta_ns)
 bool ThrottleConfig::throttle_is_valid()
 {
   int i;
-  bool bps_flag, ops_flag;
+  bool tps_flag, ops_flag;
+  bool tps_max_flag, ops_max_flag;
 	
-  bps_flag = buckets[THROTTLE_TPS_TOTAL].avg &&
+  tps_flag = buckets[THROTTLE_TPS_TOTAL].avg &&
 	     (buckets[THROTTLE_TPS_READ].avg ||
 	      buckets[THROTTLE_TPS_WRITE].avg);
 	
   ops_flag = buckets[THROTTLE_OPS_TOTAL].avg &&
 	     (buckets[THROTTLE_OPS_READ].avg ||
 	      buckets[THROTTLE_OPS_WRITE].avg);
+
+  tps_max_flag = buckets[THROTTLE_TPS_TOTAL].max &&
+  			(buckets[THROTTLE_TPS_READ].max ||
+  			buckets[THROTTLE_TPS_WRITE].max);
+
+  ops_max_flag = buckets[THROTTLE_OPS_TOTAL].max &&
+  			(buckets[THROTTLE_OPS_READ].max ||
+  			buckets[THROTTLE_OPS_WRITE].max);
 	
-  if (bps_flag || ops_flag) {
+  if (tps_flag || ops_flag || tps_max_flag || ops_max_flag) {
+  	lderr(cct) << "bps/iops/max total values and read/write values"
+                   " cannot be used at the same time" << dendl;
+    return false;
+  }
+
+  if (op_size &&
+    !buckets[THROTTLE_OPS_TOTAL].avg &&
+    !buckets[THROTTLE_OPS_READ].avg &&
+    !buckets[THROTTLE_OPS_WRITE].avg) {
+    lderr(cct) << "iops size requires an iops value to be set" << dendl;
     return false;
   }
 	
   for (i = 0; i < BUCKETS_COUNT; i++) {
     if (buckets[i].avg < 0 ||
-	buckets[i].avg > THROTTLE_VALUE_MAX) {
-	  return false;
-    }	 
+        buckets[i].max < 0 ||
+        buckets[i].avg > THROTTLE_VALUE_MAX ||
+        buckets[i].max > THROTTLE_VALUE_MAX) {
+        lderr(cct) << "bps/iops/max values must be within [0, "<< THROTTLE_VALUE_MAX <<"]" << dendl;
+        return false;
+    }
+
+    if (!buckets[i].burst_length) {
+        lderr(cct) << "the burst length cannot be 0" << dendl;
+        return false;
+    }
+
+    if (buckets[i].burst_length > 1 && !buckets[i].max) {
+        lderr(cct) << "burst length set without burst rate" << dendl;
+        return false;
+    }
+
+    if (buckets[i].max && !buckets[i].avg) {
+        lderr(cct) << "bps_max/iops_max require corresponding"
+                   " bps/iops values" << dendl;
+        return false;
+    }
+
+    if (buckets[i].max && buckets[i].max < buckets[i].avg) {
+        lderr(cct) << "bps_max/iops_max cannot be lower than bps/iops" << dendl;
+        return false;
+    }
   }
 
   return true;
@@ -258,7 +328,11 @@ bool ThrottleConfig::throttle_is_valid()
 void ThrottleConfig::throttle_config()
 {
   int i;
-
+  for (i = 0; i < BUCKETS_COUNT; ++i) {
+    buckets[i].level = 0;
+	buckets[i].burst_level = 0;
+  }
+  
   buckets[THROTTLE_TPS_TOTAL].avg = cct->_conf->rbd_throttle_tps_total;
   buckets[THROTTLE_TPS_READ].avg = cct->_conf->rbd_throttle_tps_read;
   buckets[THROTTLE_TPS_WRITE].avg = cct->_conf->rbd_throttle_tps_write;
@@ -266,14 +340,25 @@ void ThrottleConfig::throttle_config()
   buckets[THROTTLE_OPS_READ].avg = cct->_conf->rbd_throttle_ops_read;
   buckets[THROTTLE_OPS_WRITE].avg = cct->_conf->rbd_throttle_ops_write;	
     
-  for (i = 0; i < BUCKETS_COUNT; i++) {
-    buckets[i].level = 0;
-  }
+  buckets[THROTTLE_TPS_TOTAL].max = cct->_conf->rbd_throttle_tps_total_max;
+  buckets[THROTTLE_TPS_READ].max = cct->_conf->rbd_throttle_tps_read_max;
+  buckets[THROTTLE_TPS_WRITE].max = cct->_conf->rbd_throttle_tps_write_max;
+  buckets[THROTTLE_OPS_TOTAL].max = cct->_conf->rbd_throttle_ops_total_max;
+  buckets[THROTTLE_OPS_READ].max = cct->_conf->rbd_throttle_ops_read_max;
+  buckets[THROTTLE_OPS_WRITE].max = cct->_conf->rbd_throttle_ops_write_max;
 
-  for (i = 0; i < BUCKETS_COUNT; i++) {
-    buckets[i].max = buckets[i].level/10;
+  buckets[THROTTLE_TPS_TOTAL].burst_length = cct->_conf->rbd_throttle_tps_total_max_length;
+  buckets[THROTTLE_TPS_READ].burst_length = cct->_conf->rbd_throttle_tps_read_max_length;
+  buckets[THROTTLE_TPS_WRITE].burst_length = cct->_conf->rbd_throttle_tps_write_max_length;
+  buckets[THROTTLE_OPS_TOTAL].burst_length = cct->_conf->rbd_throttle_ops_total_max_length;
+  buckets[THROTTLE_OPS_READ].burst_length = cct->_conf->rbd_throttle_ops_read_max_length;
+  buckets[THROTTLE_OPS_WRITE].burst_length = cct->_conf->rbd_throttle_ops_write_max_length;
+
+  op_size = cct->_conf->rbd_throttle_op_size;
+  for (i = 0; i < BUCKETS_COUNT; ++i) {
+	if (buckets[i].max == 0)
+		buckets[i].max = buckets[i].avg / 10;
   }
-	
 }
 
 }

@@ -255,8 +255,8 @@ struct C_InvalidateCache : public Context {
     if (throttle) {
       ThrottleConfig cfg(cct);
       cfg.throttle_config();
-      if ( cfg.throttle_is_valid() ) {
-        ldout(cct, 20) << "throttle is valid..." << dendl;
+	  
+      if (cfg.throttle_is_valid()) {
         throttlestate = new ThrottleState(this);
         throttlestate->cfg = cfg;
       }

@@ -1192,6 +1192,19 @@ OPTION(rbd_throttle_tps_write, OPT_LONGLONG, 0) // write throughput limit, as sc
 OPTION(rbd_throttle_ops_total, OPT_LONGLONG, 0) // total I/O operations limit per second
 OPTION(rbd_throttle_ops_read, OPT_LONGLONG, 0)  // read I/O operations limit per second
 OPTION(rbd_throttle_ops_write, OPT_LONGLONG, 0) // write I/O operations limit per second
+OPTION(rbd_throttle_tps_total_max, OPT_LONGLONG, 0)		//total burst throughput limit, default is 0 which means that bursts are not allowd
+OPTION(rbd_throttle_tps_total_max_length, OPT_INT, 1)	//max length for total burst throughput, it can be set if total burst throughput is set as well, default is 1 second
+OPTION(rbd_throttle_tps_read_max, OPT_LONGLONG, 0)		//read burst throughput limit, default is 0 which means that burest are not allowd
+OPTION(rbd_throttle_tps_read_max_length, OPT_INT, 1)    //max length for read burst throughput, it can be set if read burst throughput is set as well, default is 1 second
+OPTION(rbd_throttle_tps_write_max, OPT_LONGLONG, 0)		//write burst throughput limit, default is 0 which means that burest are not allowd
+OPTION(rbd_throttle_tps_write_max_length, OPT_INT, 1)   //max length for write burst throughput, it can be set if write burst throughput is set as well, default is 1 second
+OPTION(rbd_throttle_ops_total_max, OPT_LONGLONG, 0) 	//total burst I/O operations limit, default is 0 which means that bursts are not allowd
+OPTION(rbd_throttle_ops_total_max_length, OPT_INT, 1)   //max length for total burst I/O operations, it can be set if total burst I/O operations is set as well, default is 1 second
+OPTION(rbd_throttle_ops_read_max, OPT_LONGLONG, 0)		//read burst I/O operations limit, default is 0 which means that bursts are not allowd
+OPTION(rbd_throttle_ops_read_max_length, OPT_INT, 1)    //max length for read burst I/O operations, it can be set if total burst I/O operations is set as well, default is 1 second
+OPTION(rbd_throttle_ops_write_max, OPT_LONGLONG, 0)		//write burst I/O operations limit, default is 0 which means that bursts are not allowd
+OPTION(rbd_throttle_ops_write_max_length, OPT_INT, 1)   //max length for write burst I/O operations, it can be set if total burst I/O operations is set as well, default is 1 second
+OPTION(rbd_throttle_op_size, OPT_LONGLONG, 0)			//size of an operation in bytes
 
 /*
  * The following options change the behavior for librbd's image creation methods that

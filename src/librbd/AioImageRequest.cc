@@ -208,6 +208,7 @@ void AioImageRequest<I>::send() {
       m_image_ctx.throttlestate->throttle_schedule_timer(false, m_len);
     }
   }
+  
   aio_comp->get();
   send_request();
 }

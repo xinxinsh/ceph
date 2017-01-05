@@ -27,6 +27,8 @@ struct LeakyBucket {
     double  avg;              /* average goal in units per second */
     double  max;              /* leaky bucket max burst in units */
     double  level;            /* bucket level in units */ 
+	double	burst_level;		  /* bucket level in units (for computing bursts) */
+	double	burst_length;	  /* max length of the burst period, in seconds */
 };
 
 /* The following structure is used to configure a ThrottleState
@@ -37,6 +39,7 @@ struct LeakyBucket {
 struct ThrottleConfig {
   LeakyBucket buckets[BUCKETS_COUNT]; /* leaky buckets */
   CephContext *cct;
+  uint64_t op_size;		/* size of an operation in bytes */
   ThrottleConfig(CephContext *_cct) : cct(_cct) {}
   uint64_t throttle_do_compute_wait(double limit, double extra);
   uint64_t throttle_compute_wait(LeakyBucket *bkt);
@@ -49,6 +52,7 @@ class ThrottleState {
 public:
   ThrottleState(ImageCtx *image_ctx); 
   ImageCtx &m_image_ctx;
+  CephContext *cct;
   ThrottleConfig cfg;       /* configuration */
   void throttle_schedule_timer(bool is_write, size_t);
   void throttle_account(bool is_write, uint64_t size);
