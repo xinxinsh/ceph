@@ -38,6 +38,9 @@ private:
    * BLOCK_WRITES
    *    |
    *    v
+   * INVALIDATE_CACHE
+   *    |
+   *    v
    * FLUSH_NOTIFIES . . . . . . . . . . . . . .
    *    |                                     .
    *    v                                     .
@@ -71,6 +74,9 @@ private:
 
   void send_block_writes();
   Context *handle_block_writes(int *ret_val);
+
+  void send_invalidate_cache(bool purge_on_error);
+  Context *handle_invalidate_cache(int *ret_val);
 
   void send_flush_notifies();
   Context *handle_flush_notifies(int *ret_val);
