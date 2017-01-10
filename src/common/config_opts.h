@@ -1186,6 +1186,7 @@ OPTION(rbd_ssd_cache_dirty_age, OPT_FLOAT, 1.0) //second in cache before evict
 OPTION(rbd_ssd_cache_chunk_order, OPT_INT, 13) //chunk size in bytes, must be less than Object size and greater than 4k
 OPTION(rbd_ssd_cache_path, OPT_STR, "/$cluster/LCache/") //local cache path
 OPTION(rbd_throttle, OPT_BOOL, false) // whether to enable throttle
+OPTION(rbd_throttle_mode, OPT_INT, 0) //images throttle type;four modes are supported: self-define(-1),HDD(0), EDD(1), SSD(2), default is HDD
 OPTION(rbd_throttle_tps_total, OPT_LONGLONG, 0) // total throughput limit, as scaled integer (default bytes)
 OPTION(rbd_throttle_tps_read, OPT_LONGLONG, 0) // read throughput limit, as scaled integer (default bytes)
 OPTION(rbd_throttle_tps_write, OPT_LONGLONG, 0) // write throughput limit, as scaled integer (default bytes)

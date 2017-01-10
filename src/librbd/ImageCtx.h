@@ -216,6 +216,7 @@ namespace librbd {
 	     const char *snap, IoCtx& p, bool read_only);
     ~ImageCtx();
     void init();
+	void init_throttle();
     void shutdown();
     void init_layout();
     void perf_start(std::string name);

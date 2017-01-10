@@ -325,27 +325,61 @@ bool ThrottleConfig::throttle_is_valid()
 }
 
 /* Used to configure the throttle */
-void ThrottleConfig::throttle_config()
+void ThrottleConfig::throttle_config(uint64_t image_size)
 {
-  int i;
-  for (i = 0; i < BUCKETS_COUNT; ++i) {
-    buckets[i].level = 0;
-	buckets[i].burst_level = 0;
+  for (int i = 0; i < BUCKETS_COUNT; ++i) {
+  	memset((char*)&buckets[i], 0,sizeof(LeakyBucket));
   }
-  
-  buckets[THROTTLE_TPS_TOTAL].avg = cct->_conf->rbd_throttle_tps_total;
-  buckets[THROTTLE_TPS_READ].avg = cct->_conf->rbd_throttle_tps_read;
-  buckets[THROTTLE_TPS_WRITE].avg = cct->_conf->rbd_throttle_tps_write;
-  buckets[THROTTLE_OPS_TOTAL].avg = cct->_conf->rbd_throttle_ops_total;
-  buckets[THROTTLE_OPS_READ].avg = cct->_conf->rbd_throttle_ops_read;
-  buckets[THROTTLE_OPS_WRITE].avg = cct->_conf->rbd_throttle_ops_write;	
-    
-  buckets[THROTTLE_TPS_TOTAL].max = cct->_conf->rbd_throttle_tps_total_max;
-  buckets[THROTTLE_TPS_READ].max = cct->_conf->rbd_throttle_tps_read_max;
-  buckets[THROTTLE_TPS_WRITE].max = cct->_conf->rbd_throttle_tps_write_max;
-  buckets[THROTTLE_OPS_TOTAL].max = cct->_conf->rbd_throttle_ops_total_max;
-  buckets[THROTTLE_OPS_READ].max = cct->_conf->rbd_throttle_ops_read_max;
-  buckets[THROTTLE_OPS_WRITE].max = cct->_conf->rbd_throttle_ops_write_max;
+
+  //overwrite max value based on throttle_mode
+  uint64_t image_gsize = image_size >> 30;
+  switch (cct->_conf->rbd_throttle_mode) {
+  	case THROTTLE_MODE_HDD:
+		ldout(cct, 20) << "throttle mode HDD:(ops = 400 and tps = 40MB/s) " << dendl;
+
+		buckets[THROTTLE_TPS_TOTAL].avg = 40 << 20;
+		buckets[THROTTLE_OPS_TOTAL].avg = 400;
+		buckets[THROTTLE_TPS_TOTAL].max = 40 << 20;
+		buckets[THROTTLE_OPS_TOTAL].max = 400;
+		break;
+	case THROTTLE_MODE_EDD:
+		ldout(cct, 20) << "throttle mode EDD:(ops = min(1000 + 6 * image_size, 3000) and "
+			" tps = min(50 + size * 0.1, 80) MB/s) " << dendl;
+
+		buckets[THROTTLE_TPS_TOTAL].avg = (uint64_t)MIN(50 + 0.1 * image_gsize, 80) << 20;
+		buckets[THROTTLE_OPS_TOTAL].avg = MIN(1000 + 6 * image_gsize, 3000);
+		buckets[THROTTLE_TPS_TOTAL].max = 80 << 20;
+		buckets[THROTTLE_OPS_TOTAL].max = 3000;
+		break;
+	case THROTTLE_MODE_SSD:
+		ldout(cct, 20) << "throttle mode SSD:(ops = min(30 * image_size, 20000) and "
+			" tps = min(50 + size * 0.5, 256)) MB/s" << dendl;
+
+		buckets[THROTTLE_TPS_TOTAL].avg = (uint64_t)MIN(50 + 0.5 *image_gsize, 256) << 20;
+		buckets[THROTTLE_OPS_TOTAL].avg = MIN(30 * image_size, 20000);
+		buckets[THROTTLE_TPS_TOTAL].max = 256 << 20;
+		buckets[THROTTLE_OPS_TOTAL].max = 20000;
+		break;
+	default:
+		buckets[THROTTLE_TPS_TOTAL].avg = cct->_conf->rbd_throttle_tps_total;
+		buckets[THROTTLE_TPS_READ].avg = cct->_conf->rbd_throttle_tps_read;
+        buckets[THROTTLE_TPS_WRITE].avg = cct->_conf->rbd_throttle_tps_write;
+        buckets[THROTTLE_OPS_TOTAL].avg = cct->_conf->rbd_throttle_ops_total;
+        buckets[THROTTLE_OPS_READ].avg = cct->_conf->rbd_throttle_ops_read;
+        buckets[THROTTLE_OPS_WRITE].avg = cct->_conf->rbd_throttle_ops_write;	  
+		
+        buckets[THROTTLE_TPS_TOTAL].max = cct->_conf->rbd_throttle_tps_total_max;
+        buckets[THROTTLE_TPS_READ].max = cct->_conf->rbd_throttle_tps_read_max;
+        buckets[THROTTLE_TPS_WRITE].max = cct->_conf->rbd_throttle_tps_write_max;
+        buckets[THROTTLE_OPS_TOTAL].max = cct->_conf->rbd_throttle_ops_total_max;
+        buckets[THROTTLE_OPS_READ].max = cct->_conf->rbd_throttle_ops_read_max;
+        buckets[THROTTLE_OPS_WRITE].max = cct->_conf->rbd_throttle_ops_write_max;
+
+		for (int i = 0; i < BUCKETS_COUNT; ++i) {
+			if (buckets[i].max == 0)
+				buckets[i].max = buckets[i].avg / 10;
+		}
+  }
 
   buckets[THROTTLE_TPS_TOTAL].burst_length = cct->_conf->rbd_throttle_tps_total_max_length;
   buckets[THROTTLE_TPS_READ].burst_length = cct->_conf->rbd_throttle_tps_read_max_length;
@@ -355,10 +389,6 @@ void ThrottleConfig::throttle_config()
   buckets[THROTTLE_OPS_WRITE].burst_length = cct->_conf->rbd_throttle_ops_write_max_length;
 
   op_size = cct->_conf->rbd_throttle_op_size;
-  for (i = 0; i < BUCKETS_COUNT; ++i) {
-	if (buckets[i].max == 0)
-		buckets[i].max = buckets[i].avg / 10;
-  }
 }
 
 }

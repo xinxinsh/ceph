@@ -22,6 +22,11 @@ typedef enum {
     BUCKETS_COUNT,
 } BucketType;
 
+typedef enum {
+	THROTTLE_MODE_HDD = 0,
+	THROTTLE_MODE_EDD,
+	THROTTLE_MODE_SSD,
+} ThrottleMode;
 
 struct LeakyBucket {
     double  avg;              /* average goal in units per second */
@@ -44,7 +49,7 @@ struct ThrottleConfig {
   uint64_t throttle_do_compute_wait(double limit, double extra);
   uint64_t throttle_compute_wait(LeakyBucket *bkt);
   void throttle_leak_bucket(LeakyBucket *bkt, uint64_t delta_ns);
-  void throttle_config();
+  void throttle_config(uint64_t image_size);	/*support image size based QoS*/
   bool throttle_is_valid(); 
 };
 

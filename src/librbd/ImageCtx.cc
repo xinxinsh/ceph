@@ -252,18 +252,6 @@ struct C_InvalidateCache : public Context {
 
     perf_start(pname);
 		
-    if (throttle) {
-      ThrottleConfig cfg(cct);
-      cfg.throttle_config();
-	  
-      if (cfg.throttle_is_valid()) {
-        throttlestate = new ThrottleState(this);
-        throttlestate->cfg = cfg;
-      }
-      else
-        throttle = false;
-    }
-		
     if (cache) {
       Mutex::Locker l(cache_lock);
       ldout(cct, 20) << "enabling caching..." << dendl;
@@ -305,6 +293,20 @@ struct C_InvalidateCache : public Context {
 
     readahead.set_trigger_requests(readahead_trigger_requests);
     readahead.set_max_readahead_size(readahead_max_bytes);
+  }
+
+  void ImageCtx::init_throttle() {
+	if (throttle) {
+      ThrottleConfig cfg(cct);
+      cfg.throttle_config(size);
+	  
+      if (cfg.throttle_is_valid()) {
+        throttlestate = new ThrottleState(this);
+        throttlestate->cfg = cfg;
+      }
+      else
+        throttle = false;
+    }
   }
 
   void ImageCtx::shutdown() {
