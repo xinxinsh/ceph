@@ -31,8 +31,8 @@ AioImageRequestWQ::AioImageRequestWQ(ImageCtx *image_ctx, const string &name,
   tp->add_work_queue(this);
 }
 
-ssize_t AioImageRequestWQ::read(uint64_t off, uint64_t len, char *buf,
-                                int op_flags) {
+ssize_t ImageRequestWQ::read(uint64_t off, uint64_t len,
+                             ReadResult &&read_result, int op_flags) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "read: ictx=" << &m_image_ctx << ", off=" << off << ", "
                  << "len = " << len << dendl;
@@ -42,7 +42,7 @@ ssize_t AioImageRequestWQ::read(uint64_t off, uint64_t len, char *buf,
 
   C_SaferCond cond;
   AioCompletion *c = AioCompletion::create(&cond);
-  aio_read(c, off, len, buf, NULL, op_flags, false);
+  aio_read(c, off, len, std::move(read_result), op_flags, false);
   return cond.wait();
 }
 
@@ -62,7 +62,7 @@ ssize_t AioImageRequestWQ::write(uint64_t off, uint64_t len, const char *buf,
 
   C_SaferCond cond;
   AioCompletion *c = AioCompletion::create(&cond);
-  aio_write(c, off, len, buf, op_flags, false);
+  aio_write(c, off, len, std::move(bl), op_flags, false);
 
   r = cond.wait();
   if (r < 0) {
@@ -95,10 +95,10 @@ int AioImageRequestWQ::discard(uint64_t off, uint64_t len) {
   return len;
 }
 
-void AioImageRequestWQ::aio_read(AioCompletion *c, uint64_t off, uint64_t len,
-                                 char *buf, bufferlist *pbl, int op_flags,
-                                 bool native_async) {
-  c->init_time(&m_image_ctx, librbd::AIO_TYPE_READ);
+void ImageRequestWQ::aio_read(AioCompletion *c, uint64_t off, uint64_t len,
+                              ReadResult &&read_result, int op_flags,
+                              bool native_async) {
+  c->init_time(&m_image_ctx, AIO_TYPE_READ);
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "aio_read: ictx=" << &m_image_ctx << ", "
                  << "completion=" << c << ", off=" << off << ", "
@@ -124,10 +124,10 @@ void AioImageRequestWQ::aio_read(AioCompletion *c, uint64_t off, uint64_t len,
 
   if (m_image_ctx.non_blocking_aio || writes_blocked() || !writes_empty() ||
       lock_required) {
-    queue(new AioImageRead<>(m_image_ctx, c, off, len, buf, pbl, op_flags));
+    queue(new AioImageRead<>(m_image_ctx, c, {{off, len}}, std::move(read_result), op_flags));
   } else {
     c->start_op();
-    AioImageRequest<>::aio_read(&m_image_ctx, c, off, len, buf, pbl, op_flags);
+    AioImageRequest<>::aio_read(&m_image_ctx, c, {{off, len}}, std::move(read_result), op_flags);
     finish_in_flight_op();
   }
 }

@@ -31,6 +31,7 @@ librbd_internal_la_SOURCES = \
 	librbd/ObjectWatcher.cc \
 	librbd/Operations.cc \
 	librbd/Utils.cc \
+	librbd/ReadResult.cc \
 	librbd/exclusive_lock/AcquireRequest.cc \
 	librbd/exclusive_lock/AutomaticPolicy.cc \
 	librbd/exclusive_lock/BreakRequest.cc \

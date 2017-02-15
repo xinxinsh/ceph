@@ -25,12 +25,13 @@ public:
   typedef std::vector<std::pair<uint64_t,uint64_t> > Extents;
 
   virtual ~AioImageRequest() {}
+	ssize_t read(uint64_t off, uint64_t len, char *buf, int op_flags);
+  ssize_t write(uint64_t off, uint64_t len, const char *buf, int op_flags);
+  int discard(uint64_t off, uint64_t len);
 
   static void aio_read(ImageCtxT *ictx, AioCompletion *c,
-                       const std::vector<std::pair<uint64_t,uint64_t> > &extents,
-                       char *buf, bufferlist *pbl, int op_flags);
-  static void aio_read(ImageCtxT *ictx, AioCompletion *c, uint64_t off,
-                       size_t len, char *buf, bufferlist *pbl, int op_flags);
+                       uint64_t off, uint64_t len, ReadResult &&read_result,
+                       int op_flags);
   static void aio_write(ImageCtxT *ictx, AioCompletion *c, uint64_t off,
                         size_t len, const char *buf, int op_flags);
   static void aio_discard(ImageCtxT *ictx, AioCompletion *c, uint64_t off,
@@ -68,23 +69,13 @@ class AioImageRead : public AioImageRequest<ImageCtxT> {
 public:
   using typename AioImageRequest<ImageCtxT>::Extents;
 
-  AioImageRead(ImageCtxT &image_ctx, AioCompletion *aio_comp, uint64_t off,
-               size_t len, char *buf, bufferlist *pbl, int op_flags)
-    : AioImageRequest<ImageCtxT>(image_ctx, aio_comp), m_buf(buf), m_pbl(pbl),
-      m_op_flags(op_flags), m_len(len) {
-    m_image_extents.push_back(std::make_pair(off, len));
-  }
-
   AioImageRead(ImageCtxT &image_ctx, AioCompletion *aio_comp,
-               const Extents &image_extents, char *buf, bufferlist *pbl,
+               const Extents &image_extents, ReadResult&& read_result,
                int op_flags)
     : AioImageRequest<ImageCtxT>(image_ctx, aio_comp),
-      m_image_extents(image_extents), m_buf(buf), m_pbl(pbl),
+      m_image_extents(image_extents), 
       m_op_flags(op_flags), m_len(0) {
-    for(std::vector<std::pair<uint64_t, uint64_t> >::iterator it = \
-      m_image_extents.begin(); it != m_image_extents.end(); it++) {
-      m_len += ((*it).second);
-      }
+		aio_comp->read_result = std::move(read_result);
   }
 
 protected:

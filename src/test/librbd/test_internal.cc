@@ -535,6 +535,7 @@ TEST_F(TestInternal, SnapshotCopyup)
   read_bl.push_back(read_ptr);
 
   std::list<std::string> snaps = {"snap1", "snap2", ""};
+  librbd::io::ReadResult read_result{&read_bl};
   for (std::list<std::string>::iterator it = snaps.begin();
        it != snaps.end(); ++it) {
     const char *snap_name = it->empty() ? NULL : it->c_str();
@@ -621,6 +622,7 @@ TEST_F(TestInternal, ResizeCopyup)
     ictx2->snap_info.begin()->second.parent = librbd::parent_info();
   }
 
+  librbd::io::ReadResult read_result{&read_bl};
   for (size_t i = 2 << order; i < m_image_size; i += bl.length()) {
     ASSERT_EQ(bl.length(), ictx2->aio_work_queue->read(i, bl.length(),
                                                        read_bl.c_str(), 0));
@@ -680,6 +682,7 @@ TEST_F(TestInternal, DiscardCopyup)
     ictx2->snap_info.begin()->second.parent = librbd::parent_info();
   }
 
+  librbd::io::ReadResult read_result{&read_bl};
   for (size_t i = 0; i < m_image_size; i += bl.length()) {
     ASSERT_EQ(bl.length(), ictx2->aio_work_queue->read(i, bl.length(),
                                                        read_bl.c_str(), 0));

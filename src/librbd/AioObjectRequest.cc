@@ -17,6 +17,9 @@
 #include "librbd/ImageCtx.h"
 #include "librbd/ObjectMap.h"
 #include "librbd/Utils.h"
+#include "librbd/AioCompletion.h"
+#include "librbd/CopyupRequest.h"
+#include "librbd/ReadResult.h"
 
 #include <boost/bind.hpp>
 #include <boost/optional.hpp>
@@ -342,8 +345,9 @@ void AioObjectRead<I>::read_from_parent(const Extents& parent_extents)
                             << " extents " << parent_extents
                             << dendl;
   RWLock::RLocker owner_locker(image_ctx->parent->owner_lock);
-  AioImageRequest<>::aio_read(image_ctx->parent, m_parent_completion,
-                              parent_extents, NULL, &m_read_data, 0);
+  AioImageRequest<>::aio_read(image_ctx->parent, parent_completion,
+                           std::move(parent_extents),
+                           ReadResult{&m_read_data}, 0);
 }
 
 /** write **/

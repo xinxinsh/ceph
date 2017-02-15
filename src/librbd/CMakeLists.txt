@@ -26,6 +26,7 @@ set(librbd_internal_srcs
   ObjectWatcher.cc 
   Operations.cc
   Utils.cc
+  ReadResult.cc
   exclusive_lock/AcquireRequest.cc
   exclusive_lock/AutomaticPolicy.cc
   exclusive_lock/BreakRequest.cc
