@@ -705,8 +705,8 @@ AioObjectRequestHandle *AioImageWriteSame<I>::create_object_request(
 template <typename I>
 void AioImageWriteSame<I>::update_stats(size_t length) {
   I &image_ctx = this->m_image_ctx;
-  image_ctx.perfcounter->inc(l_librbd_wr);
-  image_ctx.perfcounter->inc(l_librbd_wr_bytes, length);
+  image_ctx.perfcounter->inc(l_librbd_ws);
+  image_ctx.perfcounter->inc(l_librbd_ws_bytes, length);
 }
 
 } // namespace librbd
