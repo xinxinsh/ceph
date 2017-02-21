@@ -73,6 +73,19 @@ AioObjectRequest<I>::create_zero(I *ictx, const std::string &oid,
 }
 
 template <typename I>
+AioObjectRequest<I>*
+AioObjectRequest<I>::create_writesame(I *ictx, const std::string &oid,
+                                   uint64_t object_no, uint64_t object_off,
+                                   uint64_t object_len,
+                                   const ceph::bufferlist &data,
+                                   const ::SnapContext &snapc,
+                                   Context *completion, int op_flags) {
+  return new AioObjectWriteSame(util::get_image_ctx(ictx), oid, object_no,
+                                object_off, object_len, data, snapc,
+                                completion, op_flags);
+}
+
+template <typename I>
 AioObjectRequest<I>::AioObjectRequest(ImageCtx *ictx, const std::string &oid,
                                       uint64_t objectno, uint64_t off,
                                       uint64_t len, librados::snap_t snap_id,
@@ -645,6 +658,29 @@ void AioObjectTruncate::send_write() {
   } else {
     AbstractAioObjectWrite::send_write();
   }
+}
+
+void AioObjectWriteSame::add_write_ops(librados::ObjectWriteOperation *wr) {
+  RWLock::RLocker snap_locker(m_ictx->snap_lock);
+  if (m_ictx->enable_alloc_hint &&
+      (m_ictx->object_map == nullptr || !m_object_exist)) {
+    wr->set_alloc_hint(m_ictx->get_object_size(), m_ictx->get_object_size());
+  }
+
+  wr->writesame(m_object_off, m_object_len, m_write_data);
+  wr->set_op_flags2(m_op_flags);
+}
+
+void AioObjectWriteSame::send_write() {
+  bool write_full = (m_object_off == 0 && m_object_len == m_ictx->get_object_size());
+  ldout(m_ictx->cct, 20) << "send_write " << this << " " << m_oid << " "
+                         << m_object_off << "~" << m_object_len
+                         << " write_full " << write_full << dendl;
+  if (write_full && !has_parent()) {
+		send_write_op(false);
+  } else {
+    AbstractAioObjectWrite::send_write();
+	}
 }
 
 } // namespace librbd

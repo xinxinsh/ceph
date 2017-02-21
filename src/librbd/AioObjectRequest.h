@@ -65,6 +65,14 @@ public:
                                        uint64_t object_len,
                                        const ::SnapContext &snapc,
                                        Context *completion);
+	static AioObjectRequest* create_writesame(ImageCtxT *ictx,
+			                                      const std::string &oid,
+			                                      uint64_t object_no,
+			                                      uint64_t object_off,
+			                                      uint64_t object_len,
+			                                      const ceph::bufferlist &data,
+			                                      const ::SnapContext &snapc,
+			                                      Context *completion, int op_flags);
 
   AioObjectRequest(ImageCtx *ictx, const std::string &oid,
                    uint64_t objectno, uint64_t off, uint64_t len,
@@ -403,6 +411,36 @@ protected:
   virtual void pre_object_map_update(uint8_t *new_state) {
     *new_state = OBJECT_EXISTS;
   }
+};
+
+class AioObjectWriteSame : public AbstractAioObjectWrite {
+public:
+  AioObjectWriteSame(ImageCtx *ictx, const std::string &oid, uint64_t object_no,
+                     uint64_t object_off, uint64_t object_len,
+                     const ceph::bufferlist &data,
+                     const ::SnapContext &snapc, Context *completion,
+                     int op_flags)
+    : AbstractAioObjectWrite(ictx, oid, object_no, object_off,
+                             object_len, snapc, completion, false),
+      m_write_data(data), m_op_flags(op_flags) {
+  }
+
+  virtual const char *get_write_type() const {
+    return "writesame";
+  }
+
+  virtual void pre_object_map_update(uint8_t *new_state) {
+    *new_state = OBJECT_EXISTS;
+  }
+
+protected:
+  virtual void add_write_ops(librados::ObjectWriteOperation *wr);
+
+  virtual void send_write();
+
+private:
+  ceph::bufferlist m_write_data;
+  int m_op_flags;
 };
 
 } // namespace librbd
