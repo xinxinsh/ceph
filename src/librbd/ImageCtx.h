@@ -191,6 +191,7 @@ namespace librbd {
 	//for Local Cache
 	std::string ssd_cache_path;
     uint32_t journal_max_payload_bytes;
+    bool skip_partial_discard;
 
     LibrbdAdminSocketHook *asok_hook;
 

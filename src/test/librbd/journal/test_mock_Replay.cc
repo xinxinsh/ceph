@@ -34,11 +34,12 @@ struct AioImageRequest<MockReplayImageCtx> {
     s_instance->aio_write(c, image_extents, bl, op_flags);
   }
 
-  MOCK_METHOD3(aio_discard, void(AioCompletion *c, uint64_t off, uint64_t len));
+  MOCK_METHOD4(aio_discard, void(AioCompletion *c, uint64_t off, uint64_t len,
+                                 bool skip_partial_discard));
   static void aio_discard(MockReplayImageCtx *ictx, AioCompletion *c,
-                          uint64_t off, uint64_t len) {
+                          uint64_t off, uint64_t len, bool skip_partial_discard) {
     assert(s_instance != nullptr);
-    s_instance->aio_discard(c, off, len);
+    s_instance->aio_discard(c, off, len, skip_partial_discard);
   }
 
   MOCK_METHOD1(aio_flush, void(AioCompletion *c));
@@ -121,8 +122,8 @@ public:
 
   void expect_aio_discard(MockAioImageRequest &mock_aio_image_request,
                           AioCompletion **aio_comp, uint64_t off,
-                          uint64_t len) {
-    EXPECT_CALL(mock_aio_image_request, aio_discard(_, off, len))
+                          uint64_t len, skip_partial_discard) {
+    EXPECT_CALL(mock_aio_image_request, aio_discard(_, off, len, skip_partial_discard))
                   .WillOnce(SaveArg<0>(aio_comp));
   }
 
@@ -309,9 +310,9 @@ TEST_F(TestMockJournalReplay, AioDiscard) {
   AioCompletion *aio_comp;
   C_SaferCond on_ready;
   C_SaferCond on_safe;
-  expect_aio_discard(mock_aio_image_request, &aio_comp, 123, 456);
+  expect_aio_discard(mock_aio_image_request, &aio_comp, 123, 456, ictx->skip_partial_discard);
   when_process(mock_journal_replay,
-               EventEntry{AioDiscardEvent(123, 456)},
+               EventEntry{AioDiscardEvent(123, 456, ictx->skip_partial_discard)},
                &on_ready, &on_safe);
 
   when_complete(mock_image_ctx, aio_comp, 0);
@@ -419,9 +420,9 @@ TEST_F(TestMockJournalReplay, IOError) {
   AioCompletion *aio_comp;
   C_SaferCond on_ready;
   C_SaferCond on_safe;
-  expect_aio_discard(mock_aio_image_request, &aio_comp, 123, 456);
+  expect_aio_discard(mock_aio_image_request, &aio_comp, 123, 456, ictx->skip_partial_discard);
   when_process(mock_journal_replay,
-               EventEntry{AioDiscardEvent(123, 456)},
+               EventEntry{AioDiscardEvent(123, 456, ictx->skip_partial_discard)},
                &on_ready, &on_safe);
 
   when_complete(mock_image_ctx, aio_comp, -EINVAL);
@@ -450,12 +451,12 @@ TEST_F(TestMockJournalReplay, SoftFlushIO) {
     AioCompletion *aio_comp;
     AioCompletion *flush_comp = nullptr;
     C_SaferCond on_ready;
-    expect_aio_discard(mock_aio_image_request, &aio_comp, 123, 456);
+    expect_aio_discard(mock_aio_image_request, &aio_comp, 123, 456, ictx->skip_partial_discard);
     if (i == io_count - 1) {
       expect_aio_flush(mock_aio_image_request, &flush_comp);
     }
     when_process(mock_journal_replay,
-                 EventEntry{AioDiscardEvent(123, 456)},
+                 EventEntry{AioDiscardEvent(123, 456, ictx->skip_partial_discard)},
                  &on_ready, &on_safes[i]);
     when_complete(mock_image_ctx, aio_comp, 0);
     ASSERT_EQ(0, on_ready.wait());
@@ -527,9 +528,9 @@ TEST_F(TestMockJournalReplay, Flush) {
   AioCompletion *aio_comp = nullptr;
   C_SaferCond on_ready;
   C_SaferCond on_safe;
-  expect_aio_discard(mock_aio_image_request, &aio_comp, 123, 456);
+  expect_aio_discard(mock_aio_image_request, &aio_comp, 123, 456, ictx->skip_partial_discard);
   when_process(mock_journal_replay,
-               EventEntry{AioDiscardEvent(123, 456)},
+               EventEntry{AioDiscardEvent(123, 456, ictx->skip_partial_discard)},
                &on_ready, &on_safe);
 
   when_complete(mock_image_ctx, aio_comp, 0);

@@ -295,7 +295,7 @@ TEST_F(TestInternal, AioDiscardRequestsLock) {
   Context *ctx = new DummyContext();
   librbd::AioCompletion *c = librbd::AioCompletion::create(ctx);
   c->get();
-  ictx->aio_work_queue->aio_discard(c, 0, 256);
+  ictx->aio_work_queue->aio_discard(c, 0, 256, false);
 
   bool is_owner;
   ASSERT_EQ(0, librbd::is_exclusive_lock_owner(ictx, &is_owner));
@@ -673,7 +673,7 @@ TEST_F(TestInternal, DiscardCopyup)
   read_bl.push_back(read_ptr);
 
   ASSERT_EQ(static_cast<int>(m_image_size - 64),
-            ictx2->aio_work_queue->discard(32, m_image_size - 64));
+            ictx2->aio_work_queue->discard(32, m_image_size - 64, false));
   ASSERT_EQ(0, librbd::snap_set(ictx2, "snap1"));
 
   {

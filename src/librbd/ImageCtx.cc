@@ -1058,7 +1058,8 @@ struct C_InvalidateCache : public Context {
         "rbd_journal_object_flush_bytes", false)(
         "rbd_journal_object_flush_age", false)(
         "rbd_journal_pool", false)(
-        "rbd_journal_max_payload_bytes", false);
+        "rbd_journal_max_payload_bytes", false)(
+        "rbd_skip_partial_discard", false);
 
     md_config_t local_config_t;
     std::map<std::string, bufferlist> res;
@@ -1115,7 +1116,8 @@ struct C_InvalidateCache : public Context {
     ASSIGN_OPTION(journal_pool);
     ASSIGN_OPTION(journal_max_payload_bytes);
     ASSIGN_OPTION(throttle);
-	ASSIGN_OPTION(ssd_cache_path);
+	  ASSIGN_OPTION(ssd_cache_path);
+    ASSIGN_OPTION(skip_partial_discard);
   }
 
   ExclusiveLock<ImageCtx> *ImageCtx::create_exclusive_lock() {

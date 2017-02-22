@@ -75,24 +75,7 @@ struct AioObjectRequest<librbd::MockTestImageCtx> : public AioObjectRequestHandl
     return s_instance;
   }
 
-<<<<<<< HEAD:src/test/librbd/test_mock_AioImageRequest.cc
   AioObjectRequest() {
-=======
-  static ObjectRequest* create_writesame(librbd::MockTestImageCtx *ictx,
-                                         const std::string &oid,
-                                         uint64_t object_no,
-                                         uint64_t object_off,
-                                         uint64_t object_len,
-                                         const ceph::bufferlist &data,
-                                         const ::SnapContext &snapc,
-                                         Context *completion, int op_flags) {
-    assert(s_instance != nullptr);
-    s_instance->on_finish = completion;
-    return s_instance;
-  }
-
-  ObjectRequest() {
->>>>>>> 39fea5e... test/librbd: add tests for rbd writesame:src/test/librbd/io/test_mock_ImageRequest.cc
     assert(s_instance == nullptr);
     s_instance = this;
   }
@@ -154,7 +137,6 @@ using ::testing::Invoke;
 using ::testing::Return;
 using ::testing::WithArg;
 
-<<<<<<< HEAD:src/test/librbd/test_mock_AioImageRequest.cc
 struct TestMockAioImageRequest : public TestMockFixture {
   typedef AioImageRequest<librbd::MockTestImageCtx> MockAioImageRequest;
   typedef AioImageWrite<librbd::MockTestImageCtx> MockAioImageWrite;
@@ -162,16 +144,6 @@ struct TestMockAioImageRequest : public TestMockFixture {
   typedef AioImageFlush<librbd::MockTestImageCtx> MockAioImageFlush;
   typedef AioObjectRequest<librbd::MockTestImageCtx> MockAioObjectRequest;
   typedef AioObjectRead<librbd::MockTestImageCtx> MockAioObjectRead;
-=======
-struct TestMockIoImageRequest : public TestMockFixture {
-  typedef ImageRequest<librbd::MockTestImageCtx> MockImageRequest;
-  typedef ImageWriteRequest<librbd::MockTestImageCtx> MockImageWriteRequest;
-  typedef ImageDiscardRequest<librbd::MockTestImageCtx> MockImageDiscardRequest;
-  typedef ImageFlushRequest<librbd::MockTestImageCtx> MockImageFlushRequest;
-  typedef ImageWriteSameRequest<librbd::MockTestImageCtx> MockImageWriteSameRequest;
-  typedef ObjectRequest<librbd::MockTestImageCtx> MockObjectRequest;
-  typedef ObjectReadRequest<librbd::MockTestImageCtx> MockObjectReadRequest;
->>>>>>> 39fea5e... test/librbd: add tests for rbd writesame:src/test/librbd/io/test_mock_ImageRequest.cc
 
   void expect_is_journal_appending(MockJournal &mock_journal, bool appending) {
     EXPECT_CALL(mock_journal, is_journal_appending())
@@ -253,7 +225,8 @@ TEST_F(TestMockAioImageRequest, AioDiscardJournalAppendDisabled) {
   C_SaferCond aio_comp_ctx;
   AioCompletion *aio_comp = AioCompletion::create_and_start(
     &aio_comp_ctx, ictx, AIO_TYPE_DISCARD);
-  MockAioImageDiscard mock_aio_image_discard(mock_image_ctx, aio_comp, 0, 1);
+  MockAioImageDiscard mock_aio_image_discard(mock_image_ctx, aio_comp, 0, 1
+			                                       ictx->skip_partial_discard);
   {
     RWLock::RLocker owner_locker(mock_image_ctx.owner_lock);
     mock_aio_image_discard.send();

@@ -137,7 +137,7 @@ TEST_F(TestJournalReplay, AioDiscardEvent) {
 
   // inject a discard operation into the journal
   inject_into_journal(ictx,
-                      librbd::journal::AioDiscardEvent(0, payload.size()));
+                      librbd::journal::AioDiscardEvent(0, payload.size(), ictx->skip_partial_discard));
   close_image(ictx);
 
   // re-open the journal so that it replays the new entry
@@ -165,9 +165,9 @@ TEST_F(TestJournalReplay, AioDiscardEvent) {
 
   // replay several envents and check the commit position
   inject_into_journal(ictx,
-                      librbd::journal::AioDiscardEvent(0, payload.size()));
+                      librbd::journal::AioDiscardEvent(0, payload.size(), ictx->cct->_conf->rbd_skip_partial_discard));
   inject_into_journal(ictx,
-                      librbd::journal::AioDiscardEvent(0, payload.size()));
+                      librbd::journal::AioDiscardEvent(0, payload.size(), ictx->cct->_conf->rbd_skip_partial_discard));
   close_image(ictx);
 
   ASSERT_EQ(0, open_image(m_image_name, &ictx));
@@ -178,7 +178,7 @@ TEST_F(TestJournalReplay, AioDiscardEvent) {
 
   // verify lock ordering constraints
   aio_comp = new librbd::AioCompletion();
-  ictx->aio_work_queue->aio_discard(aio_comp, 0, read_payload.size());
+  ictx->aio_work_queue->aio_discard(aio_comp, 0, read_payload.size(), ictx->cct->_conf->rbd_skip_partial_discard);
   ASSERT_EQ(0, aio_comp->wait_for_complete());
   aio_comp->release();
 }

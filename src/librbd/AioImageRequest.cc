@@ -138,8 +138,9 @@ void AioImageRequest<I>::aio_write(I *ictx, AioCompletion *c,
 
 template <typename I>
 void AioImageRequest<I>::aio_discard(I *ictx, AioCompletion *c,
-                                     uint64_t off, uint64_t len) {
-  AioImageDiscard<I> req(*ictx, c, off, len);
+                                     uint64_t off, uint64_t len,
+																		 bool skip_partial_discard) {
+  AioImageDiscard<I> req(*ictx, c, off, len, skip_partial_discard);
   req.send();
 }
 
@@ -454,7 +455,8 @@ uint64_t AioImageDiscard<I>::append_journal_event(
   I &image_ctx = this->m_image_ctx;
 
   journal::EventEntry event_entry(journal::AioDiscardEvent(this->m_off,
-                                                           this->m_len));
+                                                           this->m_len,
+																													 this-m_skip_partial_discard));
   uint64_t tid = image_ctx.journal->append_io_event(std::move(event_entry),
                                                     requests, this->m_off,
                                                     this->m_len, synchronous);
@@ -468,7 +470,7 @@ template <typename I>
 void AioImageDiscard<I>::prune_object_extents(ObjectExtents &object_extents) {
   I &image_ctx = this->m_image_ctx;
   CephContext *cct = image_ctx.cct;
-  if (!cct->_conf->rbd_skip_partial_discard) {
+  if (!this->m_skip_partial_discard) {
     return;
   }
 

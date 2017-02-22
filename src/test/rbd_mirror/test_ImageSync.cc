@@ -33,7 +33,7 @@ void scribble(librbd::ImageCtx *image_ctx, int num_ops, size_t max_size)
     uint64_t len = 1 + rand() % max_size;
 
     if (rand() % 4 == 0) {
-      ASSERT_EQ((int)len, image_ctx->aio_work_queue->discard(off, len));
+      ASSERT_EQ((int)len, image_ctx->aio_work_queue->discard(off, len, image_ctx->skip_partial_discard));
     } else {
       std::string str(len, '1');
       ASSERT_EQ((int)len, image_ctx->aio_work_queue->write(off, len,
