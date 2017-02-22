@@ -595,21 +595,9 @@ std::ostream &operator<<(std::ostream &out, const EventType &type) {
   case EVENT_TYPE_DEMOTE:
     out << "Demote";
     break;
-<<<<<<< HEAD
-=======
-  case EVENT_TYPE_UPDATE_FEATURES:
-    out << "UpdateFeatures";
-    break;
-  case EVENT_TYPE_METADATA_SET:
-    out << "MetadataSet";
-    break;
-  case EVENT_TYPE_METADATA_REMOVE:
-    out << "MetadataRemove";
-    break;
   case EVENT_TYPE_AIO_WRITESAME:
     out << "AioWriteSame";
     break;
->>>>>>> b71335b... librbd/journal: handle writesame event
   default:
     out << "Unknown (" << static_cast<uint32_t>(type) << ")";
     break;

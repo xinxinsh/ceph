@@ -353,16 +353,16 @@ void Replay<I>::handle_event(const journal::AioWriteSameEvent &event,
   bufferlist data = event.data;
   bool flush_required;
   auto aio_comp = create_aio_modify_completion(on_ready, on_safe,
-                                               io::AIO_TYPE_WRITESAME,
+                                               AIO_TYPE_WRITESAME,
                                                &flush_required);
-  io::ImageRequest<I>::aio_writesame(&m_image_ctx, aio_comp, event.offset,
+  AioImageRequest<I>::aio_writesame(&m_image_ctx, aio_comp, event.offset,
                                      event.length, std::move(data), 0);
   if (flush_required) {
     m_lock.Lock();
     auto flush_comp = create_aio_flush_completion(nullptr);
     m_lock.Unlock();
 
-    io::ImageRequest<I>::aio_flush(&m_image_ctx, flush_comp);
+    AioImageRequest<I>::aio_flush(&m_image_ctx, flush_comp);
   }
 }
 

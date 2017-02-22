@@ -35,8 +35,8 @@ enum EventType {
   EVENT_TYPE_RENAME         = 10,
   EVENT_TYPE_RESIZE         = 11,
   EVENT_TYPE_FLATTEN        = 12,
-  EVENT_TYPE_DEMOTE         = 13
-  EVENT_TYPE_AIO_WRITESAME   = 14,
+  EVENT_TYPE_DEMOTE         = 13,
+  EVENT_TYPE_AIO_WRITESAME   = 14
 };
 
 struct AioDiscardEvent {

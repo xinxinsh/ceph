@@ -150,6 +150,15 @@ void AioImageRequest<I>::aio_flush(I *ictx, AioCompletion *c) {
 }
 
 template <typename I>
+void AioImageRequest<I>::aio_writesame(I *ictx, AioCompletion *c,
+                                    uint64_t off, uint64_t len,
+                                    bufferlist &&bl,
+                                    int op_flags) {
+  AioImageWriteSame<I> req(*ictx, c, off, len, std::move(bl), op_flags);
+  req.send();
+}
+
+template <typename I>
 void AioImageRequest<I>::send() {
   I &image_ctx = this->m_image_ctx;
   assert(image_ctx.owner_lock.is_locked());
@@ -573,6 +582,133 @@ void AioImageFlush<I>::send_request() {
   image_ctx.perfcounter->inc(l_librbd_aio_flush);
 }
 
+template <typename I>
+bool AioImageWriteSame<I>::assemble_writesame_extent(const ObjectExtent &object_extent,
+                                                     bufferlist *bl, bool force_write) {
+  size_t m_data_len = m_data_bl.length();
+
+  if (!force_write) {
+    bool may_writesame = true;
+
+    for (auto q = object_extent.buffer_extents.begin();
+         q != object_extent.buffer_extents.end(); ++q) {
+      if (!(q->first % m_data_len == 0 && q->second % m_data_len == 0)) {
+        may_writesame = false;
+        break;
+      }
+    }
+
+    if (may_writesame) {
+      bl->append(m_data_bl);
+      return true;
+    }
+  }
+
+  for (auto q = object_extent.buffer_extents.begin();
+       q != object_extent.buffer_extents.end(); ++q) {
+    bufferlist sub_bl;
+    uint64_t sub_off = q->first % m_data_len;
+    uint64_t sub_len = m_data_len - sub_off;
+    uint64_t extent_left = q->second;
+    while (extent_left >= sub_len) {
+      sub_bl.substr_of(m_data_bl, sub_off, sub_len);
+      bl->claim_append(sub_bl);
+      extent_left -= sub_len;
+      if (sub_off) {
+      	sub_off = 0;
+	      sub_len = m_data_len;
+      }
+    }
+    if (extent_left) {
+      sub_bl.substr_of(m_data_bl, sub_off, extent_left);
+      bl->claim_append(sub_bl);
+    }
+  }
+  return false;
+}
+
+template <typename I>
+uint64_t AioImageWriteSame<I>::append_journal_event(
+    const AioObjectRequests &requests, bool synchronous) {
+  I &image_ctx = this->m_image_ctx;
+
+  uint64_t tid = 0;
+  journal::EventEntry event_entry(journal::AioWriteSameEvent(this->m_off,
+                                                             this->m_len,
+                                                             m_data_bl));
+  tid = image_ctx.journal->append_io_event(std::move(event_entry),
+                                           requests, this->m_off,
+                                           this->m_len, synchronous);
+
+  if (image_ctx.object_cacher == NULL) {
+    AioCompletion *aio_comp = this->m_aio_comp;
+    aio_comp->associate_journal_event(tid);
+  }
+  return tid;
+}
+
+template <typename I>
+void AioImageWriteSame<I>::send_cache_requests(
+    const ObjectExtents &object_extents, uint64_t journal_tid) {
+  I &image_ctx = this->m_image_ctx;
+  for (auto p = object_extents.begin(); p != object_extents.end(); ++p) {
+    const ObjectExtent &object_extent = *p;
+
+    bufferlist bl;
+    assemble_writesame_extent(object_extent, &bl, true);
+
+    AioCompletion *aio_comp = this->m_aio_comp;
+    C_AioRequest *req_comp = new C_AioRequest(aio_comp);
+    image_ctx.write_to_cache(object_extent.oid, bl, object_extent.length,
+                             object_extent.offset, req_comp, m_op_flags,
+                             journal_tid);
+  }
+}
+
+template <typename I>
+void AioImageWriteSame<I>::send_object_requests(
+    const ObjectExtents &object_extents, const ::SnapContext &snapc,
+    AioObjectRequests *object_requests) {
+  I &image_ctx = this->m_image_ctx;
+
+  // cache handles creating object requests during writeback
+  if (image_ctx.object_cacher == NULL) {
+    AbstractAioImageWrite<I>::send_object_requests(object_extents, snapc,
+                                                   object_requests);
+  }
+}
+
+template <typename I>
+AioObjectRequestHandle *AioImageWriteSame<I>::create_object_request(
+    const ObjectExtent &object_extent, const ::SnapContext &snapc,
+    Context *on_finish) {
+  I &image_ctx = this->m_image_ctx;
+  assert(image_ctx.object_cacher == NULL);
+
+  bufferlist bl;
+  AioObjectRequest<I> *req;
+
+  if (assemble_writesame_extent(object_extent, &bl, false)) {
+    req = AioObjectRequest<I>::create_writesame(
+      &image_ctx, object_extent.oid.name, object_extent.objectno,
+      object_extent.offset, object_extent.length,
+      bl, snapc, on_finish, m_op_flags);
+    return req;
+  }
+  req = AioObjectRequest<I>::create_write(
+    &image_ctx, object_extent.oid.name, object_extent.objectno,
+    object_extent.offset,
+    bl, snapc, on_finish, m_op_flags);
+  return req;
+}
+
+template <typename I>
+void AioImageWriteSame<I>::update_stats(size_t length) {
+  I &image_ctx = this->m_image_ctx;
+  image_ctx.perfcounter->inc(l_librbd_wr);
+  image_ctx.perfcounter->inc(l_librbd_wr_bytes, length);
+}
+
 } // namespace librbd
 
 template class librbd::AioImageRequest<librbd::ImageCtx>;
@@ -580,3 +716,4 @@ template class librbd::AbstractAioImageWrite<librbd::ImageCtx>;
 template class librbd::AioImageWrite<librbd::ImageCtx>;
 template class librbd::AioImageDiscard<librbd::ImageCtx>;
 template class librbd::AioImageFlush<librbd::ImageCtx>;
+template class librbd::AioImageWriteSame<librbd::ImageCtx>;
