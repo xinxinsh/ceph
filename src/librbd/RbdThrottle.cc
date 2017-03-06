@@ -319,6 +319,9 @@ bool ThrottleConfig::throttle_is_valid()
         lderr(cct) << "bps_max/iops_max cannot be lower than bps/iops" << dendl;
         return false;
     }
+    if(buckets[i].max == 0) {
+       buckets[i].max = buckets[i].avg / 10;
+    }
   }
 
   return true;
@@ -375,10 +378,6 @@ void ThrottleConfig::throttle_config(uint64_t image_size)
         buckets[THROTTLE_OPS_READ].max = cct->_conf->rbd_throttle_ops_read_max;
         buckets[THROTTLE_OPS_WRITE].max = cct->_conf->rbd_throttle_ops_write_max;
 
-		for (int i = 0; i < BUCKETS_COUNT; ++i) {
-			if (buckets[i].max == 0)
-				buckets[i].max = buckets[i].avg / 10;
-		}
   }
 
   buckets[THROTTLE_TPS_TOTAL].burst_length = cct->_conf->rbd_throttle_tps_total_max_length;
