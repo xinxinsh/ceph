@@ -123,8 +123,13 @@ cdef extern from "rbd/librbd.h" nogil:
         time_t last_update
         bint up
 
-    void rbd_version(int *major, int *minor, int *extra)
+    ctypedef struct Qos_specs:
+        char *key
+        char *value
 
+    int rbd_throttle_set(rbd_image_t image,  Qos_specs *qos_spec, int len) 
+
+    void rbd_version(int *major, int *minor, int *extra)
     void rbd_image_options_create(rbd_image_options_t* opts)
     void rbd_image_options_destroy(rbd_image_options_t opts)
     int rbd_image_options_set_string(rbd_image_options_t opts, int optname,
@@ -1318,6 +1323,29 @@ cdef class Image(object):
         :returns: :class:`SnapIterator`
         """
         return SnapIterator(self)
+    def set_qos_spec(self, qos_specs):
+
+        """
+        set an rbd image qos
+        """
+        qos_len = len(qos_specs)
+        cdef:
+            int _len = qos_len
+            Qos_specs specs[20]
+        i = 0;
+        for key in qos_specs:
+            if key == "consumer":
+                 continue
+            value = qos_specs[key]
+            key = cstr(key, "key")
+            value = cstr(value, "value")
+            specs[i].key = key
+            specs[i].value = value
+            i +=1
+        with nogil:
+            ret = rbd_throttle_set(self.image, specs, _len)
+        if ret != 0:
+            raise make_ex(ret, 'error  seting qos on %s' % (self.name))
 
     def create_snap(self, name):
         """

@@ -389,8 +389,6 @@ Context *OpenRequest<I>::handle_refresh(int *result) {
     send_close_image(*result);
     return nullptr;
   } else {
-    if (m_image_ctx->throttle)
-		m_image_ctx->init_throttle();
     if (m_image_ctx->cache)
 		m_image_ctx->object_cacher->init_cache(m_image_ctx->size/20, 
 			m_image_ctx->order, m_image_ctx->object_prefix, m_image_ctx->old_format, 

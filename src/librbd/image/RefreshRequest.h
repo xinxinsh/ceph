@@ -114,6 +114,7 @@ private:
   uint64_t m_features;
   uint64_t m_incompatible_features;
   uint64_t m_flags;
+  std::map<std::string, double> m_data;
   std::string m_object_prefix;
   parent_info m_parent_md;
 
@@ -147,6 +148,9 @@ private:
   void send_v2_get_mutable_metadata();
   Context *handle_v2_get_mutable_metadata(int *result);
 
+  void send_v2_get_throttle_metadata();
+  Context *handle_v2_get_throttle_metadata(int *result);
+  
   void send_v2_get_flags();
   Context *handle_v2_get_flags(int *result);
 

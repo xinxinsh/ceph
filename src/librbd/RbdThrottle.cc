@@ -327,6 +327,21 @@ bool ThrottleConfig::throttle_is_valid()
   return true;
 }
 
+/* convert map a throttling configuration
+ *      @pairs a throttling map
+ *      @key a throttling configuration key
+ *      @val: value of a throttling configuration key
+ *            */
+
+double ThrottleConfig::map_to_cfg(map<std::string, double> *pairs, const string &key, const double val)
+{
+   map<std::string, double>::iterator it = pairs->find(key);
+   if(it == pairs->end())
+     return val;
+   else
+     return it->second;
+}
+
 /* Used to configure the throttle */
 void ThrottleConfig::throttle_config(uint64_t image_size)
 {
