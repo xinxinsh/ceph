@@ -1328,24 +1328,31 @@ cdef class Image(object):
         """
         set an rbd image qos
         """
+        if qos_specs.has_key('consumer'):
+            del qos_specs['consumer']
+        for key in qos_specs:
+           str_value = str(qos_specs[key])
+           qos_specs[key] = str_value
         qos_len = len(qos_specs)
         cdef:
-            int _len = qos_len
-            Qos_specs specs[20]
-        i = 0;
-        for key in qos_specs:
-            if key == "consumer":
-                 continue
-            value = qos_specs[key]
-            key = cstr(key, "key")
-            value = cstr(value, "value")
-            specs[i].key = key
-            specs[i].value = value
-            i +=1
-        with nogil:
-            ret = rbd_throttle_set(self.image, specs, _len)
-        if ret != 0:
-            raise make_ex(ret, 'error  seting qos on %s' % (self.name))
+            int _len = qos_len 
+            Qos_specs *specs = NULL
+        try:
+            specs = <Qos_specs *>realloc_chk(specs,
+                sizeof(Qos_specs) * _len)
+
+            i = 0
+            for key in qos_specs:
+                value = qos_specs[key]
+                specs[i].key = key
+                specs[i].value = value
+                i +=1
+            with nogil:
+                ret = rbd_throttle_set(self.image, specs, _len)
+            if ret != 0:
+                raise make_ex(ret, 'error  seting qos on %s' % (self.name))
+        finally:
+            free(specs)
 
     def create_snap(self, name):
         """

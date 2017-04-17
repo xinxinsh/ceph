@@ -2641,6 +2641,8 @@ extern "C" int rbd_poll_io_events(rbd_image_t image, rbd_completion_t *comps, in
 extern "C" int rbd_throttle_set(rbd_image_t image,  Qos_specs *qos_specs, int len)
 {
   librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
+  if(!qos_specs)
+     return -1;
   map<string, double> pairs;
   for(int i=0; i<len; i++){
      string key =(qos_specs+i)->key;
