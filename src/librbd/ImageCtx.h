@@ -221,7 +221,6 @@ namespace librbd {
     void init();
 	void init_throttle();
 	int post_init(const std::string &ssd_cache_path);
-    void init_throttle();
     void fix_throttle(map<std::string, double> *pairs, bool use_conf);
     void shutdown();
     void init_layout();
