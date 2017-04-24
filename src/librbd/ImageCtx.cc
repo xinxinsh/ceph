@@ -30,6 +30,7 @@
 #include "librbd/LibrbdWriteback.h"
 
 #include "osdc/Striper.h"
+#include "osdc/cetcd.h"
 #include <boost/bind.hpp>
 
 #define dout_subsys ceph_subsys_rbd
@@ -259,14 +260,15 @@ struct C_InvalidateCache : public Context {
 
       uint64_t init_max_dirty = cache_max_dirty;
       if (cache_writethrough_until_flush)
-	init_max_dirty = 0;
+		init_max_dirty = 0;
       ldout(cct, 20) << "Initial cache settings:"
 		     << " size=" << cache_size
 		     << " num_objects=" << 10
 		     << " max_dirty=" << init_max_dirty
 		     << " target_dirty=" << cache_target_dirty
-		     << " max_dirty_age="
-		     << cache_max_dirty_age << dendl;
+		     << " max_dirty_age=" << cache_max_dirty_age 
+		     << " ssd cache path=" 
+		     << ssd_cache_path << dendl;
 
       object_cacher = new ObjectCacher(cct, pname, *writeback_handler, cache_lock,
 				       NULL, NULL,
@@ -280,10 +282,10 @@ struct C_InvalidateCache : public Context {
       // size object cache appropriately
       uint64_t obj = cache_max_dirty_object;
       if (!obj) {
-	obj = MIN(2000, MAX(10, cache_size / 100 / sizeof(ObjectCacher::Object)));
+		obj = MIN(2000, MAX(10, cache_size / 100 / sizeof(ObjectCacher::Object)));
       }
       ldout(cct, 10) << " cache bytes " << cache_size
-	<< " -> about " << obj << " objects" << dendl;
+		<< " -> about " << obj << " objects" << dendl;
       object_cacher->set_max_objects(obj);
 
       object_set = new ObjectCacher::ObjectSet(NULL, data_ctx.get_id(), 0);
@@ -307,6 +309,13 @@ struct C_InvalidateCache : public Context {
       else
         throttle = false;
     }
+  }
+
+  int ImageCtx::post_init(const std::string &ssd_cache_path) {
+	//register cache features:path
+	map<string, bufferlist> data;
+    data["ssd_cache_path"].append(ssd_cache_path);
+    return cls_client::metadata_set(&md_ctx, header_oid, data);
   }
 
   void ImageCtx::shutdown() {
@@ -929,7 +938,7 @@ struct C_InvalidateCache : public Context {
         "rbd_cache_max_dirty_age", false)(
         "rbd_cache_max_dirty_object", false)(
         "rbd_cache_block_writes_upfront", false)(
-        "rbd_throttle", false)(
+        "rbd_ssd_cache_path", false)(
         "rbd_concurrent_management_ops", false)(
         "rbd_balance_snap_reads", false)(
         "rbd_localize_snap_reads", false)(
@@ -1005,7 +1014,7 @@ struct C_InvalidateCache : public Context {
     ASSIGN_OPTION(journal_object_flush_age);
     ASSIGN_OPTION(journal_pool);
     ASSIGN_OPTION(journal_max_payload_bytes);
-    ASSIGN_OPTION(throttle);
+	ASSIGN_OPTION(ssd_cache_path);
   }
 
   ExclusiveLock<ImageCtx> *ImageCtx::create_exclusive_lock() {

@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 smarttab
 
 #include <limits.h>
+#include <string.h>
 
 #include "msg/Messenger.h"
 #include "ObjectCacher.h"
@@ -10,6 +11,7 @@
 #include "common/perf_counters.h"
 
 #include "include/assert.h"
+#include "cetcd.h"
 
 #define MAX_FLUSH_UNDER_LOCK 20  ///< max bh's we start writeback on
 
@@ -23,7 +25,7 @@ using std::chrono::seconds;
 
 #define dout_subsys ceph_subsys_objectcacher
 #undef dout_prefix
-#define dout_prefix *_dout << "objectcacher.object(" << oid << ") "
+#define dout_prefix *_dout << "objectcacher.object(" << oid << "):" << __FILE__ << ":" << __func__
 
 
 
@@ -590,7 +592,7 @@ ObjectCacher::ObjectCacher(CephContext *cct_, string name,
     max_size(max_bytes), max_objects(max_objects),
     max_dirty_age(ceph::make_timespan(max_dirty_age)),
     block_writes_upfront(block_writes_upfront),
-    local_cache(false), ro_cache(false), lcache(NULL),
+    local_cache(false), ro_cache(false), lcache(NULL), cli(NULL),
     flush_set_callback(flush_callback),
     flush_set_callback_arg(flush_callback_arg),
     last_read_tid(0), flusher_stop(false), flusher_thread(this),finisher(cct),
@@ -2795,24 +2797,94 @@ bool ObjectCacher::can_merge_bh(BufferHead *left, BufferHead *right)
 	return false;
 }
 
-void ObjectCacher::init_cache(uint64_t cache_size, uint32_t obj_order, 
- 	const std::string &obj_prefix, bool old_format, 
- 	ObjectSet *oset, const file_layout_t &l) 
-{
-  local_cache = cct->_conf->rbd_ssd_cache;
-  ro_cache = cct->_conf->rbd_ssd_rcache;
-  if ( is_enable_cache() ) {
-  	std::string cache_path(cct->_conf->rbd_ssd_cache_path);
-	cache_path += name;
+bool ObjectCacher::pre_init(const std::string &cache_path)
+{
+	int r;
+	bool mounted = false;
+	char devname[32] = {0};
+	cetcd_response *resp;
+	
+	if (!cct->_conf->rbd_ssd_cache)
+		return false;
 
+	//check cache path
+	if (cache_path.empty()) {
+		lderr(cct) << " cache path can't be empty" << dendl;
+		goto failed;
+	}
+
+	ldout(cct, 11) << " create cache path if it's not exist: " << cache_path.c_str() << dendl;
+	if ((r = ::mkdir(cache_path.c_str(), 0755)) != 0 && EEXIST != errno) {
+		lderr(cct) << "Failed to create cache path, Error Msg: " << cpp_strerror(errno) << dendl;
+		goto failed;
+	}
+	
+	//init etcd client
+	cli = cetcd_client_create(this, cct->_conf->rbd_ssd_config_server);
+	if ( NULL == cli) {
+		lderr(cct) << " Failed to initialize etcd client," 
+			<< " servers: " << cct->_conf->rbd_ssd_config_server << dendl;
+		goto failed;
+	}
+
+	//get cache path from config server
+	cli->cetcd_set_path(cache_path);
+	resp = cli->cetcd_lsdir(cache_path.c_str(), true, true);
+	if(resp->err) {
+		lderr(cct) << " Failed to get path info, Error Code: " << resp->err->ecode 
+			<< " Error Msg: " << resp->err->message
+			<< " Reason: " << resp->err->cause << dendl;
+		goto failed;
+	}
+	cli->cetcd_response_print(resp);
+	cli->cetcd_response_release(resp);
+	
+	//attach iscsi device and mount it to cache_path
+	mounted = cli->cetcd_check_mount_stat();
+	if (!mounted) {
+		r = cli->cetcd_attach_device(devname, sizeof(devname));
+		if (r == -1)
+			goto failed;
+		r = cli->cetcd_mount_device(devname, cache_path.c_str());
+		if (r == -1)
+			goto failed;
+	}
+	return true;
+	
+failed:
+	
+	lderr(cct) << "Failed to pre initial Local Cache, exit!!!" << dendl;
+	assert(0);
+	return false;
+}
+
+bool ObjectCacher::init_cache(uint64_t cache_size, uint32_t obj_order, 
+ 	const std::string &obj_prefix, const std::string &cache_path, bool old_format, 
+ 	ObjectSet *oset, const file_layout_t &l) 
+{ 
+	if(!cct->_conf->rbd_ssd_cache)
+		return false;
+	
+  	const uint64_t min_cache = 5*1024*1024*1024ul;
+  	const uint64_t max_cache = 200*1024*1024*1024ul;
+  	std::string _cache_path(cache_path); //format: /$No.:LCache/
+  	_cache_path += name;
+  
 	uint64_t _max_dirty = cct->_conf->rbd_ssd_cache_max_dirty;
 	uint64_t _target_dirty = cct->_conf->rbd_ssd_cache_target_dirty;
-	uint64_t _cache_size = cct->_conf->rbd_ssd_cache_size;
-	if ( _cache_size == 0 ) {
-		_cache_size = cache_size;
-		_max_dirty = (uint64_t)_cache_size * 0.8;
-		_target_dirty = (uint64_t)_cache_size * 0.5;
-	}
+	uint64_t _cache_size = cct->_conf->rbd_ssd_cache_size > 0? 
+		cct->_conf->rbd_ssd_cache_size: cache_size;
+	if (_cache_size < min_cache)
+		_cache_size = min_cache;
+	else if (_cache_size > max_cache)
+		_cache_size = max_cache;
+	
+	if (_max_dirty == 0 ||
+		_max_dirty >= _cache_size)
+		_max_dirty = (uint64_t)_cache_size*0.8;
+	if (_target_dirty == 0 ||
+		_target_dirty >= _max_dirty)
+		_target_dirty = (uint64_t)_cache_size*0.5;
 	
 	lcache = new LCache(this, lock, 
 		_cache_size, 
@@ -2820,7 +2892,7 @@ void ObjectCacher::init_cache(uint64_t cache_size, uint32_t obj_order,
 		_target_dirty,
 		cct->_conf->rbd_ssd_cache_dirty_age,
 		ro_cache,
-		cache_path);
+		_cache_path);
 
 	lcache->set_image_size(cache_size*20);
 	lcache->set_obj_order(obj_order);
@@ -2830,9 +2902,11 @@ void ObjectCacher::init_cache(uint64_t cache_size, uint32_t obj_order,
 	max_dirty = ro_cache? 0: max_dirty;
 	max_objects = (max_objects < 1024)? 1024: ((max_objects > 2048)? 2048: max_objects);
 	lcache->set_max_objects(max_objects);
-
+	local_cache = cct->_conf->rbd_ssd_cache;
+  	ro_cache = cct->_conf->rbd_ssd_rcache;
 	lcache->start(oset, l);
-  }
+	
+	return true;
 }
 
 int LCache::start(ObjectCacher::ObjectSet *oset, const file_layout_t &l)
