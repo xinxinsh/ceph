@@ -2638,6 +2638,22 @@ extern "C" int rbd_poll_io_events(rbd_image_t image, rbd_completion_t *comps, in
   return r;
 }
 
+extern "C" int rbd_throttle_set(rbd_image_t image,  Qos_specs *qos_specs, int len)
+{
+  librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
+  if(!qos_specs)
+     return -1;
+  map<string, double> pairs;
+  for(int i=0; i<len; i++){
+     string key =(qos_specs+i)->key;
+     string value = (qos_specs+i)->value;
+     double ret = atof(value.c_str());
+     pairs[key]=ret;
+  }
+  int r = librbd::throttle_set(ictx, &pairs);
+  return r;
+}
+
 extern "C" int rbd_metadata_get(rbd_image_t image, const char *key, char *value, size_t *vallen)
 {
   librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;

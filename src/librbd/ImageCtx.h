@@ -154,6 +154,7 @@ namespace librbd {
 
     ContextWQ *op_work_queue;
     ThrottleState *throttlestate;
+    ThrottleConfig cfg;
 
     // Configuration
     static const string METADATA_CONF_PREFIX;
@@ -220,6 +221,8 @@ namespace librbd {
     void init();
 	void init_throttle();
 	int post_init(const std::string &ssd_cache_path);
+    void init_throttle();
+    void fix_throttle(map<std::string, double> *pairs, bool use_conf);
     void shutdown();
     void init_layout();
     void perf_start(std::string name);

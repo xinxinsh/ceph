@@ -174,7 +174,8 @@ struct C_InvalidateCache : public Context {
       operations(new Operations<>(*this)),
       exclusive_lock(nullptr), object_map(nullptr),
       aio_work_queue(nullptr), op_work_queue(nullptr),
-      throttlestate(nullptr), asok_hook(nullptr)
+      throttlestate(nullptr), cfg((CephContext*)p.cct()),
+      asok_hook(nullptr)
   {
     md_ctx.dup(p);
     data_ctx.dup(p);
@@ -292,19 +293,45 @@ struct C_InvalidateCache : public Context {
       object_set->return_enoent = true;
       object_cacher->start();
     }
+    if(throttle) 
+        throttlestate = new ThrottleState(this);
 
     readahead.set_trigger_requests(readahead_trigger_requests);
     readahead.set_max_readahead_size(readahead_max_bytes);
   }
 
+  void ImageCtx::fix_throttle(map<std::string, double> *pairs, bool use_conf) {
+    if(!pairs->empty()) {
+        cfg.buckets[THROTTLE_TPS_TOTAL].avg = cfg.map_to_cfg(pairs, "total_bytes_sec", 0);
+        cfg.buckets[THROTTLE_TPS_READ].avg = cfg.map_to_cfg(pairs, "read_bytes_sec", 0 );
+        cfg.buckets[THROTTLE_TPS_WRITE].avg = cfg.map_to_cfg(pairs,"write_bytes_sec",0);
+        cfg.buckets[THROTTLE_OPS_TOTAL].avg = cfg.map_to_cfg(pairs,"total_iops_sec", 0);
+        cfg.buckets[THROTTLE_OPS_READ].avg = cfg.map_to_cfg(pairs,"read_iops_sec",0);
+        cfg.buckets[THROTTLE_OPS_WRITE].avg = cfg.map_to_cfg(pairs,"write_iops_sec",0);
+        cfg.buckets[THROTTLE_TPS_TOTAL].max = cfg.map_to_cfg(pairs,"total_bytes_sec_max",0);
+        cfg.buckets[THROTTLE_TPS_READ].max = cfg.map_to_cfg(pairs,"read_bytes_sec_max",0);
+        cfg.buckets[THROTTLE_TPS_WRITE].max = cfg.map_to_cfg(pairs, "write_bytes_sec_max", 0);
+        cfg.buckets[THROTTLE_OPS_TOTAL].max = cfg.map_to_cfg(pairs,"total_iops_sec_max",0);
+        cfg.buckets[THROTTLE_OPS_READ].max = cfg.map_to_cfg(pairs,"read_iops_sec_max",0);
+        cfg.buckets[THROTTLE_OPS_WRITE].max = cfg.map_to_cfg(pairs, "write_iops_sec_max", 0);
+        cfg.buckets[THROTTLE_TPS_TOTAL].burst_length = cfg.map_to_cfg(pairs, "total_bytes_sec_max_length", 1);
+        cfg.buckets[THROTTLE_TPS_READ].burst_length = cfg.map_to_cfg(pairs,"read_bytes_sec_max_length", 1);
+        cfg.buckets[THROTTLE_TPS_WRITE].burst_length = cfg.map_to_cfg(pairs, "write_bytes_sec_max_length", 1);
+        cfg.buckets[THROTTLE_OPS_TOTAL].burst_length = cfg.map_to_cfg(pairs, "total_iops_sec_max_length", 1);
+        cfg.buckets[THROTTLE_OPS_READ].burst_length = cfg.map_to_cfg(pairs, "read_iops_sec_max_length", 1);
+        cfg.buckets[THROTTLE_OPS_WRITE].burst_length = cfg.map_to_cfg(pairs, "write_iops_sec_max_length", 1);
+        cfg.op_size = cfg.map_to_cfg(pairs,"size_iops_sec", 0);
+    }
+    else {
+       if(use_conf)
+          cfg.throttle_config(size);
+      }
+  }
+
   void ImageCtx::init_throttle() {
-	if (throttle) {
-      ThrottleConfig cfg(cct);
-      cfg.throttle_config(size);
-	  
+    if (throttle) {	  
       if (cfg.throttle_is_valid()) {
-        throttlestate = new ThrottleState(this);
-        throttlestate->cfg = cfg;
+          throttlestate->cfg = cfg;
       }
       else
         throttle = false;

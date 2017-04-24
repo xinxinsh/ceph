@@ -35,6 +35,7 @@
 #include "librbd/ObjectMap.h"
 #include "librbd/Operations.h"
 #include "librbd/parent_types.h"
+#include "librbd/RbdThrottle.h"
 #include "librbd/Utils.h"
 #include "librbd/operation/TrimRequest.h"
 #include "include/util.h"
@@ -44,6 +45,7 @@
 #include <boost/scope_exit.hpp>
 #include <boost/variant.hpp>
 #include "include/assert.h"
+
 
 #define dout_subsys ceph_subsys_rbd
 #undef dout_prefix
@@ -2745,6 +2747,80 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       ictx->completed_reqs.pop_front();
     }
     return i;
+  }
+
+  int throttle_set(ImageCtx *ictx, map<string, double> *pairs)
+  {
+    CephContext *cct = ictx->cct;
+
+    ldout(cct, 20) << "throttle_set " << ictx << dendl;
+    map<string, bufferlist> data;
+
+    ldout(cct, 20) << "throttle_mode  " << cct->_conf->rbd_throttle_mode << dendl;
+    switch (cct->_conf->rbd_throttle_mode) {
+      case THROTTLE_MODE_HDD:
+        ldout(cct, 20) << "throttle mode HDD:ops valid value is 200~600 and tps valid value is 20M ~ 60M" << dendl;
+
+        if((*pairs)["read_bytes_sec"] < (20<< 20) || (*pairs)["read_bytes_sec"] > (60 << 20) )
+            return -1;
+        if((*pairs)["write_bytes_sec"] < (20<< 20) || (*pairs)["write_bytes_sec"] > (60 << 20) )
+            return -1;
+        if((*pairs)["read_iops_sec"] < 200 || (*pairs)["read_iops_sec"] > 600 )
+            return -1;
+        if((*pairs)["write_iops_sec"] < 200 || (*pairs)["write_iops_sec"] > 600 )
+            return -1;
+        break;
+      case THROTTLE_MODE_EDD:
+        ldout(cct, 20) << "throttle mode EDD:ops valid value is 2000~4000 and tps valid value is 50M ~ 128M" << dendl;
+        if((*pairs)["read_bytes_sec"] < (50<< 20) || (*pairs)["read_bytes_sec"] > (128 << 20) )
+            return -1;
+        if((*pairs)["write_bytes_sec"] < (50<< 20) || (*pairs)["write_bytes_sec"] > (128 << 20) )
+            return -1;
+        if((*pairs)["read_iops_sec"] < 2000 || (*pairs)["read_iops_sec"] > 4000 )
+            return -1;
+        if((*pairs)["write_bytes_sec"] < 2000 || (*pairs)["write_iops_sec"] > 4000 )
+            return -1;
+        break;
+
+        case THROTTLE_MODE_SSD:
+          ldout(cct, 20) << "throttle mode SSD:ops valid value is 10000~30000 and tps valid value is 50M ~ 320M" << dendl;
+        if((*pairs)["read_bytes_sec"] < (50<< 20) || (*pairs)["read_bytes_sec"] > (320 << 20) )
+            return -1;
+        if((*pairs)["write_bytes_sec"] < (50<< 20) || (*pairs)["write_bytes_sec"] > (320 << 20) )
+            return -1;
+        if((*pairs)["read_iops_sec"] < 10000 || (*pairs)["read_iops_sec"] > 30000 )
+            return -1;
+        if((*pairs)["write_iops_sec"] < 10000 || (*pairs)["write_iops_sec"] > 30000 )
+            return -1;
+        break;
+        default:
+          ldout(cct, 20) << "ops valid value is 1~100000 and tps valid value is 1M ~ 1000M" << dendl;
+      }
+
+    for (std::map<std::string, double>::iterator it = pairs->begin();it != pairs->end(); ++it) {
+
+      ostringstream throttle_value;
+      throttle_value << it->second;
+      data[it->first].append(throttle_value.str());
+      ldout(cct, 20) << "throttle_set " << ictx << " key=" << it->first << " value="<< it->second << dendl;
+
+    }
+
+    int r = ictx->state->refresh_if_required();
+    if (r < 0) {
+      return r;
+    }
+    ictx->fix_throttle(pairs,false);
+    r = ictx->cfg.throttle_is_valid();
+    if(r < 0)
+      return r;
+
+    r = cls_client::metadata_set(&ictx->md_ctx, ictx->header_oid, data);
+    if (r < 0)
+      return r;
+    ictx->notify_update();
+
+    return 0;
   }
 
   int metadata_get(ImageCtx *ictx, const string &key, string *value)

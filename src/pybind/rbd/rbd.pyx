@@ -123,8 +123,13 @@ cdef extern from "rbd/librbd.h" nogil:
         time_t last_update
         bint up
 
-    void rbd_version(int *major, int *minor, int *extra)
+    ctypedef struct Qos_specs:
+        char *key
+        char *value
 
+    int rbd_throttle_set(rbd_image_t image,  Qos_specs *qos_spec, int len) 
+
+    void rbd_version(int *major, int *minor, int *extra)
     void rbd_image_options_create(rbd_image_options_t* opts)
     void rbd_image_options_destroy(rbd_image_options_t opts)
     int rbd_image_options_set_string(rbd_image_options_t opts, int optname,
@@ -1318,6 +1323,36 @@ cdef class Image(object):
         :returns: :class:`SnapIterator`
         """
         return SnapIterator(self)
+    def set_qos_spec(self, qos_specs):
+
+        """
+        set an rbd image qos
+        """
+        if qos_specs.has_key('consumer'):
+            del qos_specs['consumer']
+        for key in qos_specs:
+           str_value = str(qos_specs[key])
+           qos_specs[key] = str_value
+        qos_len = len(qos_specs)
+        cdef:
+            int _len = qos_len 
+            Qos_specs *specs = NULL
+        try:
+            specs = <Qos_specs *>realloc_chk(specs,
+                sizeof(Qos_specs) * _len)
+
+            i = 0
+            for key in qos_specs:
+                value = qos_specs[key]
+                specs[i].key = key
+                specs[i].value = value
+                i +=1
+            with nogil:
+                ret = rbd_throttle_set(self.image, specs, _len)
+            if ret != 0:
+                raise make_ex(ret, 'error  seting qos on %s' % (self.name))
+        finally:
+            free(specs)
 
     def create_snap(self, name):
         """

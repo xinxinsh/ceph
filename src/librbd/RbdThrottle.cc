@@ -319,9 +319,27 @@ bool ThrottleConfig::throttle_is_valid()
         lderr(cct) << "bps_max/iops_max cannot be lower than bps/iops" << dendl;
         return false;
     }
+    if(buckets[i].max == 0) {
+       buckets[i].max = buckets[i].avg / 10;
+    }
   }
 
   return true;
+}
+
+/* convert map a throttling configuration
+ *      @pairs a throttling map
+ *      @key a throttling configuration key
+ *      @val: value of a throttling configuration key
+ *            */
+
+double ThrottleConfig::map_to_cfg(map<std::string, double> *pairs, const string &key, const double val)
+{
+   map<std::string, double>::iterator it = pairs->find(key);
+   if(it == pairs->end())
+     return val;
+   else
+     return it->second;
 }
 
 /* Used to configure the throttle */
@@ -375,10 +393,6 @@ void ThrottleConfig::throttle_config(uint64_t image_size)
         buckets[THROTTLE_OPS_READ].max = cct->_conf->rbd_throttle_ops_read_max;
         buckets[THROTTLE_OPS_WRITE].max = cct->_conf->rbd_throttle_ops_write_max;
 
-		for (int i = 0; i < BUCKETS_COUNT; ++i) {
-			if (buckets[i].max == 0)
-				buckets[i].max = buckets[i].avg / 10;
-		}
   }
 
   buckets[THROTTLE_TPS_TOTAL].burst_length = cct->_conf->rbd_throttle_tps_total_max_length;
