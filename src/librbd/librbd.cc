@@ -2669,7 +2669,7 @@ extern "C" int rbd_metadata_get(rbd_image_t image, const char *key, char *value,
     *vallen = val_s.size();
     tracepoint(librbd, metadata_get_exit, r, key, NULL);
   } else {
-    strncpy(value, val_s.c_str(), val_s.size());
+    strcpy(value, val_s.c_str());
     tracepoint(librbd, metadata_get_exit, r, key, value);
   }
   return r;
@@ -2700,6 +2700,11 @@ extern "C" int rbd_metadata_list(rbd_image_t image, const char *start, uint64_t 
   tracepoint(librbd, metadata_list_enter, ictx);
   map<string, bufferlist> pairs;
   int r = librbd::metadata_list(ictx, start, max, &pairs);
+  if (r < 0) {
+    tracepoint(librbd, metadata_list_exit, r);
+    return r;
+  }
+
   size_t key_total_len = 0, val_total_len = 0;
   bool too_short = false;
   for (map<string, bufferlist>::iterator it = pairs.begin();
@@ -2707,7 +2712,7 @@ extern "C" int rbd_metadata_list(rbd_image_t image, const char *start, uint64_t 
     key_total_len += it->first.size() + 1;
     val_total_len += it->second.length() + 1;
   }
-  if (*key_len < key_total_len || *val_len < key_total_len)
+  if (*key_len < key_total_len || *val_len < val_total_len)
     too_short = true;
   *key_len = key_total_len;
   *val_len = val_total_len;
@@ -2720,14 +2725,15 @@ extern "C" int rbd_metadata_list(rbd_image_t image, const char *start, uint64_t 
 
   for (map<string, bufferlist>::iterator it = pairs.begin();
        it != pairs.end(); ++it) {
-    strncpy(key_p, it->first.c_str(), it->first.size());
-    key_p += it->first.size() + 1;
-    strncpy(value_p, it->second.c_str(), it->second.length());
+    strcpy(key_p, it->first.c_str());
+    key_p += it->first.length() + 1;
+    strcpy(value_p, it->second.to_str().c_str());
     value_p += it->second.length() + 1;
     tracepoint(librbd, metadata_list_entry, it->first.c_str(), it->second.c_str());
   }
-  tracepoint(librbd, metadata_list_exit, r);
-  return r;
+  ssize_t ret = pairs.size();
+  tracepoint(librbd, metadata_list_exit, ret);
+  return ret;
 }
 
 extern "C" int rbd_mirror_image_enable(rbd_image_t image)
