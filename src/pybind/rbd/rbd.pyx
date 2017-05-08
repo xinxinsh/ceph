@@ -180,6 +180,13 @@ cdef extern from "rbd/librbd.h" nogil:
                                         rbd_mirror_image_status_state_t *states,
                                         int *counts, size_t *maxlen)
 
+    int rbd_metadata_get(rbd_image_t image, const char *key, char *value, size_t *val_len)
+    int rbd_metadata_set(rbd_image_t image, const char *key, const char *value)
+    int rbd_metadata_remove(rbd_image_t image, const char *key)
+    int rbd_metadata_list(rbd_image_t image, const char *start, uint64_t max,
+                          char *keys, size_t *key_len, char *values, 
+                          size_t *vals_len)
+
     int rbd_open(rados_ioctx_t io, const char *name,
                  rbd_image_t *image, const char *snap_name)
     int rbd_open_read_only(rados_ioctx_t io, const char *name,
@@ -1487,6 +1494,72 @@ cdef class Image(object):
             ret = rbd_snap_set(self.image, _name)
         if ret != 0:
             raise make_ex(ret, 'error setting image %s to snapshot %s' % (self.name, name))
+
+    def metadata_set(self, key, value):
+        key = cstr(key, 'key')
+        value = cstr(value, 'value')
+        cdef:
+            char* _key = key
+            char* _value = value
+
+        with nogil:
+            ret = rbd_metadata_set(self.image, _key, _value)
+        if ret < 0:
+            raise make_ex(ret, 'error setting metadata %s'% (key,))
+
+    def metadata_get(self, key):
+        key = cstr(key, 'key')
+        cdef:
+            size_t value_size = 512
+            char *value = NULL
+            char* _key = key
+
+        try:
+            value = <char *>realloc_chk(value, value_size)
+            with nogil:
+                ret = rbd_metadata_get(self.image, _key, value, &value_size)
+            if ret < 0:
+                raise make_ex(ret, 'error getting metadata %s'% (key,))
+            return (key, decode_cstr(value))
+        finally:
+            free(value)
+
+    def metadata_remove(self, key):
+        key = cstr(key, 'key')
+        cdef:
+            char* _key = key
+
+        with nogil:
+            ret = rbd_metadata_remove(self.image, _key)
+        if ret != 0:
+            raise make_ex(ret, 'error removing metadata Key %s' % (key,))
+
+    def metadata_list(self):
+        cdef:
+            size_t key_size = 512, value_size = 512
+            char *keys = NULL
+            char *values = NULL
+
+        try:
+            while True:
+                keys = <char *>realloc_chk(keys, key_size)
+                values = <char *>realloc_chk(values, value_size)
+                with nogil:
+                    ret = rbd_metadata_list(self.image, "",
+                                           0, keys, &key_size,
+                                           values, &value_size)
+                if ret >= 0:
+                    break
+                elif ret != -errno.ERANGE:
+                    raise make_ex(ret, 'error listing metadata')
+            if ret == 0:
+                return []
+            mkeys = map(decode_cstr, keys[:key_size - 1].split('\0'))
+            mvalues = map(decode_cstr, values[:value_size - 1].split('\0'))
+            return list(zip(mkeys, mvalues))
+        finally:
+            free(keys)
+            free(values)
 
     def read(self, offset, length, fadvise_flags=0):
         """
