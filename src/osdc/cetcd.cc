@@ -306,18 +306,20 @@ cetcd_string cetcd_client::cetcd_watcher_build_url(cetcd_watcher *watcher)
 
 bool cetcd_client::cetcd_check_mount_stat()
 {
-	int r;
 	bool mounted = false;
+	char p_dir[256] = {0};
 	struct stat st, p_st;
-	char* p_dir = dirname((char*)cache_path.c_str()); //root directory
 	
-	if ((r = stat(cache_path.c_str(), &st)) != 0) {
-		lderr(oc->cct) << "Failed to get stat info: " << cache_path.c_str()
+	int s = cache_path.find_last_of('/');
+	strncpy(p_dir, (char*)cache_path.c_str(), s+1);
+	
+	if (stat(cache_path.c_str(), &st) != 0) {
+		lderr(oc->cct) << "Failed to get stat info for  " << cache_path.c_str()
 			<< ", err msg: " << cpp_strerror(errno) << dendl;
 		return false;
 	}
-	if ((r = stat(p_dir, &p_st)) != 0) {
-		lderr(oc->cct) << "Failed to get stat info: " << p_dir 
+	if (stat(p_dir, &p_st) != 0) {
+		lderr(oc->cct) << "Failed to get stat info for " << p_dir 
 			<< ", err msg: " << cpp_strerror(errno) << dendl;
 		return false;
 	}
@@ -328,18 +330,13 @@ bool cetcd_client::cetcd_check_mount_stat()
 	return mounted;
 }
 
-int cetcd_client::cetcd_attach_device(char *devname, int size)
+int cetcd_client::cetcd_get_ips(vector <std::string> &ips)
 {
 	int r;
-	bool slave = false;
-	std::string uuidstring;
 	char localhost[64] = {0};
 	struct addrinfo hint;
     struct addrinfo *res, *ores;
-
-	if (NULL == devname || size <= 0)
-		return -1;
-
+	
 	r = gethostname(localhost, sizeof(localhost));
 	if (r == -1) {
 		lderr(oc->cct) << "Failed to get host name"
@@ -366,85 +363,151 @@ int cetcd_client::cetcd_attach_device(char *devname, int size)
 		char ipstr[16] = {0};
 		inet_ntop(AF_INET, &(((struct sockaddr_in *)(res->ai_addr))->sin_addr), ipstr, sizeof(ipstr));
 
-		map_iterator it = server_dev_map.find(ipstr);
-		if (it != server_dev_map.end()) {
-			uuidstring = it->second;
-			slave = true;
-			break;
-		}
+		ips.push_back((char*)ipstr);
 		res = res->ai_next;
 	}
 	freeaddrinfo(ores);
 
-    //rebuild raid on second(slave) node 
-	if (slave) {
-		//systemctl stop target.service
-		ldout(oc->cct, 11) << " Try to stop target service" << dendl;
-		r = cetcd_stop_target();
-		if (r == -1)
-			goto failed;
+	return 1;
+}
 
-		//convert UUID to name
-		ldout(oc->cct, 11) << " Try to convert uuid: " << uuidstring.c_str() 
-			<< " to device name " << dendl;
-		r = cetcd_convert_device(uuidstring.c_str(), devname, size);
-		if (r == -1)
-			goto failed;
-		
-		//mdadm --assemble /dev/md{X} /dev/nvme0n1 --run? 
-		ldout(oc->cct, 11) << " Try to rebuild raid1 with deivce: " << devname << dendl;
-		r = cetcd_rebuild_raid(devname);
-		if (r == -1)
-			goto failed;
-	} else {
-		//ping {tip} -c 4
-		ldout(oc->cct, 11) << " Try to get target ip" << dendl;
-		char tip[32] = {0};
-		r = cetcd_get_target_ip(tip, sizeof(tip));
-		if (r == -1)
-			goto failed;
+int cetcd_client::cetcd_check_role(char *uuidstring, int len)
+{
+	int r;
+	vector<std::string> ips;
 
-		//iscsiadm -m discovery -t st -p {target-ip}
-		ldout(oc->cct, 11) << " Try to discovery target from portal: " << tip << dendl;
-		char iqn[64] = {0};
-		r = cetcd_discovery_target(tip, iqn, sizeof(iqn));
-		if (r == -1)
-		 	goto failed;
-		 
-		//iscsiadm -m node -T {target-iqn} -p {target-ip} -l
-		ldout(oc->cct, 11) << " Try to login target: " << iqn 
-			<< " on portal: " << tip << dendl;
-		r = cetcd_login_target(tip, iqn);
-		if (r == -1)
-		 	goto failed;
-		 
-		//iscsiadm -m session -P 3
-		ldout(oc->cct, 11) << " Try to get iscsi device" << dendl;
-		r = cetcd_get_device(iqn, devname, size);
-		if (r == -1)
-		 	goto failed;
-		 
-		//mdadm --assemble /dev/md{X} /dev/{dev} --run?
-		ldout(oc->cct, 11) << " Try to rebuild raid1 with deivce: " << devname << dendl;
-		r = cetcd_rebuild_raid(devname);
-		if (r == -1)
-		 	goto failed;
+	if (NULL == uuidstring || len <= 0)
+		return -1;
+	
+	r = cetcd_get_ips(ips);
+	if (r == -1)
+		return r;
+
+	vector<std::string>::iterator it = ips.begin();
+	while (it != ips.end()) {
+		dev_map_iterator it1 = server_dev_map.find(*it);
+		role_map_iterator it2 = server_role_map.find(*it);
+		if (it1 != server_dev_map.end()) {
+			strncpy(uuidstring, (it1->second).c_str(), 
+				(it1->second.length() > (unsigned int)len ? len: it1->second.length()));
+			return it2->second;
+		}
+		++it;
+	}
+
+	return 2;
+}
+
+int cetcd_client::cetcd_attach_device(char *devname, int size)
+{
+	int r;
+	char uuidstring[64] = {0};
+
+	if (NULL == devname || size <= 0)
+		return -1;
+
+	r = cetcd_check_role((char*)uuidstring, sizeof(uuidstring));
+	switch( r ) {
+	case ETCD_SLAVE: 
+		{
+			/*running on slave node,
+			these could happen on the following two cases:
+			 1. master node crashed, migrate to slave node
+			 2. scheduled migration, migrate from master node to slave node 
+
+
+			 CAUTION: to simplify, we assue the master node has dead in the following 
+			 code implementation, for the second case, you should deal with the master 
+			 data copy manually(ie, assemble raid1 device on the slave node).
+			*/
+			//systemctl stop target.service
+			ldout(oc->cct, 11) << " Try to stop target service" << dendl;
+			r = cetcd_stop_target();
+			if (r == -1)
+				goto failed;
+
+			//convert UUID to name
+			ldout(oc->cct, 11) << " Try to convert uuid: " << uuidstring
+				<< " to device name " << dendl;
+			r = cetcd_convert_device(uuidstring, devname, size);
+			if (r == -1)
+				goto failed;
+			
+			//mdadm --assemble /dev/md{X} /dev/nvme0n1 --run? 
+			ldout(oc->cct, 11) << " Try to assemble raid1 with deivce: " << devname << dendl;
+			r = cetcd_assemble_raid(devname);
+			if (r == -1)
+				goto failed;	
+		}
+		break;
+	case ETCD_MASTER: //normal case, running on master node
+		/*administrator ensure cache device has been prepared well 
+		on the installation and config phase, default raid device: /dev/md0*/
+		r = 0;
+		break;
+	case ETCD_OTHER: 
+		{
+			/* running on the third available node, 
+			these could happened on the following two cases:
+			  1. scheduled migration: master/slave node -> the third node
+			  2. disaster recovery migration: master node crashed, migrate to the third node 
+
+			  CAUTION: to simplify, we only use the first active node(device) as our target
+			  (ie, cache data reside on a degrade raid device , for your data safty, 
+			  you should promote your cache device as soon as possible)
+			*/
+			//ping {tip} -c 4
+			ldout(oc->cct, 11) << " Try to get target ip" << dendl;
+			char tip[32] = {0};
+			r = cetcd_get_target_ip(tip, sizeof(tip));
+			if (r == -1)
+				goto failed;
+
+			//iscsiadm -m discovery -t st -p {target-ip}
+			ldout(oc->cct, 11) << " Try to discovery target from portal: " << tip << dendl;
+			char iqn[64] = {0};
+			r = cetcd_discovery_target(tip, iqn, sizeof(iqn));
+			if (r == -1)
+			 	goto failed;
+			 
+			//iscsiadm -m node -T {target-iqn} -p {target-ip} -l
+			ldout(oc->cct, 11) << " Try to login target: " << iqn 
+				<< " on portal: " << tip << dendl;
+			r = cetcd_login_target(tip, iqn);
+			if (r == -1)
+			 	goto failed;
+			 
+			//iscsiadm -m session -P 3
+			ldout(oc->cct, 11) << " Try to get iscsi device" << dendl;
+			r = cetcd_get_device(iqn, devname, size);
+			if (r == -1)
+			 	goto failed;
+			 
+			//mdadm --assemble /dev/md{X} /dev/{dev} --run?
+			ldout(oc->cct, 11) << " Try to assemble raid1 with deivce: " << devname << dendl;
+			r = cetcd_assemble_raid(devname);
+			if (r == -1)
+			 	goto failed;
+		}
+		break;
+	default:
+		goto failed;
 	}
 	
-	return 1;
+	return r;
 
 failed:
-	
 	lderr(oc->cct) << " Failed to attach device" << dendl;
 	return -1;
 }
 
 int cetcd_client::cetcd_mount_device(const char *dev, const char *path)
 {
-	//mount {dev} {path}
+	//mount {dev} {path} 2>&1
 	if (NULL == dev || NULL == path)
 		return -1;
-	
+
+	bool succeed = true;
 	FILE *pf = NULL;
 	char cmd[128] = {0};
 	snprintf(cmd, sizeof(cmd), "mount %s %s 2>&1", dev, path);
@@ -457,23 +520,30 @@ int cetcd_client::cetcd_mount_device(const char *dev, const char *path)
 	}
 	ldout(oc->cct, 11) << " Succeed to create sub-process: " << cmd << dendl;
 
+	char key[256] = {0};
+	snprintf(key, sizeof(key), "%s is alreadly mounted on %s", dev, path);
 	char output[1024] = {0};
-	if (fgets(output, sizeof(output), pf) != NULL) {
-		lderr(oc->cct) << "Failed to mount " << dev << " to " << path
-			<< ", err msg: " << output << dendl;
-		pclose(pf);
-		return -1;
+	while(fgets(output, sizeof(output), pf) != NULL) {
+		if (strstr(output, key) == NULL) {
+			succeed = false;
+			lderr(oc->cct) << "Failed to mount " << dev << " to " << path
+				<< ", err msg: " << output << dendl;
+		} else {
+			succeed = true;
+		}
 	}
 	
 	pclose(pf);
-	ldout(oc->cct, 11) << " Succeed to mount device" << dendl;
-	return 1;
+	return (succeed? 1: -1);
 }
 
 int cetcd_client::cetcd_start_target()
 {
+	bool succeed = true;
+	FILE *pf = NULL;
 	const char *cmd = "systemctl start target.service";
-	FILE *pf = popen(cmd, "r");
+	
+	pf = popen(cmd, "r");
 	if (NULL == pf) {
 		lderr(oc->cct) << " Failed to create sub-process: " << cmd 
 			<< " , err msg: " << cpp_strerror(errno) << dendl;
@@ -482,43 +552,40 @@ int cetcd_client::cetcd_start_target()
 	ldout(oc->cct, 11) << " Succeed to create sub-process: " << cmd << dendl;
 
 	char output[1024] = {0};
-	if (fgets(output, sizeof(output), pf) != NULL) {
+	while(fgets(output, sizeof(output), pf) != NULL) {
+		succeed = false;
 		lderr(oc->cct) << " Failed to start target.service, err msg: " << output << dendl;
-		pclose(pf);
-		return -1;
 	}
 	
 	pclose(pf);
-	ldout(oc->cct, 11) << " Succeed to start target.service" << dendl;
-	return 1;
+	return (succeed? 1: -1);
 }
 
 int cetcd_client::cetcd_stop_target()
 {
+	bool succeed = true;
+	FILE *pf = NULL;
 	const char *cmd = "systemctl stop target.service";
-	FILE *pf = popen(cmd, "r");
+
+	pf = popen(cmd, "r");
 	if (NULL == pf) {
 		lderr(oc->cct) << " Failed to create sub-process: " << cmd 
 			<< ", err msg: " << cpp_strerror(errno) << dendl;
 		return -1;
 	}
 
-	std::string msg;
-	char output[128] = {0};
-	while (fgets(output, sizeof(output), pf) != NULL) msg += output;
+	char output[1024] = {0};
+	while(fgets(output, sizeof(output), pf) != NULL) {
+		succeed = false;
+		lderr(oc->cct) << "Failed to stop target.service"
+			<<", err msg: " << output << dendl;
+	}
 
 	pclose(pf);
-	if (! msg.empty()) {
-		lderr(oc->cct) << "Failed to stop target.service"
-			<<", err msg: " << msg.c_str() << dendl;
-		return -1;
-	} else {
-		ldout(oc->cct, 11) << " Succeed to stop target.service" << dendl; 
-		return 1;
-	}
+	return (succeed? 1: -1);
 }
 
-int cetcd_client::cetcd_rebuild_raid(const char *devname)
+int cetcd_client::cetcd_assemble_raid(const char *devname)
 {
 	/*mdadm --assemble /dev/md{0|X} /dev/nvme0n1 --run? 
 	 *mdadm: /dev/md0 is already in use? 
@@ -527,18 +594,6 @@ int cetcd_client::cetcd_rebuild_raid(const char *devname)
 	if (NULL == devname)
 		return -1;
 
-	if(setreuid(0, 0) == -1) {
-		lderr(oc->cct) << " Failed to set real uid, "
-			<< "err msg: " << cpp_strerror(errno) << dendl;
-		return -1;
-	}
-
-	if(setregid(0, 0) == -1) {
-		lderr(oc->cct) << " Failed to set real gid, "
-			<< "err msg: " << cpp_strerror(errno) << dendl;
-		return -1;
-	}
-	
 	int num = 0;
 	bool succeed = false;
 	while (num < 128 && !succeed) {
@@ -563,7 +618,7 @@ int cetcd_client::cetcd_rebuild_raid(const char *devname)
 					<< " with device " << devname << dendl;
 				break;
 			} 
-			lderr(oc->cct) << " Failed to assemble raid dev/md"<< num 
+			lderr(oc->cct) << " Failed to assemble raid /dev/md"<< num 
 				<< " with device " << devname
 				<< ", err msg: " << output << dendl;
 		}
@@ -571,7 +626,7 @@ int cetcd_client::cetcd_rebuild_raid(const char *devname)
 		pclose(pf);
 	}
 
-	return (succeed? 1: -1);
+	return (succeed? num-1: -1);
 }
 
 int cetcd_client::cetcd_get_target_ip(char *tip, int size)
@@ -582,8 +637,9 @@ int cetcd_client::cetcd_get_target_ip(char *tip, int size)
 	*/
 	if (NULL == tip || size <= 0)
 		return -1;
-	
-	map_iterator it, it_end = server_dev_map.end();
+
+	//TODO: we now take the first active target as our candidate
+	dev_map_iterator it, it_end = server_dev_map.end();
 	for (it = server_dev_map.begin(); it != it_end; ++it) {
 		FILE *pf = NULL;
 		char cmd[128] = {0};
@@ -639,12 +695,16 @@ int cetcd_client::cetcd_discovery_target(const char *tip, char *iqn, int size)
 	char key[32] = {0};
 	snprintf(key, sizeof(key), "%s:3260", tip);
 	while (fgets(output, sizeof(output), pf) != NULL) {
-		//take the first target as our preference
-		lderr(oc->cct) << "output: " << output << dendl;
+		//TODO: we now take the first as our candidate 
+		ldout(oc->cct, 10) << " output: " << output << dendl;
+
 		if (strstr(output, key) != NULL) {
 			char* target = strtok(output, " ");
 			target = strtok(NULL, " ");
-			strncpy(iqn, target, size);
+			assert(target);
+
+			target[strlen(target)-1] = '\0'; //strip '/n'
+			snprintf(iqn, size, "%s", target);
 
 			pclose(pf);
 			ldout(oc->cct, 11) << " Succeed to find a target iqn: " << iqn << dendl;
@@ -669,7 +729,7 @@ int cetcd_client::cetcd_login_target(const char *tip, const char *iqn)
 
 	FILE *pf = NULL;
 	char cmd[256] = {0};
-	snprintf(cmd, sizeof(cmd), "iscsiadm -m node -T %s -p %s --login 2>&1", tip, iqn);
+	snprintf(cmd, sizeof(cmd), "iscsiadm -m node -T %s -p %s --login 2>&1", iqn, tip);
 
 	pf = popen(cmd, "r");
 	if (NULL == pf) {
@@ -697,7 +757,7 @@ int cetcd_client::cetcd_login_target(const char *tip, const char *iqn)
 
 int cetcd_client::cetcd_get_device(const char *iqn, char *devname, int size)
 {
-	/*iscsiadm -m session -P 3
+	/*iscsiadm -m session -P 3 -n {iqn}
 
 	************************
 	Attached SCSI devices:
@@ -711,7 +771,10 @@ int cetcd_client::cetcd_get_device(const char *iqn, char *devname, int size)
 		return -1;
 	
 	FILE *pf = NULL;
-	const char *cmd = "iscsiadm -m session -P 3  2>&1 | grep -e \"Attached scsi disk\"|cut -d ' ' -f 4";
+	char cmd[256] = {0};
+	
+	snprintf(cmd, sizeof(cmd), "iscsiadm -m session -n %s -P 3" 
+		" | grep -e \"Attached scsi disk\"|cut -d ' ' -f 4", iqn);
 	pf = popen(cmd, "r");
 	if (NULL == pf) {
 		lderr(oc->cct) << " Failed to create sub-process: " << cmd
@@ -722,11 +785,11 @@ int cetcd_client::cetcd_get_device(const char *iqn, char *devname, int size)
 
 	char output[1024] = {0};
 	if (fgets(output, sizeof(output), pf) != NULL) {
-		//sdo 	State:
+		//sdo\t\tState: running\n
 		char *p = output;
 
 		while (*p >= 'a' && *p <= 'z') ++p;
-		*p = '0';
+		*p = '\0';
 		snprintf(devname, size, "/dev/%s", output);
 		
 		pclose(pf);
@@ -760,7 +823,7 @@ int cetcd_client::cetcd_convert_device(const char *uuid, char *devname, int size
 			
 	char output[1024] = {0};
 	if (fgets(output, sizeof(output), pf) != NULL) {
-		lderr(oc->cct) << " output: " << output << dendl;
+		ldout(oc->cct, 7) << " output: " << output << dendl;
 
 		char *ptr = strtok(output, " ");
 		assert(ptr);
@@ -776,36 +839,6 @@ int cetcd_client::cetcd_convert_device(const char *uuid, char *devname, int size
 		<< ", err msg: " << cpp_strerror(errno)<< dendl;
 	pclose(pf);
 	return -1;	
-	
-#if 0
-	if(setreuid(0, 0) == -1) {
-		lderr(oc->cct) << " Failed to set real uid, "
-			<< "err msg: " << cpp_strerror(errno) << dendl;
-		return -1;
-	}
-	
-	blkid_cache cache = NULL;
-	if(blkid_get_cache(&cache, NULL) < 0) {
-		lderr(oc->cct) << "Failed to init blkid cache, "
-			<< "err msg: " << cpp_strerror(errno) << dendl;
-		return -1;
-	}
-
-	char *name;
-	if ((name = blkid_get_devname(cache, cmd, NULL))) {
-		/* do something with devname */
-		ldout(oc->cct, 11) << "Succeed to get devname: " << name << dendl;
-		strncpy(devname, name, size);
-		//string_free(name);
-		blkid_put_cache(cache);
-		return 1;
-	}
-
-	lderr(oc->cct) << " Failed to convert uuid to devname, "
-		<< "err msg: " << cpp_strerror(errno) << dendl;
-	blkid_put_cache(cache);
-	return -1;
-#endif
 }
 
 int cetcd_client::cetcd_curl_setopt(CURL *curl, cetcd_watcher *watcher) 
@@ -1456,13 +1489,15 @@ void cetcd_client::cetcd_node_print(cetcd_response_node *node)
         ldout(oc->cct, 11)<< "Node Key: " << node->key << dendl;
         ldout(oc->cct, 11)<< "Node Value: " << node->value << dendl;
         ldout(oc->cct, 11)<< "Node Dir: " << node->dir << dendl;
-		//node->key format: /1:data/ip
+		//node->key format: /1:data/ip:{priority} {priority} = 0-slave, 1-master
 		if (strstr(node->key, cache_path.c_str()) && !node->dir) {
-			char ip[64] = {"0"};
-			char *e = node->key + strlen(node->key) - 1;
-			char *p = strrchr(node->key, '/');
-			strncpy(ip, p+1, e-p+1);
+			char ip[64] = {0};
+			int start = strlen(cache_path.c_str()) + 1;
+			int last = strlen(node->key) - 1 - 1;
+			
+			strncpy(ip, node->key+start, last-start);
 			server_dev_map[ip] = node->value;
+			server_role_map[ip] = node->key[strlen(node->key)-1] == '1'? 1 : 0; 
 		}
 		
         if (node->nodes) {

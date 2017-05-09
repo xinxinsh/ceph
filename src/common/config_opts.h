@@ -1184,7 +1184,7 @@ OPTION(rbd_ssd_cache_max_dirty, OPT_LONGLONG, 0) //dirty limit in bytes, default
 OPTION(rbd_ssd_cache_target_dirty, OPT_LONGLONG, 0) //target dirty limit in bytes, default 50% of cache size
 OPTION(rbd_ssd_cache_dirty_age, OPT_FLOAT, 1.0) //second in cache before evict
 OPTION(rbd_ssd_cache_chunk_order, OPT_INT, 13) //chunk size in bytes, must be less than Object size and greater than 4k
-OPTION(rbd_ssd_cache_path, OPT_STR, "/$No.:LCache/") //local cache path
+OPTION(rbd_ssd_cache_path, OPT_STR, "/1:LCache/") //local cache path
 OPTION(rbd_ssd_config_server, OPT_STR, "127.0.0.1:2379")	//comma separate config server list(ip:port)
 OPTION(rbd_throttle, OPT_BOOL, false) // whether to enable throttle
 OPTION(rbd_throttle_mode, OPT_INT, 0) //images throttle type;four modes are supported: self-define(-1),HDD(0), EDD(1), SSD(2), default is HDD

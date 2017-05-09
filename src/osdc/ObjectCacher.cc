@@ -2827,8 +2827,9 @@ bool ObjectCacher::pre_init(const std::string &cache_path)
 		goto failed;
 	}
 
-	//get cache path from config server
 	cli->cetcd_set_path(cache_path);
+	
+	//get cache path from config server
 	resp = cli->cetcd_lsdir(cache_path.c_str(), true, true);
 	if(resp->err) {
 		lderr(cct) << " Failed to get path info, Error Code: " << resp->err->ecode 
@@ -2839,12 +2840,14 @@ bool ObjectCacher::pre_init(const std::string &cache_path)
 	cli->cetcd_response_print(resp);
 	cli->cetcd_response_release(resp);
 	
-	//attach iscsi device and mount it to cache_path
+	//Assemble raid device and mount it to cache_path
 	mounted = cli->cetcd_check_mount_stat();
 	if (!mounted) {
 		r = cli->cetcd_attach_device(devname, sizeof(devname));
 		if (r == -1)
 			goto failed;
+		
+		snprintf(devname, sizeof(devname), "/dev/md%d", r);
 		r = cli->cetcd_mount_device(devname, cache_path.c_str());
 		if (r == -1)
 			goto failed;
@@ -2868,6 +2871,7 @@ bool ObjectCacher::init_cache(uint64_t cache_size, uint32_t obj_order,
   	const uint64_t min_cache = 5*1024*1024*1024ul;
   	const uint64_t max_cache = 200*1024*1024*1024ul;
   	std::string _cache_path(cache_path); //format: /$No.:LCache/
+  	_cache_path += '/';
   	_cache_path += name;
   
 	uint64_t _max_dirty = cct->_conf->rbd_ssd_cache_max_dirty;

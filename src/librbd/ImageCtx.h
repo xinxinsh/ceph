@@ -220,6 +220,7 @@ namespace librbd {
     ~ImageCtx();
     void init();
 	void init_throttle();
+	//Register LCache metadatas into header object
 	int post_init(const std::string &ssd_cache_path);
     void fix_throttle(map<std::string, double> *pairs, bool use_conf);
     void shutdown();

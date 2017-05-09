@@ -38,6 +38,12 @@ enum ETCD_API_TYPE {
     ETCD_MEMBERS
 };
 
+enum SEVER_ROLE {
+	ETCD_SLAVE,
+	ETCD_MASTER,
+	ETCD_OTHER
+};
+
 /* etcd error codes range is [100, 500]
  * We use 1000+ as cetcd error codes;
  * */
@@ -106,8 +112,12 @@ cetcd_client* cetcd_client_create(ObjectCacher *oc, const std::string &addresses
 void cetcd_client_release(cetcd_client *cli);
 
 class cetcd_client {
-	typedef ceph::unordered_map<std::string, std::string> cetcd_map;
-	typedef ceph::unordered_map<std::string, std::string>::iterator map_iterator;
+	//key: server ip, value: device uuid
+	typedef ceph::unordered_map<std::string, std::string> cetcd_server_dev_map;
+	typedef ceph::unordered_map<std::string, std::string>::iterator dev_map_iterator;
+	//key: server ip, value: 1-master, 0-slave
+	typedef ceph::unordered_map<std::string, int> cetcd_server_role_map;
+	typedef ceph::unordered_map<std::string, int>::iterator role_map_iterator;
 public:
 	cetcd_client(ObjectCacher *_oc)
 		: oc(_oc), curl(NULL),
@@ -209,6 +219,8 @@ public:
 	
 	void cetcd_set_path(const std::string & path) { cache_path = path;}
 	bool cetcd_check_mount_stat();
+	int cetcd_check_role(char *uuidstring, int len);
+	/*Return raid device number, or -1*/
 	int cetcd_attach_device(char *dev, int size);
 	int cetcd_mount_device(const char *dev, const char *path);
 
@@ -221,12 +233,14 @@ private:
 	
 	int cetcd_start_target();
 	int cetcd_stop_target();
-	int cetcd_rebuild_raid(const char *devname);
+	/*Return raid device number, or -1*/
+	int cetcd_assemble_raid(const char *devname);
 	int cetcd_get_target_ip(char *tip, int size);
 	int cetcd_discovery_target(const char *tip, char *iqn, int size);
 	int cetcd_login_target(const char *tip, const char *iqn);
 	int cetcd_get_device(const char *iqn, char *devname, int size);
 	int cetcd_convert_device(const char* uuid, char *devname, int size);
+	int cetcd_get_ips(vector<std::string> &ips);
 
 private:
 	ObjectCacher* oc;
@@ -248,7 +262,8 @@ private:
         char *password;
     } settings;
 	std::string cache_path;
-	cetcd_map server_dev_map;
+	cetcd_server_dev_map server_dev_map;
+	cetcd_server_role_map server_role_map;
 } ;
 
 #endif
