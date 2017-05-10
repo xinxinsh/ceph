@@ -233,6 +233,7 @@ private:
 	
 	int cetcd_start_target();
 	int cetcd_stop_target();
+	int cetcd_stop_inactive_raid(const char *devname);
 	/*Return raid device number, or -1*/
 	int cetcd_assemble_raid(const char *devname);
 	int cetcd_get_target_ip(char *tip, int size);

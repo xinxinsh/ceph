@@ -410,6 +410,9 @@ int cetcd_client::cetcd_attach_device(char *devname, int size)
 	switch( r ) {
 	case ETCD_SLAVE: 
 		{
+			ldout(oc->cct, 5) << " Running on slave node, for your data safty, "
+				<< "pls rebuild front cache soon" << dendl;
+				
 			/*running on slave node,
 			these could happen on the following two cases:
 			 1. master node crashed, migrate to slave node
@@ -432,6 +435,12 @@ int cetcd_client::cetcd_attach_device(char *devname, int size)
 			r = cetcd_convert_device(uuidstring, devname, size);
 			if (r == -1)
 				goto failed;
+
+			//mdadm -S /dev/md{X}
+			ldout(oc->cct, 11) << " Try to stop inactive raid" << dendl;
+			r = cetcd_stop_inactive_raid(devname);
+			if (r == -1)
+				goto failed;
 			
 			//mdadm --assemble /dev/md{X} /dev/nvme0n1 --run? 
 			ldout(oc->cct, 11) << " Try to assemble raid1 with deivce: " << devname << dendl;
@@ -447,6 +456,9 @@ int cetcd_client::cetcd_attach_device(char *devname, int size)
 		break;
 	case ETCD_OTHER: 
 		{
+			ldout(oc->cct, 5) << " Running on the third node, for your data safty, "
+				<< "pls rebuild front cache soon" << dendl;
+			
 			/* running on the third available node, 
 			these could happened on the following two cases:
 			  1. scheduled migration: master/slave node -> the third node
@@ -482,6 +494,12 @@ int cetcd_client::cetcd_attach_device(char *devname, int size)
 			r = cetcd_get_device(iqn, devname, size);
 			if (r == -1)
 			 	goto failed;
+
+			//mdadm -S /dev/md{X}
+			ldout(oc->cct, 11) << " Try to stop inactive raid" << dendl;
+			r = cetcd_stop_inactive_raid(devname);
+			if (r == -1)
+				goto failed;
 			 
 			//mdadm --assemble /dev/md{X} /dev/{dev} --run?
 			ldout(oc->cct, 11) << " Try to assemble raid1 with deivce: " << devname << dendl;
@@ -573,6 +591,7 @@ int cetcd_client::cetcd_stop_target()
 			<< ", err msg: " << cpp_strerror(errno) << dendl;
 		return -1;
 	}
+	ldout(oc->cct, 11) << " Succeed to create sub-process: " << cmd << dendl;
 
 	char output[1024] = {0};
 	while(fgets(output, sizeof(output), pf) != NULL) {
@@ -585,12 +604,47 @@ int cetcd_client::cetcd_stop_target()
 	return (succeed? 1: -1);
 }
 
+int cetcd_client::cetcd_stop_inactive_raid(const char *devname)
+{
+	FILE *pf = NULL;
+	char cmd[128] = {0};
+
+	// /dev/sdn
+	char *tmp_dev = strrchr((char*)devname, '/');
+	++tmp_dev;
+	snprintf(cmd, sizeof(cmd), "cat /proc/mdstat|grep -e \"inactive %s\"", tmp_dev);
+	pf = popen(cmd, "r");
+	if (NULL == pf) {
+		lderr(oc->cct) << " Failed to create sub-process: " << cmd 
+			<< ", err msg: " << cpp_strerror(errno) << dendl;
+		return -1;
+	}
+	ldout(oc->cct, 11) << " Succeed to create sub-process: " << cmd << dendl;
+
+	/*cat /proc/mdstat 
+
+	Personalities : [raid1] 
+	md127 : inactive sdn[1](S)
+      		1953382400 blocks super 1.2
+	*/
+	char output[512] = {0};
+	if(fgets(output, sizeof(output), pf) != NULL) {
+		char *raid = strtok(output, ":");
+		assert(raid);
+		
+		//stop inactive raid
+		snprintf(cmd, sizeof(cmd), "mdadm -S /dev/%s", raid);
+		FILE *pf1 = popen(cmd, "r");
+		assert(pf1);
+		pclose(pf1);
+	}
+
+	pclose(pf);
+	return 1;
+}
+
 int cetcd_client::cetcd_assemble_raid(const char *devname)
 {
-	/*mdadm --assemble /dev/md{0|X} /dev/nvme0n1 --run? 
-	 *mdadm: /dev/md0 is already in use? 
-	 *mdadm: /dev/md1 has been started with 1 drive (out of 2)?
-	*/
 	if (NULL == devname)
 		return -1;
 
@@ -599,8 +653,9 @@ int cetcd_client::cetcd_assemble_raid(const char *devname)
 	while (num < 128 && !succeed) {
 		FILE *pf = NULL;
 		char cmd[128] = {0};
+		char output[512] = {0};
+		
 		snprintf(cmd, sizeof(cmd), "mdadm --assemble /dev/md%d %s --run 2>&1", num, devname);
-
 		pf = popen(cmd, "r");
 		if (NULL == pf) {
 			lderr(oc->cct) << " Failed to create sub-process: " << cmd 
@@ -609,24 +664,37 @@ int cetcd_client::cetcd_assemble_raid(const char *devname)
 		}
 		ldout(oc->cct, 11) << " Succeed to create sub-process: " << cmd << dendl;
 
-		char output[1024] = {0};
-		const char *key = "has been started with";
-		while (fgets(output, sizeof(output), pf) != NULL) {
-			if (strstr(output, key) != NULL) {
+		/*mdadm --assemble /dev/md{0|X} /dev/nvme0n1 --run? 
+
+		Possible output:
+	 		mdadm: /dev/md0 is already in use? 
+	 		mdadm: /dev/md1 has been started with 1 drive (out of 2)?
+	 		mdadm: /dev/sdn is busy - skipping  - pls check /proc/mdstat for details
+		*/
+		const char *key1 = "has been started with";
+		const char *key2 = "is alreadly in use";
+		if (fgets(output, sizeof(output), pf) != NULL) {
+			if (strstr(output, key1) != NULL) {
 				succeed = true;
 				ldout(oc->cct, 11) << "Succeed to assemble raid /dev/md" << num
 					<< " with device " << devname << dendl;
-				break;
 			} 
-			lderr(oc->cct) << " Failed to assemble raid /dev/md"<< num 
-				<< " with device " << devname
-				<< ", err msg: " << output << dendl;
+			else if (strstr(output, key2) != NULL) {
+				lderr(oc->cct) << " Failed to assemble raid /dev/md" << num 
+					<< " with device " << devname
+					<< ", err msg: " << output << dendl;
+			} else {
+				lderr(oc->cct) << " Failed to assemble raid /dev/md" << num 
+					<< " with device " << devname
+					<< ", err msg: " << output << dendl;
+				break;
+			}
 		}
-		++ num;
+		++num;
 		pclose(pf);
 	}
 
-	return (succeed? num-1: -1);
+	return (succeed? (num - 1): -1);
 }
 
 int cetcd_client::cetcd_get_target_ip(char *tip, int size)
@@ -720,17 +788,14 @@ int cetcd_client::cetcd_discovery_target(const char *tip, char *iqn, int size)
 
 int cetcd_client::cetcd_login_target(const char *tip, const char *iqn)
 {
-	/*iscsiadm -m node -T {target-iqn} -p {target-ip} -l
-	 *Logging in to [iface: iface0, target: iqn.2016-12.com.ceph03:disk1, portal: 10.10.5.23,3260] (multiple)
-	 *Login to [iface: iface0, target: iqn.2016-12.com.ceph03:disk1, portal: 10.10.5.23,3260] successful.
-	*/
 	if (NULL == tip || NULL == iqn)
 		return -1;
 
 	FILE *pf = NULL;
 	char cmd[256] = {0};
+	char output[1024] = {0};
+	
 	snprintf(cmd, sizeof(cmd), "iscsiadm -m node -T %s -p %s --login 2>&1", iqn, tip);
-
 	pf = popen(cmd, "r");
 	if (NULL == pf) {
 		lderr(oc->cct) << " Failed to create sub-process: " << cmd
@@ -739,20 +804,25 @@ int cetcd_client::cetcd_login_target(const char *tip, const char *iqn)
 	}
 	ldout(oc->cct, 11) << " Succeed to create sub-process: " << cmd << dendl;
 
-	const char *key = "successful";
-	char output[1024] = {0};
+	/* iscsiadm -m node -T {target-iqn} -p {target-ip} -l
+	Success output: first login  
+	 	Logging in to [iface: iface0, target: iqn.2016-12.com.ceph03:disk1, portal: 10.10.5.23,3260] (multiple)
+	 	Login to [iface: iface0, target: iqn.2016-12.com.ceph03:disk1, portal: 10.10.5.23,3260] successful.
+
+	 	NOTE: there is no output(blank) for later success login
+	*/
 	while (fgets(output, sizeof(output), pf) != NULL) {
 		lderr(oc->cct) << " output: " << output << dendl;
-		if (strstr(output, key) != NULL) {
+		if (strstr(output, iqn) == NULL) {
 			pclose(pf);
-			ldout(oc->cct, 11) << " Succeed to login target" << dendl; 
-			return 1;
+			lderr(oc->cct) << " Failed to login!!!" << dendl;
+			return -1;
 		}
 	}
 
 	pclose(pf);
-	lderr(oc->cct) << " Failed to login target" << dendl;
-	return -1;
+	ldout(oc->cct, 11) << " Succeed to login" << dendl; 
+	return 1;
 }
 
 int cetcd_client::cetcd_get_device(const char *iqn, char *devname, int size)
