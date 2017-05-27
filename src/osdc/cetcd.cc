@@ -1559,7 +1559,7 @@ void cetcd_client::cetcd_node_print(cetcd_response_node *node)
         ldout(oc->cct, 11)<< "Node Key: " << node->key << dendl;
         ldout(oc->cct, 11)<< "Node Value: " << node->value << dendl;
         ldout(oc->cct, 11)<< "Node Dir: " << node->dir << dendl;
-		//node->key format: /1:data/ip:{priority} {priority} = 0-slave, 1-master
+		//node->key format: /{prefix}:{host}/ip:{priority} {priority} = 0-slave, 1-master
 		if (strstr(node->key, cache_path.c_str()) && !node->dir) {
 			char ip[64] = {0};
 			int start = strlen(cache_path.c_str()) + 1;

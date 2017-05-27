@@ -218,6 +218,7 @@ public:
 	cetcd_string cetcd_watcher_build_url(cetcd_watcher *watcher);
 	
 	void cetcd_set_path(const std::string & path) { cache_path = path;}
+	std::string & cetcd_get_path() { return cache_path; }
 	bool cetcd_check_mount_stat();
 	int cetcd_check_role(char *uuidstring, int len);
 	/*Return raid device number, or -1*/

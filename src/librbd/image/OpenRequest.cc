@@ -402,8 +402,8 @@ Context *OpenRequest<I>::handle_refresh(int *result) {
 			m_image_ctx->object_set, 
 			m_image_ctx->layout);
 
-		//register cache properties
-    	m_image_ctx->post_init(m_image_ctx->ssd_cache_path);
+		//register cache properties(reserved)
+    	//m_image_ctx->post_init(m_image_ctx->ssd_cache_path);
     }
     return send_set_snap(result);
   }

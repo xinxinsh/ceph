@@ -2808,49 +2808,71 @@ bool ObjectCacher::pre_init(const std::string &cache_path)
 		return false;
 
 	//check cache path
-	if (cache_path.empty()) {
-		lderr(cct) << " cache path can't be empty" << dendl;
+	if (cache_path.empty() && (cct->_conf->rbd_ssd_config_server.empty() 
+		&& cct->_conf->rbd_ssd_cache_path_prefix.empty())) {
+		lderr(cct) << "either cache_path or config_server and path_prefix should be set" << dendl;
 		goto failed;
 	}
 
-	ldout(cct, 11) << " create cache path if it's not exist: " << cache_path.c_str() << dendl;
-	if ((r = ::mkdir(cache_path.c_str(), 0755)) != 0 && EEXIST != errno) {
-		lderr(cct) << "Failed to create cache path, Error Msg: " << cpp_strerror(errno) << dendl;
-		goto failed;
-	}
-	
-	//init etcd client
-	cli = cetcd_client_create(this, cct->_conf->rbd_ssd_config_server);
-	if ( NULL == cli) {
-		lderr(cct) << " Failed to initialize etcd client," 
-			<< " servers: " << cct->_conf->rbd_ssd_config_server << dendl;
-		goto failed;
-	}
-
-	cli->cetcd_set_path(cache_path);
-	
-	//get cache path from config server
-	resp = cli->cetcd_lsdir(cache_path.c_str(), true, true);
-	if(resp->err) {
-		lderr(cct) << " Failed to get path info, Error Code: " << resp->err->ecode 
-			<< " Error Msg: " << resp->err->message
-			<< " Reason: " << resp->err->cause << dendl;
-		goto failed;
-	}
-	cli->cetcd_response_print(resp);
-	cli->cetcd_response_release(resp);
-	
-	//Assemble raid device and mount it to cache_path
-	mounted = cli->cetcd_check_mount_stat();
-	if (!mounted) {
-		r = cli->cetcd_attach_device(devname, sizeof(devname));
-		if (r == -1)
-			goto failed;
+	if (!cct->_conf->rbd_ssd_config_server.empty()
+		&& !cct->_conf->rbd_ssd_cache_path_prefix.empty()) {
+		char _cache_path[256] = {0};
+		char localhost[64] = {0};
 		
-		snprintf(devname, sizeof(devname), "/dev/md%d", r);
-		r = cli->cetcd_mount_device(devname, cache_path.c_str());
-		if (r == -1)
+		r = gethostname(localhost, sizeof(localhost));
+		if (r == -1) {
+			lderr(cct) << "Failed to get host name"
+				<< ", err msg: " << cpp_strerror(errno) << dendl;
+			return -1;
+		}
+		snprintf(_cache_path, sizeof(_cache_path), "%s:%s", cct->_conf->rbd_ssd_cache_path_prefix.c_str(), localhost);
+
+		ldout(cct, 11) << " create cache path if it's not exist: " << _cache_path << dendl;
+		if ((r = ::mkdir(_cache_path, 0755)) != 0 && EEXIST != errno) {
+			lderr(cct) << "Failed to create cache path, Error Msg: " << cpp_strerror(errno) << dendl;
 			goto failed;
+		}
+		
+		//init etcd client
+		cli = cetcd_client_create(this, cct->_conf->rbd_ssd_config_server);
+		if ( NULL == cli) {
+			lderr(cct) << " Failed to initialize etcd client," 
+				<< " servers: " << cct->_conf->rbd_ssd_config_server << dendl;
+			goto failed;
+		}
+
+		cli->cetcd_set_path(_cache_path);
+		
+		//get cache path from config server
+		resp = cli->cetcd_lsdir(_cache_path, true, true);
+		if(resp->err) {
+			lderr(cct) << " Failed to get path info, Error Code: " << resp->err->ecode 
+				<< " Error Msg: " << resp->err->message
+				<< " Reason: " << resp->err->cause << dendl;
+			goto failed;
+		}
+		cli->cetcd_response_print(resp);
+		cli->cetcd_response_release(resp);
+		
+		//Assemble raid device and mount it to cache_path
+		mounted = cli->cetcd_check_mount_stat();
+		if (!mounted) {
+			r = cli->cetcd_attach_device(devname, sizeof(devname));
+			if (r == -1)
+				goto failed;
+			
+			snprintf(devname, sizeof(devname), "/dev/md%d", r);
+			r = cli->cetcd_mount_device(devname, _cache_path);
+			if (r == -1)
+				goto failed;
+		}
+	}
+	else { //!caceh_path.empty()
+		ldout(cct, 11) << " create cache path if it's not exist: " << cache_path.c_str() << dendl;
+		if ((r = ::mkdir(cache_path.c_str(), 0755)) != 0 && EEXIST != errno) {
+			lderr(cct) << "Failed to create cache path, Error Msg: " << cpp_strerror(errno) << dendl;
+			goto failed;
+		}
 	}
 	return true;
 	
@@ -2867,10 +2889,16 @@ bool ObjectCacher::init_cache(uint64_t cache_size, uint32_t obj_order,
 { 
 	if(!cct->_conf->rbd_ssd_cache)
 		return false;
-	
+
+	std::string _cache_path(cache_path); 
   	const uint64_t min_cache = 5*1024*1024*1024ul;
   	const uint64_t max_cache = 200*1024*1024*1024ul;
-  	std::string _cache_path(cache_path); //format: /$No.:LCache/
+	//format: /{prefix}:{host_name}
+	if (!cct->_conf->rbd_ssd_config_server.empty()
+		&& !cct->_conf->rbd_ssd_cache_path_prefix.empty()) {
+		_cache_path = cli->cetcd_get_path();
+	}
+
   	_cache_path += '/';
   	_cache_path += name;
   
