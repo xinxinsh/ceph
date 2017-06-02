@@ -44,6 +44,7 @@
 
 #include <boost/scope_exit.hpp>
 #include <boost/variant.hpp>
+#include <boost/bind.hpp>
 #include "include/assert.h"
 
 
@@ -68,6 +69,15 @@ using librados::Rados;
 namespace librbd {
 
 namespace {
+
+int disk_usage_cb(uint64_t offset, size_t len, int exists,
+                             void *arg) {
+  uint64_t *used_size = reinterpret_cast<uint64_t *>(arg);
+  if (exists) {
+    (*used_size) += len;
+  }
+  return 0;
+}
 
 int remove_object_map(ImageCtx *ictx) {
   assert(ictx->snap_lock.is_locked());
@@ -2640,6 +2650,54 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     return total_read;
   }
 
+  uint64_t disk_usage(ImageCtx *ictx, uint64_t* used_size)
+  {
+    ldout(ictx->cct, 20) << "disk_usage " << ictx << dendl;
+     
+    std::vector<librbd::snap_info_t> snaps;
+    std::string last_snap_name;
+    uint64_t* used = 0;
+
+    int r = snap_list(ictx, snaps);
+    if (r < 0) {
+      lderr(ictx->cct) << "rbd: error list snapshots: "
+        << cpp_strerror(r) << dendl;
+      return r;
+    } 
+    
+    std::sort(snaps.begin(), snaps.end(),
+              boost::bind(&librbd::snap_info_t::id, _1) <
+                boost::bind(&librbd::snap_info_t::id, _2));  
+
+    for (std::vector<librbd::snap_info_t>::const_iterator snap =
+         snaps.begin(); snap != snaps.end(); ++snap) {
+      *used = 0;
+      if (last_snap_name == snap->name)
+        continue;
+      snap_set(ictx, snap->name.c_str());
+      r = diff_iterate(ictx, last_snap_name.c_str(), 0, snap->size, false, true,
+                       disk_usage_cb, (void *)used);     
+      if (r < 0) {
+        lderr(ictx->cct) << "rbd: failed to iterate diffs: " << cpp_strerror(r)
+              << dendl;
+        return r;
+      }
+      (*used_size) += (*used);
+      last_snap_name = snap->name;
+    }
+    
+    *used = 0;
+    r = diff_iterate(ictx, "", 0, ictx->get_image_size(CEPH_NOSNAP), false, true,
+                     disk_usage_cb, (void *)used);
+    if (r < 0) {
+      lderr(ictx->cct) << "rbd: failed to iterate diffs to rbd: " << cpp_strerror(r)
+            << dendl;
+      return r;
+    }
+    (*used_size) += (*used);
+ 
+    return 0;
+  }
   int diff_iterate(ImageCtx *ictx, const char *fromsnapname, uint64_t off,
                    uint64_t len, bool include_parent, bool whole_object,
 		   int (*cb)(uint64_t, size_t, int, void *), void *arg)

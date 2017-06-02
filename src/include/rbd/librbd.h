@@ -552,6 +552,7 @@ CEPH_RBD_API int rbd_diff_iterate2(rbd_image_t image,
                                    uint8_t include_parent, uint8_t whole_object,
 		                   int (*cb)(uint64_t, size_t, int, void *),
                                    void *arg);
+CEPH_RBD_API uint64_t rbd_disk_usage(rbd_image_t image, uint64_t* used_size);
 CEPH_RBD_API ssize_t rbd_write(rbd_image_t image, uint64_t ofs, size_t len,
                                const char *buf);
 /*
