@@ -175,6 +175,7 @@ namespace librbd {
   int64_t read_iterate(ImageCtx *ictx, uint64_t off, uint64_t len,
 		       int (*cb)(uint64_t, size_t, const char *, void *),
 		       void *arg);
+  int disk_usage(ImageCtx *ictx, uint64_t* used_size);
   int diff_iterate(ImageCtx *ictx, const char *fromsnapname, uint64_t off,
                    uint64_t len, bool include_parent, bool whole_object,
 		   int (*cb)(uint64_t, size_t, int, void *),
