@@ -188,6 +188,8 @@ namespace librbd {
     uint64_t journal_object_flush_bytes;
     double journal_object_flush_age;
     std::string journal_pool;
+	//for Local Cache
+	std::string ssd_cache_path;
     uint32_t journal_max_payload_bytes;
 
     LibrbdAdminSocketHook *asok_hook;
@@ -217,7 +219,9 @@ namespace librbd {
 	     const char *snap, IoCtx& p, bool read_only);
     ~ImageCtx();
     void init();
-    void init_throttle();
+	void init_throttle();
+	//Register LCache metadatas into header object
+	int post_init(const std::string &ssd_cache_path);
     void fix_throttle(map<std::string, double> *pairs, bool use_conf);
     void shutdown();
     void init_layout();

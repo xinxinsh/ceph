@@ -286,6 +286,7 @@ public:
    * @param arg argument to pass to the callback
    * @returns 0 on success, or negative error code on error
    */
+  int disk_usage(uint64_t* used_size);
   int diff_iterate(const char *fromsnapname,
 		   uint64_t ofs, uint64_t len,
 		   int (*cb)(uint64_t, size_t, int, void *), void *arg);

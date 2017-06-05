@@ -1048,6 +1048,12 @@ namespace librbd {
     return (int)r;
   }
 
+  int Image::disk_usage(uint64_t* used_size)
+  {
+    ImageCtx *ictx = (ImageCtx *)ctx;
+    int r = librbd::disk_usage(ictx, used_size);
+    return r;
+  }
   int Image::diff_iterate(const char *fromsnapname,
 			  uint64_t ofs, uint64_t len,
 			  int (*cb)(uint64_t, size_t, int, void *),
@@ -2460,6 +2466,13 @@ extern "C" int rbd_read_iterate2(rbd_image_t image, uint64_t ofs, uint64_t len,
     r = 0;
   tracepoint(librbd, read_iterate2_exit, r);
   return (int)r;
+}
+
+extern "C" int rbd_disk_usage(rbd_image_t image, uint64_t* used_size)
+{
+  librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
+  int r = librbd::disk_usage(ictx, used_size);
+  return r;
 }
 
 extern "C" int rbd_diff_iterate(rbd_image_t image,

@@ -16,6 +16,7 @@
 #include "Objecter.h"
 #include "Striper.h"
 
+class cetcd_client;
 class CephContext;
 class WritebackHandler;
 class PerfCounters;
@@ -411,6 +412,7 @@ class ObjectCacher {
   //Thomas added: for local cache only
   bool local_cache, ro_cache;
   LCache *lcache;
+  cetcd_client *cli;
 
   flush_set_callback_t flush_set_callback;
   void *flush_set_callback_arg;
@@ -689,9 +691,10 @@ public:
 	return ((uint64_t)get_stat_dirty() > 0 && 
 	 	(uint64_t)get_stat_dirty() < target_dirty);
   }
-  
-  void init_cache(uint64_t cache_size, uint32_t obj_order, const std::string &obj_prefix, 
-  	bool old_format, ObjectSet *oset, const file_layout_t &l);
+
+  bool pre_init(const std::string &cache_path);
+  bool init_cache(uint64_t cache_size, uint32_t obj_order, const std::string &obj_prefix, 
+  	const std::string &cache_path, bool old_format, ObjectSet *oset, const file_layout_t &l);
 
   bool set_is_empty(ObjectSet *oset);
   bool set_is_cached(ObjectSet *oset);

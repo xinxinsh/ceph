@@ -245,6 +245,7 @@ cdef extern from "rbd/librbd.h" nogil:
     int rbd_break_lock(rbd_image_t image, const char *client,
                        const char *cookie)
 
+    int rbd_disk_usage(rbd_image_t image, uint64_t* used)
     # We use -9000 to propagate Python exceptions. We use except? to make sure
     # things still work as intended if -9000 happens to be a valid errno value
     # somewhere.
@@ -443,7 +444,6 @@ def decode_cstr(val, encoding="utf-8"):
         return None
 
     return val.decode(encoding)
-
 
 cdef char* opt_str(s) except? NULL:
     if s is None:
@@ -995,7 +995,6 @@ cdef int diff_iterate_cb(uint64_t offset, size_t length, int write, void *cb) \
     if ret is None:
         return 0
     return ret
-
 
 cdef class Image(object):
     """
@@ -1605,6 +1604,27 @@ cdef class Image(object):
             # including if _PyString_Resize fails (that will free the string
             # itself and set ret_s to NULL, hence XDECREF).
             ref.Py_XDECREF(ret_s)
+
+    def disk_usage(self):
+        """
+        Get Disk Utilization
+        """
+        cdef:
+            uint64_t used_size = 1000
+            uint64_t size
+        with nogil:
+            ret = rbd_get_size(self.image, &size)
+        if ret < 0:
+            raise make_ex(ret,'error get image size')
+
+        with nogil:
+            ret = rbd_disk_usage(self.image, &used_size)
+        if ret < 0:
+            raise make_ex(ret,'error get image used size')
+
+        
+        util = used_size / float(size)
+        return util
 
     def diff_iterate(self, offset, length, from_snapshot, iterate_cb,
                      include_parent = True, whole_object = False):
