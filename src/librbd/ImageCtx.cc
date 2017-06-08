@@ -965,6 +965,7 @@ struct C_InvalidateCache : public Context {
         "rbd_cache_max_dirty_age", false)(
         "rbd_cache_max_dirty_object", false)(
         "rbd_cache_block_writes_upfront", false)(
+        "rbd_throttle",false)(
         "rbd_ssd_cache_path", false)(
         "rbd_concurrent_management_ops", false)(
         "rbd_balance_snap_reads", false)(
@@ -1041,6 +1042,7 @@ struct C_InvalidateCache : public Context {
     ASSIGN_OPTION(journal_object_flush_age);
     ASSIGN_OPTION(journal_pool);
     ASSIGN_OPTION(journal_max_payload_bytes);
+    ASSIGN_OPTION(throttle);
 	ASSIGN_OPTION(ssd_cache_path);
   }
 
