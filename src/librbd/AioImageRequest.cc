@@ -195,11 +195,11 @@ void AioImageRequest<I>::send() {
   assert(m_aio_comp->is_started() ^ (get_aio_type() == AIO_TYPE_FLUSH));
 
   CephContext *cct = image_ctx.cct;
+  size_t m_len = get_request_len();
   AioCompletion *aio_comp = this->m_aio_comp;
   ldout(cct, 20) << get_request_type() << ": ictx=" << &image_ctx << ", "
-                 << "completion=" << aio_comp <<  dendl;
+                 << "completion=" << aio_comp << " len " << m_len << dendl;
 
-  size_t m_len = get_request_len();
   if(m_image_ctx.throttle) {
     if(!strcmp(get_request_type(), "aio_write")) {
       m_image_ctx.throttlestate->throttle_schedule_timer(true, m_len);
