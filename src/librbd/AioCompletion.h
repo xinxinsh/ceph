@@ -28,6 +28,7 @@ typedef enum {
   AIO_TYPE_DISCARD,
   AIO_TYPE_FLUSH,
 	AIO_TYPE_WRITESAME,
+  AIO_TYPE_COMPARE_AND_WRITE,
 } aio_type_t;
 
 typedef enum {

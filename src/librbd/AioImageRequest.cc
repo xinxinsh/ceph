@@ -773,7 +773,7 @@ void AioImageCompareAndWrite<I>::assemble_extent(
 }
 
 template <typename I>
-AioObjectRequestHandle *AIoImageCompareAndWrite<I>::create_object_request(
+AioObjectRequestHandle *AioImageCompareAndWrite<I>::create_object_request(
     const ObjectExtent &object_extent,
     const ::SnapContext &snapc,
     Context *on_finish) {

@@ -28,6 +28,9 @@ public:
   int discard(uint64_t off, uint64_t len, bool skip_partial_discard);
   ssize_t write(uint64_t off, uint64_t len, bufferlist &&bl, int op_flags);
   ssize_t writesame(uint64_t off, uint64_t len, bufferlist &&bl, int op_flags);
+  ssize_t compare_and_write(uint64_t off, uint64_t len,
+                            bufferlist &&cmp_bl, bufferlist &&bl,
+                            uint64_t *mismatch_off, int op_flags);
 
   void aio_read(AioCompletion *c, uint64_t off, uint64_t len,
                 ReadResult &&read_result, int op_flags, bool native_async=true);
@@ -38,6 +41,10 @@ public:
   void aio_flush(AioCompletion *c, bool native_async=true);
   void aio_writesame(AioCompletion *c, uint64_t off, uint64_t len,
                      bufferlist &&bl, int op_flags, bool native_async=true);
+  void aio_compare_and_write(AioCompletion *c, uint64_t off,
+                             uint64_t len, bufferlist &&cmp_bl,
+                             bufferlist &&bl, uint64_t *mismatch_off,
+                             int op_flags, bool native_async=true);
 
   using typename ThreadPool::PointerWQ<AioImageRequest<ImageCtx> >::drain;
   using typename ThreadPool::PointerWQ<AioImageRequest<ImageCtx> >::empty;
