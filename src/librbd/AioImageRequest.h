@@ -40,6 +40,10 @@ public:
 
 	static void aio_writesame(ImageCtxT *ictx, AioCompletion *c, uint64_t off,
 	                          uint64_t len, bufferlist &&bl, int op_flags);
+  static void aio_compare_and_write(ImageCtxT *ictx, AioCompletion *c,
+                                    uint64_t off, uint64_t len, bufferlist &&cmp_bl,
+                                    bufferlist &&bl, uint64_t *mismatch_offset,
+                                    int op_flags);
 
   virtual bool is_write_op() const {
     return false;
@@ -131,8 +135,8 @@ protected:
     return m_len;
   }
 
-  virtual void prune_object_extents(ObjectExtents &object_extents) {
-  }
+  virtual int prune_object_extents(ObjectExtents &object_extents) {
+  return 0;}
   virtual uint32_t get_cache_request_count(bool journaling) const {
     return 0;
   }
@@ -214,7 +218,7 @@ protected:
     return "aio_discard";
   }
 
-  virtual void prune_object_extents(ObjectExtents &object_extents) override;
+  virtual int prune_object_extents(ObjectExtents &object_extents) override;
   virtual uint32_t get_cache_request_count(bool journaling) const override;
   virtual void send_cache_requests(const ObjectExtents &object_extents,
                                    uint64_t journal_tid);
@@ -298,6 +302,51 @@ private:
   int m_op_flags;
 };
 
+template <typename ImageCtxT = ImageCtx>
+class AioImageCompareAndWrite : public AbstractAioImageWrite<ImageCtxT> {
+public:
+  using typename AioImageRequest<ImageCtxT>::AioObjectRequests;
+  using typename AbstractAioImageWrite<ImageCtxT>::ObjectExtents;
+
+  AioImageCompareAndWrite(ImageCtxT &image_ctx, AioCompletion *aio_comp,
+                              uint64_t off, uint64_t len, bufferlist &&cmp_bl,
+                              bufferlist &&bl, uint64_t *mismatch_offset,
+                              int op_flags)
+      : AbstractAioImageWrite<ImageCtxT>(
+          image_ctx, aio_comp, off, len),
+        m_cmp_bl(std::move(cmp_bl)), m_bl(std::move(bl)),
+        m_mismatch_offset(mismatch_offset), m_op_flags(op_flags) {
+  }
+
+protected:
+  void send_cache_requests(const ObjectExtents &object_extents,
+                           uint64_t journal_tid) override;
+
+  void assemble_extent(const ObjectExtent &object_extent, bufferlist *bl);
+
+  AioObjectRequestHandle *create_object_request(const ObjectExtent &object_extent,
+                                             const ::SnapContext &snapc,
+                                             Context *on_finish) override;
+
+  uint64_t append_journal_event(const AioObjectRequests &requests,
+                                bool synchronous) override;
+  void update_stats(size_t length) override;
+
+  aio_type_t get_aio_type() const override {
+    return AIO_TYPE_COMPARE_AND_WRITE;
+  }
+  const char *get_request_type() const override {
+    return "aio_compare_and_write";
+  }
+
+  int prune_object_extents(ObjectExtents &object_extents) override;
+private:
+  bufferlist m_cmp_bl;
+  bufferlist m_bl;
+  uint64_t *m_mismatch_offset;
+  int m_op_flags;
+};
+
 } // namespace librbd
 
 extern template class librbd::AioImageRequest<librbd::ImageCtx>;
@@ -306,5 +355,6 @@ extern template class librbd::AioImageWrite<librbd::ImageCtx>;
 extern template class librbd::AioImageDiscard<librbd::ImageCtx>;
 extern template class librbd::AioImageFlush<librbd::ImageCtx>;
 extern template class librbd::AioImageWriteSame<librbd::ImageCtx>;
+extern template class librbd::AioImageCompareAndWrite<librbd::ImageCtx>;
 
 #endif // CEPH_LIBRBD_AIO_IMAGE_REQUEST_H
