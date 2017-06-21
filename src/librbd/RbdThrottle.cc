@@ -374,7 +374,7 @@ void ThrottleConfig::throttle_config(uint64_t image_size)
 			" tps = min(50 + size * 0.5, 256)) MB/s" << dendl;
 
 		buckets[THROTTLE_TPS_TOTAL].avg = (uint64_t)MIN(50 + 0.5 *image_gsize, 256) << 20;
-		buckets[THROTTLE_OPS_TOTAL].avg = MIN(30 * image_size, 20000);
+		buckets[THROTTLE_OPS_TOTAL].avg = MIN(30 * image_gsize, 20000);
 		buckets[THROTTLE_TPS_TOTAL].max = 256 << 20;
 		buckets[THROTTLE_OPS_TOTAL].max = 20000;
 		break;
