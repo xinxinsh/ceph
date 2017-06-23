@@ -80,7 +80,7 @@ public:
                int op_flags)
     : AioImageRequest<ImageCtxT>(image_ctx, aio_comp),
       m_image_extents(image_extents), m_buf(buf), m_pbl(pbl),
-      m_op_flags(op_flags) {
+      m_op_flags(op_flags), m_len(0) {
     for(std::vector<std::pair<uint64_t, uint64_t> >::iterator it = \
       m_image_extents.begin(); it != m_image_extents.end(); it++) {
       m_len += ((*it).second);
