@@ -2821,6 +2821,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
     ldout(cct, 20) << "throttle_set " << ictx << dendl;
     map<string, bufferlist> data;
+    const string metadata_throttle_prefix = "rbd_throttle_";
 
     ldout(cct, 20) << "throttle_mode  " << cct->_conf->rbd_throttle_mode << dendl;
     switch (cct->_conf->rbd_throttle_mode) {
@@ -2867,7 +2868,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
       ostringstream throttle_value;
       throttle_value << it->second;
-      data[it->first].append(throttle_value.str());
+      data[(metadata_throttle_prefix+it->first)].append(throttle_value.str());
       ldout(cct, 20) << "throttle_set " << ictx << " key=" << it->first << " value="<< it->second << dendl;
 
     }

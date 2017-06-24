@@ -301,6 +301,7 @@ template <typename I>
   Context *RefreshRequest<I>::handle_v2_get_throttle_metadata(int *result) {
   CephContext *cct = m_image_ctx.cct;
   std::map<std::string, bufferlist> pairs;
+  const string metadata_throttle_prefix = "rbd_throttle_";
 
   ldout(cct, 10) << this << " " << __func__ << ": "
                  << "r=" << *result << dendl;
@@ -316,12 +317,22 @@ template <typename I>
     return m_on_finish;
   }
   
-    for (std::map<std::string, bufferlist>::iterator it = pairs.begin();it != pairs.end(); ++it) {
+  size_t throttle_prefix_len = metadata_throttle_prefix.size();
+  for (std::map<std::string, bufferlist>::iterator it = pairs.begin();it != pairs.end(); ++it) {
         std::stringstream tmp;
+
+        if (it->first.compare(0, MIN(throttle_prefix_len, it->first.size()), metadata_throttle_prefix) != 0)
+          continue;
+
+        if (it->first.size() <= throttle_prefix_len)
+          continue;
+
+        string key = it->first.substr(throttle_prefix_len, it->first.size() - throttle_prefix_len);
+        ldout(cct, 20) << this << " " << __func__ << ": " << "key=" << key << dendl;
         tmp << it->second.c_str() ;
         double  ret=0;
         tmp >> ret;
-        m_data[it->first.c_str()]=ret;
+        m_data[key]=ret;
    }
   send_v2_get_flags();
   return nullptr;
