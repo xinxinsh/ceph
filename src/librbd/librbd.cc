@@ -2667,6 +2667,48 @@ extern "C" int rbd_throttle_set(rbd_image_t image,  Qos_specs *qos_specs, int le
   return r;
 }
 
+extern "C" int rbd_throttle_list(rbd_image_t image, char *key, size_t *key_len,
+                                 char *value, size_t *val_len)
+{
+  librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
+  map<string, bufferlist> pairs;
+  int r = librbd::throttle_list(ictx, "", 0, &pairs);
+  if (r<0) {
+    return r;
+  }
+
+  size_t key_total_len = 0, val_total_len = 0;
+  bool too_short = false;
+  for (map<string, bufferlist>::iterator it = pairs.begin();
+       it != pairs.end(); ++it) {
+    key_total_len += it->first.size() + 1;
+    val_total_len += it->second.length() + 1;
+  }
+  if (*key_len < key_total_len || *val_len < val_total_len)
+    too_short = true;
+  *key_len = key_total_len;
+  *val_len = val_total_len;
+  if (too_short) {
+    tracepoint(librbd, metadata_list_exit, -ERANGE);
+    return -ERANGE;
+  }
+
+  char *key_p = key, *value_p = value;
+
+  for (map<string, bufferlist>::iterator it = pairs.begin();
+       it != pairs.end(); ++it) {
+    strncpy(key_p, it->first.c_str(), it->first.size() + 1);
+    key_p += it->first.size() + 1;
+    strncpy(value_p, it->second.c_str(), it->second.length());
+    value_p += it->second.length();
+    *value_p = '\0';
+    value_p++;
+  }
+
+  ssize_t ret = pairs.size();
+
+  return ret;
+}
 extern "C" int rbd_metadata_get(rbd_image_t image, const char *key, char *value, size_t *vallen)
 {
   librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;

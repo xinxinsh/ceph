@@ -609,6 +609,8 @@ CEPH_RBD_API int rbd_invalidate_cache(rbd_image_t image);
 CEPH_RBD_API int rbd_poll_io_events(rbd_image_t image, rbd_completion_t *comps, int numcomp);
 
 CEPH_RBD_API int rbd_throttle_set(rbd_image_t image,  Qos_specs *qos_spec, int len);
+CEPH_RBD_API int rbd_throttle_list(rbd_image_t image, char *keys, size_t *key_len,
+                                   char *values, size_t *vals_len);
 
 CEPH_RBD_API int rbd_metadata_get(rbd_image_t image, const char *key, char *value, size_t *val_len);
 CEPH_RBD_API int rbd_metadata_set(rbd_image_t image, const char *key, const char *value);

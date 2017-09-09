@@ -187,6 +187,7 @@ namespace librbd {
   int invalidate_cache(ImageCtx *ictx);
   int poll_io_events(ImageCtx *ictx, AioCompletion **comps, int numcomp);
   int throttle_set(ImageCtx *ictx, map<string, double> *pairs);
+  int throttle_list(ImageCtx *ictx, const string &last, uint64_t max, map<string, bufferlist> *pairs);
   int metadata_list(ImageCtx *ictx, const string &last, uint64_t max, map<string, bufferlist> *pairs);
   int metadata_get(ImageCtx *ictx, const std::string &key, std::string *value);
   int metadata_set(ImageCtx *ictx, const std::string &key, const std::string &value);

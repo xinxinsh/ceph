@@ -342,6 +342,21 @@ double ThrottleConfig::map_to_cfg(map<std::string, double> *pairs, const string 
      return it->second;
 }
 
+/* convert throttling configuration to map
+ *     @pairs a throttling map
+ *     @key a throttling configuration key
+ *     @val: value of a throttling configuration key
+ *           */
+void ThrottleConfig::cfg_to_map(map<std::string, bufferlist> *pairs, const string key, const double val)
+{
+      const string metadata_throttle_prefix = "rbd_throttle_";
+      int prec = std::numeric_limits<int>::digits10;
+      ostringstream throttle_value;
+      throttle_value.precision(prec);
+      throttle_value << val;
+      (*pairs)[(metadata_throttle_prefix+key)].append(throttle_value.str());
+}
+
 /* Used to configure the throttle */
 void ThrottleConfig::throttle_config(uint64_t image_size)
 {
@@ -355,28 +370,42 @@ void ThrottleConfig::throttle_config(uint64_t image_size)
   	case THROTTLE_MODE_HDD:
 		ldout(cct, 20) << "throttle mode HDD:(ops = 400 and tps = 40MB/s) " << dendl;
 
-		buckets[THROTTLE_TPS_TOTAL].avg = 40 << 20;
-		buckets[THROTTLE_OPS_TOTAL].avg = 400;
-		buckets[THROTTLE_TPS_TOTAL].max = 40 << 20;
-		buckets[THROTTLE_OPS_TOTAL].max = 400;
+                buckets[THROTTLE_TPS_READ].avg = 40 << 20;
+                buckets[THROTTLE_OPS_READ].avg = 400;
+                buckets[THROTTLE_TPS_READ].max = 40 << 20;
+                buckets[THROTTLE_OPS_READ].max = 400;
+                buckets[THROTTLE_TPS_WRITE].avg = 40 << 20;
+                buckets[THROTTLE_OPS_WRITE].avg = 400;
+                buckets[THROTTLE_TPS_WRITE].max = 40 << 20;
+                buckets[THROTTLE_OPS_WRITE].max = 400;
+
 		break;
 	case THROTTLE_MODE_EDD:
 		ldout(cct, 20) << "throttle mode EDD:(ops = min(1000 + 6 * image_size, 3000) and "
 			" tps = min(50 + size * 0.1, 80) MB/s) " << dendl;
 
-		buckets[THROTTLE_TPS_TOTAL].avg = (uint64_t)MIN(50 + 0.1 * image_gsize, 80) << 20;
-		buckets[THROTTLE_OPS_TOTAL].avg = MIN(1000 + 6 * image_gsize, 3000);
-		buckets[THROTTLE_TPS_TOTAL].max = 80 << 20;
-		buckets[THROTTLE_OPS_TOTAL].max = 3000;
+                buckets[THROTTLE_TPS_READ].avg = (uint64_t)MIN(50 + 0.1 * image_gsize, 80) << 20;
+                buckets[THROTTLE_OPS_READ].avg = MIN(1000 + 6 * image_gsize, 3000);
+                buckets[THROTTLE_TPS_READ].max = 80 << 20;
+                buckets[THROTTLE_OPS_READ].max = 3000;
+                buckets[THROTTLE_TPS_WRITE].avg = (uint64_t)MIN(50 + 0.1 * image_gsize, 80) << 20;
+                buckets[THROTTLE_OPS_WRITE].avg = MIN(1000 + 6 * image_gsize, 3000);
+                buckets[THROTTLE_TPS_WRITE].max = 80 << 20;
+                buckets[THROTTLE_OPS_WRITE].max = 3000;
 		break;
 	case THROTTLE_MODE_SSD:
 		ldout(cct, 20) << "throttle mode SSD:(ops = min(30 * image_size, 20000) and "
 			" tps = min(50 + size * 0.5, 256)) MB/s" << dendl;
 
-		buckets[THROTTLE_TPS_TOTAL].avg = (uint64_t)MIN(50 + 0.5 *image_gsize, 256) << 20;
-		buckets[THROTTLE_OPS_TOTAL].avg = MIN(30 * image_gsize, 20000);
-		buckets[THROTTLE_TPS_TOTAL].max = 256 << 20;
-		buckets[THROTTLE_OPS_TOTAL].max = 20000;
+                buckets[THROTTLE_TPS_READ].avg = (uint64_t)MIN(50 + 0.5 *image_gsize, 256) << 20;
+                buckets[THROTTLE_OPS_READ].avg = MIN(30 * image_gsize, 20000);
+                buckets[THROTTLE_TPS_READ].max = 256 << 20;
+                buckets[THROTTLE_OPS_READ].max = 20000;
+                buckets[THROTTLE_TPS_WRITE].avg = (uint64_t)MIN(50 + 0.5 *image_gsize, 256) << 20;
+                buckets[THROTTLE_OPS_WRITE].avg = MIN(30 * image_gsize, 20000);
+                buckets[THROTTLE_TPS_WRITE].max = 256 << 20;
+                buckets[THROTTLE_OPS_WRITE].max = 20000;
+
 		break;
 	default:
 		buckets[THROTTLE_TPS_TOTAL].avg = cct->_conf->rbd_throttle_tps_total;

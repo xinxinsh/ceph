@@ -128,6 +128,8 @@ cdef extern from "rbd/librbd.h" nogil:
         char *value
 
     int rbd_throttle_set(rbd_image_t image,  Qos_specs *qos_spec, int len) 
+    int rbd_throttle_list(rbd_image_t image, char *keys, size_t *key_len,
+                          char *values, size_t *vals_len)
 
     void rbd_version(int *major, int *minor, int *extra)
     void rbd_image_options_create(rbd_image_options_t* opts)
@@ -1359,6 +1361,40 @@ cdef class Image(object):
                 raise make_ex(ret, 'error  seting qos on %s' % (self.name))
         finally:
             free(specs)
+
+    def list_qos_spec(self):
+
+        """
+        get an rbd image qos
+        """
+        cdef:
+            char *keys = NULL
+            char *values = NULL
+            size_t keys_size = 512
+            size_t vals_size = 512
+        try:
+            keys = <char *>realloc_chk(keys, keys_size)
+            values = <char *>realloc_chk(values, vals_size)
+
+            with nogil:
+                ret = rbd_throttle_list(self.image, keys, &keys_size,
+                                       values, &vals_size)
+            if ret < 0:
+                raise make_ex(ret, 'error  listing qos on %s' % (self.name))
+            if ret == 0:
+                return {}
+            mkeys = [decode_cstr(key) for key in
+                        keys[:keys_size].split(b'\0') if key]
+            mvals = [decode_cstr(val) for val in
+                        values[:vals_size].split(b'\0') if val]
+            if mkeys and mvals and len(mkeys)==len(mvals):
+                qos_spec = {}
+                for i in range(len(mkeys)):
+                    qos_spec[mkeys[i]]=mvals[i]
+            return qos_spec
+        finally:
+            free(keys)
+            free(values)
 
     def create_snap(self, name):
         """

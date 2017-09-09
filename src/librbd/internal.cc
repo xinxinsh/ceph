@@ -2829,44 +2829,50 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
         ldout(cct, 20) << "throttle mode HDD:ops valid value is 200~600 and tps valid value is 20M ~ 60M" << dendl;
 
         if((*pairs)["read_bytes_sec"] < (20<< 20) || (*pairs)["read_bytes_sec"] > (60 << 20) )
-            return -1;
+            return -EINVAL;
         if((*pairs)["write_bytes_sec"] < (20<< 20) || (*pairs)["write_bytes_sec"] > (60 << 20) )
-            return -1;
+            return -EINVAL;
         if((*pairs)["read_iops_sec"] < 200 || (*pairs)["read_iops_sec"] > 600 )
-            return -1;
+            return -EINVAL;
         if((*pairs)["write_iops_sec"] < 200 || (*pairs)["write_iops_sec"] > 600 )
-            return -1;
+            return -EINVAL;
         break;
       case THROTTLE_MODE_EDD:
         ldout(cct, 20) << "throttle mode EDD:ops valid value is 2000~4000 and tps valid value is 50M ~ 128M" << dendl;
         if((*pairs)["read_bytes_sec"] < (50<< 20) || (*pairs)["read_bytes_sec"] > (128 << 20) )
-            return -1;
+            return -EINVAL;
         if((*pairs)["write_bytes_sec"] < (50<< 20) || (*pairs)["write_bytes_sec"] > (128 << 20) )
-            return -1;
+            return -EINVAL;
         if((*pairs)["read_iops_sec"] < 2000 || (*pairs)["read_iops_sec"] > 4000 )
-            return -1;
+            return -EINVAL;
         if((*pairs)["write_bytes_sec"] < 2000 || (*pairs)["write_iops_sec"] > 4000 )
-            return -1;
+            return -EINVAL;
         break;
 
         case THROTTLE_MODE_SSD:
           ldout(cct, 20) << "throttle mode SSD:ops valid value is 10000~30000 and tps valid value is 50M ~ 320M" << dendl;
         if((*pairs)["read_bytes_sec"] < (50<< 20) || (*pairs)["read_bytes_sec"] > (320 << 20) )
-            return -1;
+            return -EINVAL;
         if((*pairs)["write_bytes_sec"] < (50<< 20) || (*pairs)["write_bytes_sec"] > (320 << 20) )
-            return -1;
+            return -EINVAL;
         if((*pairs)["read_iops_sec"] < 10000 || (*pairs)["read_iops_sec"] > 30000 )
-            return -1;
+            return -EINVAL;
         if((*pairs)["write_iops_sec"] < 10000 || (*pairs)["write_iops_sec"] > 30000 )
-            return -1;
+            return -EINVAL;
         break;
         default:
           ldout(cct, 20) << "ops valid value is 1~100000 and tps valid value is 1M ~ 1000M" << dendl;
       }
 
+    (*pairs)["read_bytes_sec_max"] = (*pairs)["read_bytes_sec"];
+    (*pairs)["write_bytes_sec_max"] = (*pairs)["write_bytes_sec"];
+    (*pairs)["read_iops_sec_max"] = (*pairs)["read_iops_sec"];
+    (*pairs)["write_iops_sec_max"] = (*pairs)["write_bytes_sec"];
     for (std::map<std::string, double>::iterator it = pairs->begin();it != pairs->end(); ++it) {
 
       ostringstream throttle_value;
+      int prec = std::numeric_limits<int>::digits10;
+      throttle_value.precision(prec);
       throttle_value << it->second;
       data[(metadata_throttle_prefix+it->first)].append(throttle_value.str());
       ldout(cct, 20) << "throttle_set " << ictx << " key=" << it->first << " value="<< it->second << dendl;
@@ -2887,6 +2893,39 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       return r;
     ictx->notify_update();
 
+    return 0;
+  }
+
+  int throttle_list(ImageCtx *ictx, const string &start, uint64_t max, map<string, bufferlist> *pairs)
+  {
+    CephContext *cct = ictx->cct;
+                map<string, bufferlist> data;
+                const string metadata_throttle_prefix = "rbd_throttle_";
+    ldout(cct, 20) << "throttle_list " << ictx << dendl;
+
+    int r = ictx->state->refresh_if_required();
+    if (r < 0) {
+      return r;
+    }
+
+    r = cls_client::metadata_list(&ictx->md_ctx, ictx->header_oid, start, max, &data);
+    if (r<0) {
+      return r;
+    }
+    size_t throttle_prefix_len = metadata_throttle_prefix.size();
+    for (std::map<std::string, bufferlist>::iterator it = data.begin();it != data.end(); ++it) {
+      if (it->first.compare(0, MIN(throttle_prefix_len, it->first.size()), metadata_throttle_prefix) != 0)
+        continue;
+
+      if (it->first.size() <= throttle_prefix_len)
+        continue;
+
+      string key = it->first.substr(throttle_prefix_len, it->first.size() - throttle_prefix_len);
+      if (key=="read_bytes_sec" || key=="write_bytes_sec" || key=="read_iops_sec" ||key=="write_iops_sec")
+      {
+        (*pairs)[key] = it->second;
+      }
+    }
     return 0;
   }
 

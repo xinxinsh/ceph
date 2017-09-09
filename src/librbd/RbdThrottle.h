@@ -50,6 +50,7 @@ struct ThrottleConfig {
   uint64_t throttle_compute_wait(LeakyBucket *bkt);
   void throttle_leak_bucket(LeakyBucket *bkt, uint64_t delta_ns);
   double map_to_cfg(map<std::string, double> *pairs, const string &key, const double val);
+  void cfg_to_map(map<std::string, bufferlist> *pairs, const string key, const double val);
   void throttle_config(uint64_t image_size);	/*support image size based QoS*/
   bool throttle_is_valid(); 
 };

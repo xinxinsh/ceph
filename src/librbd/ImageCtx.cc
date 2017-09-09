@@ -320,11 +320,34 @@ struct C_InvalidateCache : public Context {
         cfg.buckets[THROTTLE_OPS_TOTAL].burst_length = cfg.map_to_cfg(pairs, "total_iops_sec_max_length", 1);
         cfg.buckets[THROTTLE_OPS_READ].burst_length = cfg.map_to_cfg(pairs, "read_iops_sec_max_length", 1);
         cfg.buckets[THROTTLE_OPS_WRITE].burst_length = cfg.map_to_cfg(pairs, "write_iops_sec_max_length", 1);
-        cfg.op_size = cfg.map_to_cfg(pairs,"size_iops_sec", 0);
+        cfg.op_size = cfg.map_to_cfg(pairs,"op_size", 0);
     }
     else {
-       if(use_conf)
-          cfg.throttle_config(size);
+       if(use_conf) {
+           cfg.throttle_config(size);
+           map<string, bufferlist> data;
+           cfg.cfg_to_map(&data, "total_bytes_sec", cfg.buckets[THROTTLE_TPS_TOTAL].avg);
+           cfg.cfg_to_map(&data, "read_bytes_sec", cfg.buckets[THROTTLE_TPS_READ].avg);
+           cfg.cfg_to_map(&data, "write_bytes_sec", cfg.buckets[THROTTLE_TPS_WRITE].avg);
+           cfg.cfg_to_map(&data, "total_iops_sec", cfg.buckets[THROTTLE_OPS_TOTAL].avg);
+           cfg.cfg_to_map(&data, "read_iops_sec", cfg.buckets[THROTTLE_OPS_READ].avg);
+           cfg.cfg_to_map(&data, "write_iops_sec", cfg.buckets[THROTTLE_OPS_WRITE].avg);
+           cfg.cfg_to_map(&data, "total_bytes_sec_max", cfg.buckets[THROTTLE_TPS_TOTAL].avg);
+           cfg.cfg_to_map(&data, "read_bytes_sec_max", cfg.buckets[THROTTLE_TPS_READ].max);
+           cfg.cfg_to_map(&data, "write_bytes_sec_max", cfg.buckets[THROTTLE_TPS_WRITE].max);
+           cfg.cfg_to_map(&data, "total_iops_sec_max", cfg.buckets[THROTTLE_OPS_TOTAL].max);
+           cfg.cfg_to_map(&data, "read_iops_sec_max", cfg.buckets[THROTTLE_OPS_READ].max);
+           cfg.cfg_to_map(&data, "write_iops_sec_max", cfg.buckets[THROTTLE_OPS_WRITE].max);
+           cfg.cfg_to_map(&data, "total_bytes_sec_max_length", cfg.buckets[THROTTLE_TPS_TOTAL].burst_length);
+           cfg.cfg_to_map(&data, "read_bytes_sec_max_length", cfg.buckets[THROTTLE_TPS_READ].burst_length);
+           cfg.cfg_to_map(&data, "write_bytes_sec_max_length", cfg.buckets[THROTTLE_TPS_WRITE].burst_length);
+           cfg.cfg_to_map(&data, "total_iops_sec_max_length", cfg.buckets[THROTTLE_TPS_TOTAL].burst_length);
+           cfg.cfg_to_map(&data, "read_iops_sec_max_length", cfg.buckets[THROTTLE_OPS_READ].burst_length);
+           cfg.cfg_to_map(&data, "write_iops_sec_max_length", cfg.buckets[THROTTLE_OPS_WRITE].burst_length);
+           cfg.cfg_to_map(&data, "op_size", cfg.op_size);
+
+           cls_client::metadata_set(&md_ctx, header_oid, data);
+         }
       }
   }
 
