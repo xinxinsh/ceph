@@ -541,7 +541,7 @@ int Operations<I>::resize(uint64_t size, ProgressContext& prog_ctx) {
   m_image_ctx.perfcounter->inc(l_librbd_resize);
   if(r==0) {
     map<std::string, double> tmp_pairs;
-    m_image_ctx.fix_throttle(&pairs, true);
+    m_image_ctx.fix_throttle(&tmp_pairs, true);
   }
   ldout(cct, 2) << "resize finished" << dendl;
   return r;
