@@ -2851,23 +2851,31 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
         case THROTTLE_MODE_SSD:
           ldout(cct, 20) << "throttle mode SSD:ops valid value is 10000~30000 and tps valid value is 50M ~ 320M" << dendl;
-        if((*pairs)["read_bytes_sec"] < (50<< 20) || (*pairs)["read_bytes_sec"] > (320 << 20) )
+        if((*pairs)["read_bytes_sec"] < (50<< 20) || (*pairs)["read_bytes_sec"] > (256 << 20) )
             return -EINVAL;
-        if((*pairs)["write_bytes_sec"] < (50<< 20) || (*pairs)["write_bytes_sec"] > (320 << 20) )
+        if((*pairs)["write_bytes_sec"] < (50<< 20) || (*pairs)["write_bytes_sec"] > (256 << 20) )
             return -EINVAL;
-        if((*pairs)["read_iops_sec"] < 10000 || (*pairs)["read_iops_sec"] > 30000 )
+        if((*pairs)["read_iops_sec"] < 10000 || (*pairs)["read_iops_sec"] > 20000 )
             return -EINVAL;
-        if((*pairs)["write_iops_sec"] < 10000 || (*pairs)["write_iops_sec"] > 30000 )
+        if((*pairs)["write_iops_sec"] < 10000 || (*pairs)["write_iops_sec"] > 20000 )
             return -EINVAL;
         break;
         default:
           ldout(cct, 20) << "ops valid value is 1~100000 and tps valid value is 1M ~ 1000M" << dendl;
+        if((*pairs)["read_bytes_sec"] < (1<< 20) || (*pairs)["read_bytes_sec"] > (1000 << 20) )
+            return -EINVAL;
+        if((*pairs)["write_bytes_sec"] < (1<< 20) || (*pairs)["write_bytes_sec"] > (1000 << 20) )
+            return -EINVAL;
+        if((*pairs)["read_iops_sec"] < 1 || (*pairs)["read_iops_sec"] > 100000 )
+            return -EINVAL;
+        if((*pairs)["write_iops_sec"] < 1 || (*pairs)["write_iops_sec"] > 100000 )
+            return -EINVAL;
       }
 
     (*pairs)["read_bytes_sec_max"] = (*pairs)["read_bytes_sec"];
     (*pairs)["write_bytes_sec_max"] = (*pairs)["write_bytes_sec"];
     (*pairs)["read_iops_sec_max"] = (*pairs)["read_iops_sec"];
-    (*pairs)["write_iops_sec_max"] = (*pairs)["write_bytes_sec"];
+    (*pairs)["write_iops_sec_max"] = (*pairs)["write_iops_sec"];
     for (std::map<std::string, double>::iterator it = pairs->begin();it != pairs->end(); ++it) {
 
       ostringstream throttle_value;

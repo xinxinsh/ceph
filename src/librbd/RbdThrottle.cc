@@ -384,11 +384,11 @@ void ThrottleConfig::throttle_config(uint64_t image_size)
 		ldout(cct, 20) << "throttle mode EDD:(ops = min(1000 + 6 * image_size, 3000) and "
 			" tps = min(50 + size * 0.1, 80) MB/s) " << dendl;
 
-                buckets[THROTTLE_TPS_READ].avg = (uint64_t)MIN(50 + 0.1 * image_gsize, 80) << 20;
+                buckets[THROTTLE_TPS_READ].avg = (uint64_t)(MIN(50 + 0.1 *image_gsize, 80) *1024*1024);
                 buckets[THROTTLE_OPS_READ].avg = MIN(1000 + 6 * image_gsize, 3000);
                 buckets[THROTTLE_TPS_READ].max = 80 << 20;
                 buckets[THROTTLE_OPS_READ].max = 3000;
-                buckets[THROTTLE_TPS_WRITE].avg = (uint64_t)MIN(50 + 0.1 * image_gsize, 80) << 20;
+                buckets[THROTTLE_TPS_WRITE].avg = (uint64_t)(MIN(50 + 0.1 *image_gsize, 80) *1024*1024);
                 buckets[THROTTLE_OPS_WRITE].avg = MIN(1000 + 6 * image_gsize, 3000);
                 buckets[THROTTLE_TPS_WRITE].max = 80 << 20;
                 buckets[THROTTLE_OPS_WRITE].max = 3000;
@@ -397,11 +397,11 @@ void ThrottleConfig::throttle_config(uint64_t image_size)
 		ldout(cct, 20) << "throttle mode SSD:(ops = min(30 * image_size, 20000) and "
 			" tps = min(50 + size * 0.5, 256)) MB/s" << dendl;
 
-                buckets[THROTTLE_TPS_READ].avg = (uint64_t)MIN(50 + 0.5 *image_gsize, 256) << 20;
+                buckets[THROTTLE_TPS_READ].avg = (uint64_t)(MIN(50 + 0.5 *image_gsize, 256) *1024*1024);
                 buckets[THROTTLE_OPS_READ].avg = MIN(30 * image_gsize, 20000);
                 buckets[THROTTLE_TPS_READ].max = 256 << 20;
                 buckets[THROTTLE_OPS_READ].max = 20000;
-                buckets[THROTTLE_TPS_WRITE].avg = (uint64_t)MIN(50 + 0.5 *image_gsize, 256) << 20;
+                buckets[THROTTLE_TPS_WRITE].avg = (uint64_t)(MIN(50 + 0.5 *image_gsize, 256) *1024*1024);
                 buckets[THROTTLE_OPS_WRITE].avg = MIN(30 * image_gsize, 20000);
                 buckets[THROTTLE_TPS_WRITE].max = 256 << 20;
                 buckets[THROTTLE_OPS_WRITE].max = 20000;
