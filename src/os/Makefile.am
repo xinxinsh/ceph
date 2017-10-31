@@ -7,10 +7,13 @@ noinst_LIBRARIES += libos_types.a
 if WITH_LIBAIO
 libos_types_a_SOURCES += \
 	os/bluestore/bluestore_types.cc \
-	os/bluestore/bluefs_types.cc
+	os/bluestore/bluefs_types.cc 
 endif
 
 if ENABLE_SERVER
+
+libos_types_a_SOURCES += \
+	os/cstore/cstore_types.cc 
 
 libos_a_SOURCES = \
 	os/filestore/chain_xattr.cc \
@@ -120,6 +123,7 @@ noinst_HEADERS += \
 	os/cstore/WBThrottle.h \
 	os/cstore/XfsCStoreBackend.h \
 	os/cstore/ZFSCStoreBackend.h \
+	os/cstore/cstore_types.h \
 	os/fs/btrfs_ioctl.h \
 	os/fs/FS.h \
 	os/fs/XFS.h \
