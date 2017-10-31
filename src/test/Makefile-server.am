@@ -71,6 +71,11 @@ unittest_bluestore_types_LDADD = $(LIBOS) $(UNITTEST_LDADD) $(CEPH_GLOBAL)
 unittest_bluestore_types_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 check_TESTPROGRAMS += unittest_bluestore_types
 
+unittest_cstore_types_SOURCES = test/objectstore/test_cstore_types.cc
+unittest_cstore_types_LDADD = $(LIBOS) $(UNITTEST_LDADD) $(CEPH_GLOBAL)
+unittest_cstore_types_CXXFLAGS = $(UNITTEST_CXXFLAGS)
+check_TESTPROGRAMS += unittest_cstore_types
+
 endif
 
 ceph_test_objectstore_workloadgen_SOURCES = \

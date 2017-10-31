@@ -7,7 +7,8 @@ noinst_LIBRARIES += libos_types.a
 if WITH_LIBAIO
 libos_types_a_SOURCES += \
 	os/bluestore/bluestore_types.cc \
-	os/bluestore/bluefs_types.cc
+	os/bluestore/bluefs_types.cc \
+	os/cstore/cstore_types.cc 
 endif
 
 if ENABLE_SERVER
@@ -136,6 +137,7 @@ if WITH_LIBAIO
 noinst_HEADERS += \
 	os/bluestore/bluefs_types.h \
 	os/bluestore/bluestore_types.h \
+	os/bluestore/cstore_types.h \
 	os/bluestore/kv.h \
 	os/bluestore/Allocator.h \
 	os/bluestore/BlockDevice.h \
