@@ -13,8 +13,8 @@
  */
 
 
-#ifndef OS_LFNINDEX_H
-#define OS_LFNINDEX_H
+#ifndef OS_CSTORE_LFNINDEX_H
+#define OS_CSTORE_LFNINDEX_H
 
 #include <string>
 #include <map>
@@ -27,10 +27,10 @@
 #include "include/object.h"
 #include "common/ceph_crypto.h"
 
-#include "CollectionIndex.h"
+#include "CStoreCollectionIndex.h"
 
 /**
- * LFNIndex also encapsulates logic for manipulating
+ * CStoreLFNIndex also encapsulates logic for manipulating
  * subdirectories of of a collection as well as the long filename
  * logic.
  *
@@ -74,7 +74,7 @@
 
 
 
-class LFNIndex : public CollectionIndex {
+class CStoreLFNIndex : public CStoreCollectionIndex {
   /// Hash digest output size.
   static const int FILENAME_LFN_DIGEST_SIZE = CEPH_CRYPTO_SHA1_DIGESTSIZE;
   /// Length of filename hash.
@@ -126,12 +126,12 @@ private:
 
 public:
   /// Constructor
-  LFNIndex(
+  CStoreLFNIndex(
     coll_t collection,
     const char *base_path, ///< [in] path to Index root
     uint32_t index_version,
     double _error_injection_probability=0)
-    : CollectionIndex(collection),
+    : CStoreCollectionIndex(collection),
       base_path(base_path),
       index_version(index_version),
       error_injection_enabled(false),
@@ -152,39 +152,39 @@ public:
   coll_t coll() const { return collection; }
 
   /// Virtual destructor
-  virtual ~LFNIndex() {}
+  virtual ~CStoreLFNIndex() {}
 
-  /// @see CollectionIndex
+  /// @see CStoreCollectionIndex
   int init();
 
-  /// @see CollectionIndex
+  /// @see CStoreCollectionIndex
   int cleanup() = 0;
 
-  /// @see CollectionIndex
+  /// @see CStoreCollectionIndex
   int created(
     const ghobject_t &oid,
     const char *path
     );
 
-  /// @see CollectionIndex
+  /// @see CStoreCollectionIndex
   int unlink(
     const ghobject_t &oid
     );
 
-  /// @see CollectionIndex
+  /// @see CStoreCollectionIndex
   int lookup(
     const ghobject_t &oid,
-    IndexedPath *path,
+    CIndexedPath *path,
     int *hardlink
     );
 
-  /// @see CollectionIndex;
+  /// @see CStoreCollectionIndex;
   int pre_hash_collection(
       uint32_t pg_num,
       uint64_t expected_num_objs
       );
 
-  /// @see CollectionIndex
+  /// @see CStoreCollectionIndex
   int collection_list_partial(
     const ghobject_t &start,
     const ghobject_t &end,
@@ -197,14 +197,14 @@ public:
   virtual int _split(
     uint32_t match,                             //< [in] value to match
     uint32_t bits,                              //< [in] bits to check
-    CollectionIndex* dest                       //< [in] destination index
+    CStoreCollectionIndex* dest                       //< [in] destination index
     ) = 0;
 
-  /// @see CollectionIndex
+  /// @see CStoreCollectionIndex
   int split(
     uint32_t match,
     uint32_t bits,
-    CollectionIndex* dest
+    CStoreCollectionIndex* dest
     ) {
     WRAP_RETRY(
       r = _split(match, bits, dest);
@@ -250,7 +250,7 @@ protected:
       uint64_t expected_num_objs
       ) = 0;
 
-  /// @see CollectionIndex
+  /// @see CStoreCollectionIndex
   virtual int _collection_list_partial(
     const ghobject_t &start,
     const ghobject_t &end,
@@ -336,16 +336,16 @@ protected:
 
   /// do move subdir from from to dest
   static int move_subdir(
-    LFNIndex &from,             ///< [in] from index
-    LFNIndex &dest,             ///< [in] to index
+    CStoreLFNIndex &from,             ///< [in] from index
+    CStoreLFNIndex &dest,             ///< [in] to index
     const vector<string> &path, ///< [in] path containing dir
     string dir                  ///< [in] dir to move
     );
 
   /// do move object from from to dest
   static int move_object(
-    LFNIndex &from,             ///< [in] from index
-    LFNIndex &dest,             ///< [in] to index
+    CStoreLFNIndex &from,             ///< [in] from index
+    CStoreLFNIndex &dest,             ///< [in] to index
     const vector<string> &path, ///< [in] path to split
     const pair<string, ghobject_t> &obj ///< [in] obj to move
     );
@@ -596,6 +596,6 @@ private:
 
   friend class TestWrapLFNIndex;
 };
-typedef LFNIndex::IndexedPath IndexedPath;
+typedef CStoreLFNIndex::CIndexedPath CIndexedPath;
 
 #endif

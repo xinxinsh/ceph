@@ -27,17 +27,18 @@ libos_a_SOURCES = \
 	os/filestore/JournalingObjectStore.cc \
 	os/filestore/LFNIndex.cc \
 	os/filestore/WBThrottle.cc \
-	os/cstore/chain_xattr.cc \
-	os/cstore/DBObjectMap.cc \
-	os/cstore/FileJournal.cc \
+	os/cstore/cstore_chain_xattr.cc \
+	os/cstore/DBCStoreObjectMap.cc \
+	os/cstore/CStoreFileJournal.cc \
 	os/cstore/CStore.cc \
-	os/cstore/JournalThrottle.cc \
+	os/cstore/CStoreJournalThrottle.cc \
 	os/cstore/GenericCStoreBackend.cc \
-	os/cstore/HashIndex.cc \
-	os/cstore/IndexManager.cc \
-	os/cstore/JournalingObjectStore.cc \
-	os/cstore/LFNIndex.cc \
-	os/cstore/WBThrottle.cc \
+	os/cstore/CStoreHashIndex.cc \
+	os/cstore/CStoreIndexManager.cc \
+	os/cstore/CStoreJournalingObjectStore.cc \
+	os/cstore/CStoreLFNIndex.cc \
+	os/cstore/CStoreWBThrottle.cc \
+	os/cstore/cstore_kv.cc \
 	os/fs/FS.cc \
 	os/kstore/kv.cc \
 	os/kstore/KStore.cc \
@@ -63,7 +64,6 @@ endif
 
 if LINUX
 libos_a_SOURCES += os/filestore/BtrfsFileStoreBackend.cc
-libos_a_SOURCES += os/cstore/BtrfsCStoreBackend.cc
 endif
 
 if WITH_LIBXFS
@@ -75,7 +75,6 @@ endif
 
 if WITH_LIBZFS
 libos_a_SOURCES += os/filestore/ZFSFileStoreBackend.cc
-libos_a_SOURCES += os/cstore/ZFSCStoreBackend.cc
 endif
 
 libos_a_CXXFLAGS = ${AM_CXXFLAGS} -I rocksdb/include -fPIC
@@ -105,24 +104,23 @@ noinst_HEADERS += \
 	os/filestore/WBThrottle.h \
 	os/filestore/XfsFileStoreBackend.h \
 	os/filestore/ZFSFileStoreBackend.h \
-	os/cstore/chain_xattr.h \
-	os/cstore/BtrfsCStoreBackend.h \
-	os/cstore/CollectionIndex.h \
-	os/cstore/DBObjectMap.h \
-	os/cstore/FileJournal.h \
+	os/cstore/cstore_chain_xattr.h \
+	os/cstore/CStoreCollectionIndex.h \
+	os/cstore/DBCStoreObjectMap.h \
+	os/cstore/CStoreFileJournal.h \
 	os/cstore/CStore.h \
-	os/cstore/JournalThrottle.h \
-	os/cstore/FDCache.h \
+	os/cstore/CStoreJournalThrottle.h \
+	os/cstore/CStoreFDCache.h \
 	os/cstore/GenericCStoreBackend.h \
-	os/cstore/HashIndex.h \
-	os/cstore/IndexManager.h \
-	os/cstore/Journal.h \
-	os/cstore/JournalingObjectStore.h \
-	os/cstore/LFNIndex.h \
-	os/cstore/SequencerPosition.h \
-	os/cstore/WBThrottle.h \
+	os/cstore/CStoreHashIndex.h \
+	os/cstore/CStoreIndexManager.h \
+	os/cstore/CStoreJournal.h \
+	os/cstore/CStoreJournalingObjectStore.h \
+	os/cstore/CStoreLFNIndex.h \
+	os/cstore/CStoreSequencerPosition.h \
+	os/cstore/CStoreWBThrottle.h \
 	os/cstore/XfsCStoreBackend.h \
-	os/cstore/ZFSCStoreBackend.h \
+	os/cstore/cstore_kv.h \
 	os/cstore/cstore_types.h \
 	os/fs/btrfs_ioctl.h \
 	os/fs/FS.h \

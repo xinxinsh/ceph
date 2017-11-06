@@ -26,7 +26,7 @@ public:
   void SetUp() {
     coll_t *c = new coll_t();
     ghobject_t *o = new ghobject_t();
-    on = new objnode(*c, *o, 4*1024, 4*1024);
+    on = new objnode(*c, *o, 4*1024, 8);
   }
   void TearDown() {
     delete on;
@@ -43,34 +43,37 @@ TEST_F(cstore_types_objnode_test, objnode_update) {
 
 TEST_F(cstore_types_objnode_test, objnode_set_alg_type) {
   EXPECT_FALSE(on->is_compressed());
-  uint8_t type = 1;
-  on->set_alg_type(type);
-  EXPECT_EQ(1, on->get_alg_type());
+  on->c_type = objnode::COMP_ALG_SNAPPY;
   EXPECT_TRUE(on->is_compressed());
 }
 
+TEST_F(cstore_types_objnode_test, objnode_get_alg_type) {
+  on->c_type = objnode::COMP_ALG_NONE;
+  EXPECT_STREQ(on->get_alg_str(), "none");
+  on->c_type = objnode::COMP_ALG_SNAPPY;
+  EXPECT_STREQ(on->get_alg_str(), "snappy");
+}
+
 TEST_F(cstore_types_objnode_test, objnode_blocks) {
-  uint32_t first_set;
   int r;
+  uint64_t n;
   uint32_t size = 4 * 1024 * 1024;
   on->set_size(size);
   on->update_blocks(52210, 40977);
-  r = on->get_next_set_block(0, &first_set);
+  r = on->get_next_set_block(0, &n);
   EXPECT_EQ(0, r);
-  EXPECT_EQ(12, first_set);
-  on->get_next_set_block(89091, &first_set);
+  EXPECT_EQ(12, n);
+  r = on->get_next_set_block(22, &n);
   EXPECT_EQ(0, r);
-  EXPECT_EQ(22, first_set);
-  r = on->get_next_set_block(100000, &first_set);
+  EXPECT_EQ(22, n);
+  r = on->get_next_set_block(24, &n);
   EXPECT_EQ(-1, r);
   on->update_blocks(52210, 42977);
-  r = on->get_next_set_block(0, &first_set);
-  EXPECT_EQ(0, r);
-  EXPECT_EQ(12, first_set);
-  r = on->get_next_set_block(91091, &first_set);
-  EXPECT_EQ(0, r);
-  EXPECT_EQ(23, first_set);
-  r = on->get_next_set_block(100000, &first_set);
+  r = on->get_next_set_block(0, &n);
+  EXPECT_EQ(12, n);
+  r = on->get_next_set_block(23, &n);
+  EXPECT_EQ(23, n);
+  r = on->get_next_set_block(25, &n);
   EXPECT_EQ(-1, r);
 }
 
@@ -83,7 +86,7 @@ TEST_F(cstore_types_objnode_test, encode_decode) {
   ::decode(node, p);
   EXPECT_EQ(on->size, node.size);
   EXPECT_EQ(on->block_size, node.block_size);
-  EXPECT_EQ(on->get_alg_type(), node.get_alg_type());
+  EXPECT_EQ(on->c_type, node.c_type);
   EXPECT_STREQ(on->blocks.c_str(), node.blocks.c_str());
 }
 

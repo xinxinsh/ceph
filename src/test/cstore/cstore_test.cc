@@ -18,7 +18,7 @@
 #include <time.h>
 #include <sys/mount.h>
 #include "os/ObjectStore.h"
-#include "os/filestore/FileStore.h"
+#include "os/cstore/CStore.h"
 #include "include/Context.h"
 #include "common/ceph_argparse.h"
 #include "global/global_init.h"
@@ -51,11 +51,11 @@ int apply_transaction(
   }
 }
 
-class StoreTest : public ::testing::TestWithParam<const char*> {
+class CStoreStoreTest : public ::testing::TestWithParam<const char*> {
 public:
   boost::scoped_ptr<ObjectStore> store;
 
-  StoreTest() : store(0) {}
+  CStoreStoreTest() : store(0) {}
 
   void rm_r(string path) {
     string cmd = string("rm -r ") + path;
@@ -110,27 +110,27 @@ bool sorted(const vector<ghobject_t> &in, bool bitwise) {
   return true;
 }
 
-TEST_P(StoreTest, collect_metadata) {
+TEST_P(CStoreStoreTest, collect_metadata) {
   map<string,string> pm;
   store->collect_metadata(&pm);
-  if (GetParam() == string("filestore")) {
-    ASSERT_NE(pm.count("filestore_backend"), 0u);
-    ASSERT_NE(pm.count("filestore_f_type"), 0u);
-    ASSERT_NE(pm.count("backend_filestore_partition_path"), 0u);
-    ASSERT_NE(pm.count("backend_filestore_dev_node"), 0u);
+  if (GetParam() == string("cstore")) {
+    ASSERT_NE(pm.count("cstore_backend"), 0u);
+    ASSERT_NE(pm.count("cstore_f_type"), 0u);
+    ASSERT_NE(pm.count("backend_cstore_partition_path"), 0u);
+    ASSERT_NE(pm.count("backend_cstore_dev_node"), 0u);
   }
 }
 
-TEST_P(StoreTest, Trivial) {
+TEST_P(CStoreStoreTest, Trivial) {
 }
 
-TEST_P(StoreTest, TrivialRemount) {
+TEST_P(CStoreStoreTest, TrivialRemount) {
   store->umount();
   int r = store->mount();
   ASSERT_EQ(0, r);
 }
 
-TEST_P(StoreTest, SimpleRemount) {
+TEST_P(CStoreStoreTest, SimpleRemount) {
   ObjectStore::Sequencer osr("test");
   coll_t cid;
   ghobject_t hoid(hobject_t(sobject_t("Object 1", CEPH_NOSNAP)));
@@ -184,7 +184,7 @@ TEST_P(StoreTest, SimpleRemount) {
   }
 }
 
-TEST_P(StoreTest, IORemount) {
+TEST_P(CStoreStoreTest, IORemount) {
   ObjectStore::Sequencer osr("test");
   coll_t cid;
   bufferlist bl;
@@ -227,7 +227,7 @@ TEST_P(StoreTest, IORemount) {
   }
 }
 
-TEST_P(StoreTest, FiemapEmpty) {
+TEST_P(CStoreStoreTest, FiemapEmpty) {
   ObjectStore::Sequencer osr("test");
   coll_t cid;
   int r = 0;
@@ -260,7 +260,7 @@ TEST_P(StoreTest, FiemapEmpty) {
   }
 }
 
-TEST_P(StoreTest, FiemapHoles) {
+TEST_P(CStoreStoreTest, FiemapHoles) {
   ObjectStore::Sequencer osr("test");
   coll_t cid;
   int r = 0;
@@ -303,7 +303,7 @@ TEST_P(StoreTest, FiemapHoles) {
   }
 }
 
-TEST_P(StoreTest, SimpleMetaColTest) {
+TEST_P(CStoreStoreTest, SimpleMetaColTest) {
   ObjectStore::Sequencer osr("test");
   coll_t cid;
   int r = 0;
@@ -337,7 +337,7 @@ TEST_P(StoreTest, SimpleMetaColTest) {
   }
 }
 
-TEST_P(StoreTest, SimplePGColTest) {
+TEST_P(CStoreStoreTest, SimplePGColTest) {
   ObjectStore::Sequencer osr("test");
   coll_t cid(spg_t(pg_t(1,2), shard_id_t::NO_SHARD));
   int r = 0;
@@ -371,7 +371,7 @@ TEST_P(StoreTest, SimplePGColTest) {
   }
 }
 
-TEST_P(StoreTest, SimpleColPreHashTest) {
+TEST_P(CStoreStoreTest, SimpleColPreHashTest) {
   ObjectStore::Sequencer osr("test");
   // Firstly we will need to revert the value making sure
   // collection hint actually works
@@ -423,7 +423,7 @@ TEST_P(StoreTest, SimpleColPreHashTest) {
   }
 }
 
-TEST_P(StoreTest, SimpleObjectTest) {
+TEST_P(CStoreStoreTest, SimpleObjectTest) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid;
@@ -560,7 +560,7 @@ TEST_P(StoreTest, SimpleObjectTest) {
   }
 }
 
-TEST_P(StoreTest, ManySmallWrite) {
+TEST_P(CStoreStoreTest, ManySmallWrite) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid;
@@ -600,7 +600,7 @@ TEST_P(StoreTest, ManySmallWrite) {
   }
 }
 
-TEST_P(StoreTest, SmallSkipFront) {
+TEST_P(CStoreStoreTest, SmallSkipFront) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid;
@@ -647,7 +647,7 @@ TEST_P(StoreTest, SmallSkipFront) {
   }
 }
 
-TEST_P(StoreTest, AppendWalVsTailCache) {
+TEST_P(CStoreStoreTest, AppendWalVsTailCache) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid;
@@ -723,7 +723,7 @@ TEST_P(StoreTest, AppendWalVsTailCache) {
   g_ceph_context->_conf->apply_changes(NULL);
 }
 
-TEST_P(StoreTest, AppendZeroTrailingSharedBlock) {
+TEST_P(CStoreStoreTest, AppendZeroTrailingSharedBlock) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid;
@@ -804,7 +804,7 @@ TEST_P(StoreTest, AppendZeroTrailingSharedBlock) {
   }
 }
 
-TEST_P(StoreTest, SmallSequentialUnaligned) {
+TEST_P(CStoreStoreTest, SmallSequentialUnaligned) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid;
@@ -837,7 +837,7 @@ TEST_P(StoreTest, SmallSequentialUnaligned) {
   }
 }
 
-TEST_P(StoreTest, ManyBigWrite) {
+TEST_P(CStoreStoreTest, ManyBigWrite) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid;
@@ -892,7 +892,7 @@ TEST_P(StoreTest, ManyBigWrite) {
   }
 }
 
-TEST_P(StoreTest, MiscFragmentTests) {
+TEST_P(CStoreStoreTest, MiscFragmentTests) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid;
@@ -944,7 +944,7 @@ TEST_P(StoreTest, MiscFragmentTests) {
 
 }
 
-TEST_P(StoreTest, SimpleAttrTest) {
+TEST_P(CStoreStoreTest, SimpleAttrTest) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid;
@@ -1012,7 +1012,7 @@ TEST_P(StoreTest, SimpleAttrTest) {
   }
 }
 
-TEST_P(StoreTest, SimpleListTest) {
+TEST_P(CStoreStoreTest, SimpleListTest) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid(spg_t(pg_t(0, 1), shard_id_t(1)));
@@ -1080,7 +1080,7 @@ TEST_P(StoreTest, SimpleListTest) {
   }
 }
 
-TEST_P(StoreTest, Sort) {
+TEST_P(CStoreStoreTest, Sort) {
   {
     hobject_t a(sobject_t("a", CEPH_NOSNAP));
     hobject_t b = a;
@@ -1108,7 +1108,7 @@ TEST_P(StoreTest, Sort) {
   }
 }
 
-TEST_P(StoreTest, MultipoolListTest) {
+TEST_P(CStoreStoreTest, MultipoolListTest) {
   ObjectStore::Sequencer osr("test");
   int r;
   int poolid = 4373;
@@ -1167,7 +1167,65 @@ TEST_P(StoreTest, MultipoolListTest) {
   }
 }
 
-TEST_P(StoreTest, SimpleCloneTest) {
+TEST_P(CStoreStoreTest, CloneTruncateTest) {
+  ObjectStore::Sequencer osr("test");
+  int r;
+  coll_t cid;
+  {
+    ObjectStore::Transaction t;
+    t.create_collection(cid, 0);
+    cerr << "Creating collection " << cid << std::endl;
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+  ghobject_t hoid(hobject_t(sobject_t("Object 1", CEPH_NOSNAP),
+			    "key", 123, -1, ""));
+  {
+    bufferlist bl;
+    bl.append_zero(249856);
+    ObjectStore::Transaction t;
+    t.touch(cid, hoid);
+    t.write(cid, hoid, 12288, 249856, bl);
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+
+  {
+    ObjectStore::Transaction t;
+    t.truncate(cid, hoid, 267017);
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+
+  ghobject_t hoid2(hobject_t(sobject_t("Object 2", CEPH_NOSNAP),
+			     "key", 123, -1, ""));
+  {
+    ObjectStore::Transaction t;
+    t.clone(cid, hoid, hoid2);
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+  
+  {
+    bufferlist newdata;
+    r = store->read(cid, hoid, 0, 0, newdata);
+    ASSERT_EQ(r, 267017);
+    ASSERT_EQ(newdata.length(), 267017);
+    ASSERT_TRUE(newdata.is_zero());
+  }
+
+  {
+    ObjectStore::Transaction t;
+    t.remove(cid, hoid);
+    t.remove(cid, hoid2);
+    t.remove_collection(cid);
+    cerr << "Cleaning" << std::endl;
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+}
+
+TEST_P(CStoreStoreTest, SimpleCloneTest) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid;
@@ -1450,7 +1508,7 @@ TEST_P(StoreTest, SimpleCloneTest) {
   }
 }
 
-TEST_P(StoreTest, OmapSimple) {
+TEST_P(CStoreStoreTest, OmapSimple) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid;
@@ -1485,7 +1543,7 @@ TEST_P(StoreTest, OmapSimple) {
     map<string,bufferlist> r;
     store->omap_get(cid, hoid, &h, &r);
     ASSERT_TRUE(h.contents_equal(header));
-    ASSERT_EQ(r.size(), km.size());
+    ASSERT_EQ(r.size(), km.size() + 1);
     cout << "r: " << r << std::endl;
   }
   // test iterator with seek_to_first
@@ -1496,7 +1554,7 @@ TEST_P(StoreTest, OmapSimple) {
       r[iter->key()] = iter->value();
     }
     cout << "r: " << r << std::endl;
-    ASSERT_EQ(r.size(), km.size());
+    ASSERT_EQ(r.size(), km.size() + 1);
   }
   // test iterator with initial lower_bound
   {
@@ -1506,7 +1564,7 @@ TEST_P(StoreTest, OmapSimple) {
       r[iter->key()] = iter->value();
     }
     cout << "r: " << r << std::endl;
-    ASSERT_EQ(r.size(), km.size());
+    ASSERT_EQ(r.size(), km.size() + 1);
   }
   {
     ObjectStore::Transaction t;
@@ -1518,7 +1576,7 @@ TEST_P(StoreTest, OmapSimple) {
   }
 }
 
-TEST_P(StoreTest, OmapCloneTest) {
+TEST_P(CStoreStoreTest, OmapCloneTest) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid;
@@ -1561,7 +1619,7 @@ TEST_P(StoreTest, OmapCloneTest) {
     bufferlist h;
     store->omap_get(cid, hoid2, &h, &r);
     ASSERT_TRUE(h.contents_equal(header));
-    ASSERT_EQ(r.size(), km.size());
+    ASSERT_EQ(r.size(), km.size() + 1);
   }
   {
     ObjectStore::Transaction t;
@@ -1574,7 +1632,7 @@ TEST_P(StoreTest, OmapCloneTest) {
   }
 }
 
-TEST_P(StoreTest, SimpleCloneRangeTest) {
+TEST_P(CStoreStoreTest, SimpleCloneRangeTest) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid;
@@ -1633,7 +1691,7 @@ TEST_P(StoreTest, SimpleCloneRangeTest) {
 }
 
 
-TEST_P(StoreTest, SimpleObjectLongnameTest) {
+TEST_P(CStoreStoreTest, SimpleObjectLongnameTest) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid;
@@ -1672,7 +1730,7 @@ ghobject_t generate_long_name(unsigned i)
   return hoid;
 }
 
-TEST_P(StoreTest, LongnameSplitTest) {
+TEST_P(CStoreStoreTest, LongnameSplitTest) {
   ObjectStore::Sequencer osr("test");
   int r;
   coll_t cid;
@@ -1721,7 +1779,7 @@ TEST_P(StoreTest, LongnameSplitTest) {
 
 }
 
-TEST_P(StoreTest, ManyObjectTest) {
+TEST_P(CStoreStoreTest, ManyObjectTest) {
   ObjectStore::Sequencer osr("test");
   int NUM_OBJS = 2000;
   int r = 0;
@@ -1881,15 +1939,22 @@ public:
 static void dump_bl_mismatch(bufferlist& expected, bufferlist& actual)
 {
   cout << __func__ << std::endl;
+  if(expected.length() != actual.length()) {
+    cout << "--- buffer lengths mismatch " << std::hex
+         << "expected 0x" << expected.length() << " != actual 0x"
+         << actual.length() << std::dec << std::endl;
+  }
   unsigned offset = 0;
   while (expected[offset] == actual[offset])
     ++offset;
   cout << "--- buffer mismatch at offset 0x" << std::hex << offset << std::dec
-       << std::endl;
+       <<" expected:" << expected[offset] << " actual: "<< actual[offset] << std::endl;
+	/*  
   cout << "--- expected:\n";
   expected.hexdump(cout);
   cout << "--- actual:\n";
   actual.hexdump(cout);
+	*/
 }
 
 class SyntheticWorkloadState {
@@ -1948,6 +2013,7 @@ public:
       state->cond.Signal();
 
       bufferlist r2;
+      std::cout << "read object from " << hoid << std::endl;
       r = state->store->read(state->cid, hoid, 0, state->contents[hoid].data.length(), r2);
       if (!state->contents[hoid].data.contents_equal(r2)) {
 	dump_bl_mismatch(state->contents[hoid].data, r2);
@@ -1979,6 +2045,7 @@ public:
         state->available_objects.insert(noid);
       --(state->in_flight);
       bufferlist r2;
+      std::cout << "stash object from " << oid << " to " << noid << std::endl;
       r = state->store->read(
 	state->cid, noid, 0,
 	state->contents[noid].data.length(), r2);
@@ -2014,8 +2081,19 @@ public:
       --(state->in_flight);
       bufferlist r2;
       r = state->store->read(state->cid, noid, 0, state->contents[noid].data.length(), r2);
+      ASSERT_EQ(state->contents[oid].data.length(), state->contents[noid].data.length());
+      ASSERT_EQ(state->contents[noid].data.length(), r2.length());
+      /*  
+      std::cout << "clone object from " << oid << " to " << noid << std::endl;
+      state->contents[oid].data.hexdump(cout);
+      std::cout << " new object data " << std::endl;
+      state->contents[noid].data.hexdump(cout);
+      std::cout << " read new object data " << std::endl;
+      r2.hexdump(cout);
+      */
       if (!state->contents[noid].data.contents_equal(r2)) {
 	dump_bl_mismatch(state->contents[noid].data, r2);
+        std::cout << "clone object from " << oid << " to " << noid << std::endl;
 	assert(0 == " mismatch after clone");
         ASSERT_TRUE(state->contents[noid].data.contents_equal(r2));
       }
@@ -2473,7 +2551,7 @@ public:
     while (in_flight)
       cond.Wait(lock);
     vector<ghobject_t> objects;
-    set<ghobject_t, ghobject_t::BitwiseComparator> objects_set, objects_set2;
+    set<ghobject_t, ghobject_t::BitwiseComparator> objects_set, objects_set2, partial_set, partial_set2;
     ghobject_t next, current;
     while (1) {
       //cerr << "scanning..." << std::endl;
@@ -2490,35 +2568,55 @@ public:
     if (objects_set.size() != available_objects.size()) {
       for (set<ghobject_t>::iterator p = objects_set.begin();
 	   p != objects_set.end();
-	   ++p)
+	   ++p) {
+	if ((p->hobj.nspace == ".ceph-compress") || (p->hobj.nspace == ".ceph-decompress"))
+		continue;
 	if (available_objects.count(*p) == 0) {
 	  cerr << "+ " << *p << std::endl;
-	  assert(0);
+	  assert(0 == "new object");
 	}
+			}
       for (set<ghobject_t>::iterator p = available_objects.begin();
 	   p != available_objects.end();
 	   ++p)
-	if (objects_set.count(*p) == 0)
+	if (objects_set.count(*p) == 0) {
 	  cerr << "- " << *p << std::endl;
       //cerr << " objects_set: " << objects_set << std::endl;
       //cerr << " available_set: " << available_objects << std::endl;
       assert(0 == "badness");
+	}
     }
 
-    ASSERT_EQ(objects_set.size(), available_objects.size());
     for (set<ghobject_t, ghobject_t::BitwiseComparator>::iterator i = objects_set.begin();
 	 i != objects_set.end();
 	 ++i) {
+			if ((i->hobj.nspace == ".ceph-compress") || (i->hobj.nspace == ".ceph-decompress"))
+        partial_set.insert(*i);
+		}
+    ASSERT_EQ(objects_set.size(), available_objects.size() + partial_set.size());
+    for (set<ghobject_t, ghobject_t::BitwiseComparator>::iterator i = objects_set.begin();
+	 i != objects_set.end();
+	 ++i) {
+			if ((i->hobj.nspace == ".ceph-compress") || (i->hobj.nspace == ".ceph-decompress"))
+				continue;
       ASSERT_GT(available_objects.count(*i), (unsigned)0);
     }
 
     int r = store->collection_list(cid, ghobject_t(), ghobject_t::get_max(), true, INT_MAX, &objects, 0);
     ASSERT_EQ(r, 0);
     objects_set2.insert(objects.begin(), objects.end());
-    ASSERT_EQ(objects_set2.size(), available_objects.size());
     for (set<ghobject_t, ghobject_t::BitwiseComparator>::iterator i = objects_set2.begin();
 	 i != objects_set2.end();
 	 ++i) {
+			if ((i->hobj.nspace == ".ceph-compress") || (i->hobj.nspace == ".ceph-decompress"))
+        partial_set2.insert(*i);
+		}
+    ASSERT_EQ(objects_set2.size(), available_objects.size() + partial_set2.size());
+    for (set<ghobject_t, ghobject_t::BitwiseComparator>::iterator i = objects_set2.begin();
+	 i != objects_set2.end();
+	 ++i) {
+			if ((i->hobj.nspace == ".ceph-compress") || (i->hobj.nspace == ".ceph-decompress"))
+				continue;
       ASSERT_GT(available_objects.count(*i), (unsigned)0);
       if (available_objects.count(*i) == 0) {
 	cerr << "+ " << *i << std::endl;
@@ -2544,6 +2642,7 @@ public:
     struct stat buf;
     int r = store->stat(cid, hoid, &buf);
     ASSERT_EQ(0, r);
+		cout <<"stat test " << hoid.hobj.to_str() << "  " << buf.st_size << " ~ " << expected << std::endl;
     assert((uint64_t)buf.st_size == expected);
     ASSERT_TRUE((uint64_t)buf.st_size == expected);
     {
@@ -2613,7 +2712,7 @@ public:
   }
 };
 
-TEST_P(StoreTest, Synthetic) {
+TEST_P(CStoreStoreTest, Synthetic) {
   ObjectStore::Sequencer osr("test");
   MixedGenerator gen(555);
   gen_type rng(time(NULL));
@@ -2656,7 +2755,7 @@ TEST_P(StoreTest, Synthetic) {
   test_obj.shutdown();
 }
 
-TEST_P(StoreTest, AttrSynthetic) {
+TEST_P(CStoreStoreTest, AttrSynthetic) {
   ObjectStore::Sequencer osr("test");
   MixedGenerator gen(447);
   gen_type rng(time(NULL));
@@ -2697,7 +2796,7 @@ TEST_P(StoreTest, AttrSynthetic) {
   test_obj.shutdown();
 }
 
-TEST_P(StoreTest, HashCollisionTest) {
+TEST_P(CStoreStoreTest, HashCollisionTest) {
   ObjectStore::Sequencer osr("test");
   int64_t poolid = 11;
   coll_t cid(spg_t(pg_t(0,poolid),shard_id_t::NO_SHARD));
@@ -2780,7 +2879,7 @@ TEST_P(StoreTest, HashCollisionTest) {
   ASSERT_EQ(r, 0);
 }
 
-TEST_P(StoreTest, ScrubTest) {
+TEST_P(CStoreStoreTest, ScrubTest) {
   ObjectStore::Sequencer osr("test");
   int64_t poolid = 111;
   coll_t cid(spg_t(pg_t(0, poolid),shard_id_t(1)));
@@ -2879,7 +2978,7 @@ TEST_P(StoreTest, ScrubTest) {
 }
 
 
-TEST_P(StoreTest, OMapTest) {
+TEST_P(CStoreStoreTest, OMapTest) {
   ObjectStore::Sequencer osr("test");
   coll_t cid;
   ghobject_t hoid(hobject_t("tesomap", "", CEPH_NOSNAP, 0, 0, ""));
@@ -3030,7 +3129,7 @@ TEST_P(StoreTest, OMapTest) {
       ASSERT_TRUE(m.count("7"));
       ASSERT_TRUE(m.count("8"));
       //cout << m << std::endl;
-      ASSERT_EQ(6u, m.size());
+      ASSERT_EQ(7u, m.size());
     }
     {
       ObjectStore::Transaction t;
@@ -3053,7 +3152,7 @@ TEST_P(StoreTest, OMapTest) {
   ASSERT_EQ(r, 0);
 }
 
-TEST_P(StoreTest, OMapIterator) {
+TEST_P(CStoreStoreTest, OMapIterator) {
   ObjectStore::Sequencer osr("test");
   coll_t cid;
   ghobject_t hoid(hobject_t("tesomap", "", CEPH_NOSNAP, 0, 0, ""));
@@ -3147,7 +3246,7 @@ TEST_P(StoreTest, OMapIterator) {
   }
 }
 
-TEST_P(StoreTest, XattrTest) {
+TEST_P(CStoreStoreTest, XattrTest) {
   ObjectStore::Sequencer osr("test");
   coll_t cid;
   ghobject_t hoid(hobject_t("tesomap", "", CEPH_NOSNAP, 0, 0, ""));
@@ -3303,15 +3402,15 @@ void colsplittest(
   ASSERT_EQ(r, 0);
 }
 
-TEST_P(StoreTest, ColSplitTest1) {
+TEST_P(CStoreStoreTest, ColSplitTest1) {
   colsplittest(store.get(), 10000, 11);
 }
-TEST_P(StoreTest, ColSplitTest2) {
+TEST_P(CStoreStoreTest, ColSplitTest2) {
   colsplittest(store.get(), 100, 7);
 }
 
 #if 0
-TEST_P(StoreTest, ColSplitTest3) {
+TEST_P(CStoreStoreTest, ColSplitTest3) {
   colsplittest(store.get(), 100000, 25);
 }
 #endif
@@ -3323,7 +3422,7 @@ TEST_P(StoreTest, ColSplitTest3) {
  * in order to verify that the merging correctly
  * stops at the common prefix subdir.  See bug
  * #5273 */
-TEST_P(StoreTest, TwoHash) {
+TEST_P(CStoreStoreTest, TwoHash) {
   ObjectStore::Sequencer osr("test");
   coll_t cid;
   int r;
@@ -3391,7 +3490,7 @@ TEST_P(StoreTest, TwoHash) {
   ASSERT_EQ(r, 0);
 }
 
-TEST_P(StoreTest, Rename) {
+TEST_P(CStoreStoreTest, Rename) {
   ObjectStore::Sequencer osr("test");
   coll_t cid(spg_t(pg_t(0, 2122),shard_id_t::NO_SHARD));
   ghobject_t srcoid(hobject_t("src_oid", "", CEPH_NOSNAP, 0, 0, ""));
@@ -3451,7 +3550,7 @@ TEST_P(StoreTest, Rename) {
   }
 }
 
-TEST_P(StoreTest, MoveRename) {
+TEST_P(CStoreStoreTest, MoveRename) {
   ObjectStore::Sequencer osr("test");
   coll_t cid(spg_t(pg_t(0, 212),shard_id_t::NO_SHARD));
   ghobject_t temp_oid(hobject_t("tmp_oid", "", CEPH_NOSNAP, 0, 0, ""));
@@ -3516,7 +3615,7 @@ TEST_P(StoreTest, MoveRename) {
   }
 }
 
-TEST_P(StoreTest, BigRGWObjectName) {
+TEST_P(CStoreStoreTest, BigRGWObjectName) {
   ObjectStore::Sequencer osr("test");
   coll_t cid(spg_t(pg_t(0,12),shard_id_t::NO_SHARD));
   ghobject_t oid(
@@ -3574,7 +3673,7 @@ TEST_P(StoreTest, BigRGWObjectName) {
   }
 }
 
-TEST_P(StoreTest, SetAllocHint) {
+TEST_P(CStoreStoreTest, SetAllocHint) {
   ObjectStore::Sequencer osr("test");
   coll_t cid;
   ghobject_t hoid(hobject_t("test_hint", "", CEPH_NOSNAP, 0, 0, ""));
@@ -3612,7 +3711,7 @@ TEST_P(StoreTest, SetAllocHint) {
   }
 }
 
-TEST_P(StoreTest, TryMoveRename) {
+TEST_P(CStoreStoreTest, TryMoveRename) {
   ObjectStore::Sequencer osr("test");
   coll_t cid;
   ghobject_t hoid(hobject_t("test_hint", "", CEPH_NOSNAP, 0, 0, ""));
@@ -3649,13 +3748,9 @@ TEST_P(StoreTest, TryMoveRename) {
 
 INSTANTIATE_TEST_CASE_P(
   ObjectStore,
-  StoreTest,
+  CStoreStoreTest,
   ::testing::Values(
-//   "memstore",
-    "filestore"
-    ));
-//    "bluestore",
-//    "kstore"));
+    "cstore"));
 
 #else
 
@@ -3682,13 +3777,9 @@ int main(int argc, char **argv) {
   g_ceph_context->_conf->set_val("filestore_op_thread_suicide_timeout", "10000");
   g_ceph_context->_conf->set_val("filestore_debug_disable_sharded_check", "true");
   g_ceph_context->_conf->set_val("filestore_fiemap", "true");
-  g_ceph_context->_conf->set_val("bluestore_fsck_on_mount", "true");
-  g_ceph_context->_conf->set_val("bluestore_fsck_on_umount", "true");
-  g_ceph_context->_conf->set_val("bluestore_debug_misc", "true");
-  g_ceph_context->_conf->set_val("bluestore_debug_small_allocations", "4");
-  g_ceph_context->_conf->set_val("bluestore_debug_freelist", "true");
   g_ceph_context->_conf->set_val(
     "enable_experimental_unrecoverable_data_corrupting_features", "*");
+  g_ceph_context->_conf->set_val("cstore_compress_interval", "1");
   g_ceph_context->_conf->apply_changes(NULL);
 
   ::testing::InitGoogleTest(&argc, argv);

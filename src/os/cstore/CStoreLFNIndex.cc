@@ -30,24 +30,24 @@
 #include "include/buffer.h"
 #include "common/ceph_crypto.h"
 #include "include/compat.h"
-#include "chain_xattr.h"
+#include "cstore_chain_xattr.h"
 
-#include "LFNIndex.h"
+#include "CStoreLFNIndex.h"
 using ceph::crypto::SHA1;
 
 #define dout_subsys ceph_subsys_cstore
 #undef dout_prefix
-#define dout_prefix *_dout << "LFNIndex(" << get_base_path() << ") "
+#define dout_prefix *_dout << "CStoreLFNIndex(" << get_base_path() << ") "
 
 
-const string LFNIndex::LFN_ATTR = "user.cephos.lfn";
-const string LFNIndex::PHASH_ATTR_PREFIX = "user.cephos.phash.";
-const string LFNIndex::SUBDIR_PREFIX = "DIR_";
-const string LFNIndex::FILENAME_COOKIE = "long";
-const int LFNIndex::FILENAME_PREFIX_LEN =  FILENAME_SHORT_LEN - FILENAME_HASH_LEN -
+const string CStoreLFNIndex::LFN_ATTR = "user.cephos.lfn";
+const string CStoreLFNIndex::PHASH_ATTR_PREFIX = "user.cephos.phash.";
+const string CStoreLFNIndex::SUBDIR_PREFIX = "DIR_";
+const string CStoreLFNIndex::FILENAME_COOKIE = "long";
+const int CStoreLFNIndex::FILENAME_PREFIX_LEN =  FILENAME_SHORT_LEN - FILENAME_HASH_LEN -
 								FILENAME_COOKIE.size() -
 								FILENAME_EXTRA;
-void LFNIndex::maybe_inject_failure()
+void CStoreLFNIndex::maybe_inject_failure()
 {
   if (error_injection_enabled) {
     if (current_failure > last_failure &&
@@ -74,7 +74,7 @@ struct FDCloser {
 
 /* Public methods */
 
-uint64_t LFNIndex::get_max_escaped_name_len(const hobject_t &obj)
+uint64_t CStoreLFNIndex::get_max_escaped_name_len(const hobject_t &obj)
 {
   ghobject_t ghobj(obj);
   ghobj.shard_id = shard_id_t(0);
@@ -83,12 +83,12 @@ uint64_t LFNIndex::get_max_escaped_name_len(const hobject_t &obj)
   return lfn_generate_object_name_current(ghobj).size();
 }
 
-int LFNIndex::init()
+int CStoreLFNIndex::init()
 {
   return _init();
 }
 
-int LFNIndex::created(const ghobject_t &oid, const char *path)
+int CStoreLFNIndex::created(const ghobject_t &oid, const char *path)
 {
   WRAP_RETRY(
   vector<string> path_comp;
@@ -116,7 +116,7 @@ int LFNIndex::created(const ghobject_t &oid, const char *path)
     );
 }
 
-int LFNIndex::unlink(const ghobject_t &oid)
+int CStoreLFNIndex::unlink(const ghobject_t &oid)
 {
   WRAP_RETRY(
   vector<string> path;
@@ -132,8 +132,8 @@ int LFNIndex::unlink(const ghobject_t &oid)
   );
 }
 
-int LFNIndex::lookup(const ghobject_t &oid,
-		     IndexedPath *out_path,
+int CStoreLFNIndex::lookup(const ghobject_t &oid,
+		     CIndexedPath *out_path,
 		     int *hardlink)
 {
   WRAP_RETRY(
@@ -148,13 +148,13 @@ int LFNIndex::lookup(const ghobject_t &oid,
   );
 }
 
-int LFNIndex::pre_hash_collection(uint32_t pg_num, uint64_t expected_num_objs)
+int CStoreLFNIndex::pre_hash_collection(uint32_t pg_num, uint64_t expected_num_objs)
 {
   return _pre_hash_collection(pg_num, expected_num_objs);
 }
 
 
-int LFNIndex::collection_list_partial(const ghobject_t &start,
+int CStoreLFNIndex::collection_list_partial(const ghobject_t &start,
 				      const ghobject_t &end,
 				      bool sort_bitwise,
 				      int max_count,
@@ -166,7 +166,7 @@ int LFNIndex::collection_list_partial(const ghobject_t &start,
 
 /* Derived class utility methods */
 
-int LFNIndex::fsync_dir(const vector<string> &path)
+int CStoreLFNIndex::fsync_dir(const vector<string> &path)
 {
   maybe_inject_failure();
   int fd = ::open(get_full_path_subdir(path).c_str(), O_RDONLY);
@@ -182,7 +182,7 @@ int LFNIndex::fsync_dir(const vector<string> &path)
     return 0;
 }
 
-int LFNIndex::link_object(const vector<string> &from,
+int CStoreLFNIndex::link_object(const vector<string> &from,
 			  const vector<string> &to,
 			  const ghobject_t &oid,
 			  const string &from_short_name)
@@ -203,7 +203,7 @@ int LFNIndex::link_object(const vector<string> &from,
     return 0;
 }
 
-int LFNIndex::remove_objects(const vector<string> &dir,
+int CStoreLFNIndex::remove_objects(const vector<string> &dir,
 			     const map<string, ghobject_t> &to_remove,
 			     map<string, ghobject_t> *remaining)
 {
@@ -267,7 +267,7 @@ int LFNIndex::remove_objects(const vector<string> &dir,
   return 0;
 }
 
-int LFNIndex::move_objects(const vector<string> &from,
+int CStoreLFNIndex::move_objects(const vector<string> &from,
 			   const vector<string> &to)
 {
   map<string, ghobject_t> to_move;
@@ -308,7 +308,7 @@ int LFNIndex::move_objects(const vector<string> &from,
   return fsync_dir(from);
 }
 
-int LFNIndex::remove_object(const vector<string> &from,
+int CStoreLFNIndex::remove_object(const vector<string> &from,
 			    const ghobject_t &oid)
 {
   string short_name;
@@ -323,16 +323,16 @@ int LFNIndex::remove_object(const vector<string> &from,
   return lfn_unlink(from, oid, short_name);
 }
 
-int LFNIndex::get_mangled_name(const vector<string> &from,
+int CStoreLFNIndex::get_mangled_name(const vector<string> &from,
 			       const ghobject_t &oid,
 			       string *mangled_name, int *hardlink)
 {
   return lfn_get_name(from, oid, mangled_name, 0, hardlink);
 }
 
-int LFNIndex::move_subdir(
-  LFNIndex &from,
-  LFNIndex &dest,
+int CStoreLFNIndex::move_subdir(
+  CStoreLFNIndex &from,
+  CStoreLFNIndex &dest,
   const vector<string> &path,
   string dir
   )
@@ -347,9 +347,9 @@ int LFNIndex::move_subdir(
   return 0;
 }
 
-int LFNIndex::move_object(
-  LFNIndex &from,
-  LFNIndex &dest,
+int CStoreLFNIndex::move_object(
+  CStoreLFNIndex &from,
+  CStoreLFNIndex &dest,
   const vector<string> &path,
   const pair<string, ghobject_t> &obj
   )
@@ -401,7 +401,7 @@ static int get_hobject_from_oinfo(const char *dir, const char *file,
 }
 
 
-int LFNIndex::list_objects(const vector<string> &to_list, int max_objs,
+int CStoreLFNIndex::list_objects(const vector<string> &to_list, int max_objs,
 			   long *handle, map<string, ghobject_t> *out)
 {
   string to_list_path = get_full_path_subdir(to_list);
@@ -461,7 +461,7 @@ int LFNIndex::list_objects(const vector<string> &to_list, int max_objs,
   return r;
 }
 
-int LFNIndex::list_subdirs(const vector<string> &to_list,
+int CStoreLFNIndex::list_subdirs(const vector<string> &to_list,
 			   vector<string> *out)
 {
   string to_list_path = get_full_path_subdir(to_list);
@@ -486,7 +486,7 @@ int LFNIndex::list_subdirs(const vector<string> &to_list,
   return 0;
 }
 
-int LFNIndex::create_path(const vector<string> &to_create)
+int CStoreLFNIndex::create_path(const vector<string> &to_create)
 {
   maybe_inject_failure();
   int r = ::mkdir(get_full_path_subdir(to_create).c_str(), 0777);
@@ -497,7 +497,7 @@ int LFNIndex::create_path(const vector<string> &to_create)
     return 0;
 }
 
-int LFNIndex::remove_path(const vector<string> &to_remove)
+int CStoreLFNIndex::remove_path(const vector<string> &to_remove)
 {
   maybe_inject_failure();
   int r = ::rmdir(get_full_path_subdir(to_remove).c_str());
@@ -508,7 +508,7 @@ int LFNIndex::remove_path(const vector<string> &to_remove)
     return 0;
 }
 
-int LFNIndex::path_exists(const vector<string> &to_check, int *exists)
+int CStoreLFNIndex::path_exists(const vector<string> &to_check, int *exists)
 {
   string full_path = get_full_path_subdir(to_check);
   struct stat buf;
@@ -526,7 +526,7 @@ int LFNIndex::path_exists(const vector<string> &to_check, int *exists)
   }
 }
 
-int LFNIndex::add_attr_path(const vector<string> &path,
+int CStoreLFNIndex::add_attr_path(const vector<string> &path,
 			    const string &attr_name,
 			    bufferlist &attr_value)
 {
@@ -538,7 +538,7 @@ int LFNIndex::add_attr_path(const vector<string> &path,
     attr_value.length());
 }
 
-int LFNIndex::get_attr_path(const vector<string> &path,
+int CStoreLFNIndex::get_attr_path(const vector<string> &path,
 			    const string &attr_name,
 			    bufferlist &attr_value)
 {
@@ -553,7 +553,7 @@ int LFNIndex::get_attr_path(const vector<string> &path,
   return r;
 }
 
-int LFNIndex::remove_attr_path(const vector<string> &path,
+int CStoreLFNIndex::remove_attr_path(const vector<string> &path,
 			       const string &attr_name)
 {
   string full_path = get_full_path_subdir(path);
@@ -562,7 +562,7 @@ int LFNIndex::remove_attr_path(const vector<string> &path,
   return chain_removexattr(full_path.c_str(), mangled_attr_name.c_str());
 }
 
-string LFNIndex::lfn_generate_object_name_keyless(const ghobject_t &oid)
+string CStoreLFNIndex::lfn_generate_object_name_keyless(const ghobject_t &oid)
 {
   char s[FILENAME_MAX_LEN];
   char *end = s + sizeof(s);
@@ -621,7 +621,7 @@ static void append_escaped(string::const_iterator begin,
   }
 }
 
-string LFNIndex::lfn_generate_object_name_current(const ghobject_t &oid)
+string CStoreLFNIndex::lfn_generate_object_name_current(const ghobject_t &oid)
 {
   string full_name;
   string::const_iterator i = oid.hobj.oid.name.begin();
@@ -681,7 +681,7 @@ string LFNIndex::lfn_generate_object_name_current(const ghobject_t &oid)
   return full_name;
 }
 
-string LFNIndex::lfn_generate_object_name_poolless(const ghobject_t &oid)
+string CStoreLFNIndex::lfn_generate_object_name_poolless(const ghobject_t &oid)
 {
   if (index_version == HASH_INDEX_TAG)
     return lfn_generate_object_name_keyless(oid);
@@ -715,7 +715,7 @@ string LFNIndex::lfn_generate_object_name_poolless(const ghobject_t &oid)
   return full_name;
 }
 
-int LFNIndex::lfn_get_name(const vector<string> &path,
+int CStoreLFNIndex::lfn_get_name(const vector<string> &path,
 			   const ghobject_t &oid,
 			   string *mangled_name, string *out_path,
 			   int *hardlink)
@@ -830,7 +830,7 @@ int LFNIndex::lfn_get_name(const vector<string> &path,
   return 0;
 }
 
-int LFNIndex::lfn_created(const vector<string> &path,
+int CStoreLFNIndex::lfn_created(const vector<string> &path,
 			  const ghobject_t &oid,
 			  const string &mangled_name)
 {
@@ -866,7 +866,7 @@ int LFNIndex::lfn_created(const vector<string> &path,
     full_name.c_str(), full_name.size());
 }
 
-int LFNIndex::lfn_unlink(const vector<string> &path,
+int CStoreLFNIndex::lfn_unlink(const vector<string> &path,
 			 const ghobject_t &oid,
 			 const string &mangled_name)
 {
@@ -934,7 +934,7 @@ int LFNIndex::lfn_unlink(const vector<string> &path,
   return r;
 }
 
-int LFNIndex::lfn_translate(const vector<string> &path,
+int CStoreLFNIndex::lfn_translate(const vector<string> &path,
 			    const string &short_name,
 			    ghobject_t *out)
 {
@@ -971,12 +971,12 @@ int LFNIndex::lfn_translate(const vector<string> &path,
   return lfn_parse_object_name(long_name, out);
 }
 
-bool LFNIndex::lfn_is_object(const string &short_name)
+bool CStoreLFNIndex::lfn_is_object(const string &short_name)
 {
   return lfn_is_hashed_filename(short_name) || !lfn_is_subdir(short_name, 0);
 }
 
-bool LFNIndex::lfn_is_subdir(const string &name, string *demangled)
+bool CStoreLFNIndex::lfn_is_subdir(const string &name, string *demangled)
 {
   if (name.substr(0, SUBDIR_PREFIX.size()) == SUBDIR_PREFIX) {
     if (demangled)
@@ -1039,7 +1039,7 @@ static int parse_object(const char *s, ghobject_t& o)
   return 0;
 }
 
-int LFNIndex::lfn_parse_object_name_keyless(const string &long_name, ghobject_t *out)
+int CStoreLFNIndex::lfn_parse_object_name_keyless(const string &long_name, ghobject_t *out)
 {
   int r = parse_object(long_name.c_str(), *out);
   int64_t pool = -1;
@@ -1076,7 +1076,7 @@ static bool append_unescaped(string::const_iterator begin,
   return true;
 }
 
-int LFNIndex::lfn_parse_object_name_poolless(const string &long_name,
+int CStoreLFNIndex::lfn_parse_object_name_poolless(const string &long_name,
 					     ghobject_t *out)
 {
   string name;
@@ -1144,7 +1144,7 @@ int LFNIndex::lfn_parse_object_name_poolless(const string &long_name,
 }
 
 
-int LFNIndex::lfn_parse_object_name(const string &long_name, ghobject_t *out)
+int CStoreLFNIndex::lfn_parse_object_name(const string &long_name, ghobject_t *out)
 {
   string name;
   string key;
@@ -1250,7 +1250,7 @@ int LFNIndex::lfn_parse_object_name(const string &long_name, ghobject_t *out)
   return 0;
 }
 
-bool LFNIndex::lfn_is_hashed_filename(const string &name)
+bool CStoreLFNIndex::lfn_is_hashed_filename(const string &name)
 {
   if (name.size() < (unsigned)FILENAME_SHORT_LEN) {
     return 0;
@@ -1263,7 +1263,7 @@ bool LFNIndex::lfn_is_hashed_filename(const string &name)
   }
 }
 
-bool LFNIndex::lfn_must_hash(const string &long_name)
+bool CStoreLFNIndex::lfn_must_hash(const string &long_name)
 {
   return (int)long_name.size() >= FILENAME_SHORT_LEN;
 }
@@ -1277,7 +1277,7 @@ static inline void buf_to_hex(const unsigned char *buf, int len, char *str)
   }
 }
 
-int LFNIndex::hash_filename(const char *filename, char *hash, int buf_len)
+int CStoreLFNIndex::hash_filename(const char *filename, char *hash, int buf_len)
 {
   if (buf_len < FILENAME_HASH_LEN + 1)
     return -EINVAL;
@@ -1295,7 +1295,7 @@ int LFNIndex::hash_filename(const char *filename, char *hash, int buf_len)
   return 0;
 }
 
-void LFNIndex::build_filename(const char *old_filename, int i, char *filename, int len)
+void CStoreLFNIndex::build_filename(const char *old_filename, int i, char *filename, int len)
 {
   char hash[FILENAME_HASH_LEN + 1];
 
@@ -1318,7 +1318,7 @@ void LFNIndex::build_filename(const char *old_filename, int i, char *filename, i
   }
 }
 
-bool LFNIndex::short_name_matches(const char *short_name, const char *cand_long_name)
+bool CStoreLFNIndex::short_name_matches(const char *short_name, const char *cand_long_name)
 {
   const char *end = short_name;
   while (*end) ++end;
@@ -1340,7 +1340,7 @@ bool LFNIndex::short_name_matches(const char *short_name, const char *cand_long_
   return strcmp(short_name, buf) == 0;
 }
 
-string LFNIndex::lfn_get_short_name(const ghobject_t &oid, int i)
+string CStoreLFNIndex::lfn_get_short_name(const ghobject_t &oid, int i)
 {
   string long_name = lfn_generate_object_name(oid);
   assert(lfn_must_hash(long_name));
@@ -1349,12 +1349,12 @@ string LFNIndex::lfn_get_short_name(const ghobject_t &oid, int i)
   return string(buf);
 }
 
-const string &LFNIndex::get_base_path()
+const string &CStoreLFNIndex::get_base_path()
 {
   return base_path;
 }
 
-string LFNIndex::get_full_path_subdir(const vector<string> &rel)
+string CStoreLFNIndex::get_full_path_subdir(const vector<string> &rel)
 {
   string retval = get_base_path();
   for (vector<string>::const_iterator i = rel.begin();
@@ -1366,22 +1366,22 @@ string LFNIndex::get_full_path_subdir(const vector<string> &rel)
   return retval;
 }
 
-string LFNIndex::get_full_path(const vector<string> &rel, const string &name)
+string CStoreLFNIndex::get_full_path(const vector<string> &rel, const string &name)
 {
   return get_full_path_subdir(rel) + "/" + name;
 }
 
-string LFNIndex::mangle_path_component(const string &component)
+string CStoreLFNIndex::mangle_path_component(const string &component)
 {
   return SUBDIR_PREFIX + component;
 }
 
-string LFNIndex::demangle_path_component(const string &component)
+string CStoreLFNIndex::demangle_path_component(const string &component)
 {
   return component.substr(SUBDIR_PREFIX.size(), component.size() - SUBDIR_PREFIX.size());
 }
 
-int LFNIndex::decompose_full_path(const char *in, vector<string> *out,
+int CStoreLFNIndex::decompose_full_path(const char *in, vector<string> *out,
 				  ghobject_t *oid, string *shortname)
 {
   const char *beginning = in + get_base_path().size();
@@ -1406,7 +1406,7 @@ int LFNIndex::decompose_full_path(const char *in, vector<string> *out,
   return 0;
 }
 
-string LFNIndex::mangle_attr_name(const string &attr)
+string CStoreLFNIndex::mangle_attr_name(const string &attr)
 {
   return PHASH_ATTR_PREFIX + attr;
 }

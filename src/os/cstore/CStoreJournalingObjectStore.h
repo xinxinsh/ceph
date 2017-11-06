@@ -12,17 +12,17 @@
  *
  */
 
-#ifndef CEPH_JOURNALINGOBJECTSTORE_H
-#define CEPH_JOURNALINGOBJECTSTORE_H
+#ifndef CEPH_CSTORE_JOURNALINGOBJECTSTORE_H
+#define CEPH_CSTORE_JOURNALINGOBJECTSTORE_H
 
 #include "os/ObjectStore.h"
-#include "Journal.h"
-#include "FileJournal.h"
+#include "CStoreJournal.h"
+#include "CStoreFileJournal.h"
 #include "common/RWLock.h"
 
-class JournalingObjectStore : public ObjectStore {
+class CStoreJournalingObjectStore : public ObjectStore {
 protected:
-  Journal *journal;
+  CStoreJournal *journal;
   Finisher finisher;
 
 
@@ -47,7 +47,7 @@ protected:
   } submit_manager;
 
   class ApplyManager {
-    Journal *&journal;
+    CStoreJournal *&journal;
     Finisher &finisher;
 
     Mutex apply_lock;
@@ -61,7 +61,7 @@ protected:
     uint64_t committing_seq, committed_seq;
 
   public:
-    ApplyManager(Journal *&j, Finisher &f) :
+    ApplyManager(CStoreJournal *&j, Finisher &f) :
       journal(j), finisher(f),
       apply_lock("JOS::ApplyManager::apply_lock", false, true, false, g_ceph_context),
       blocked(false),
@@ -129,14 +129,14 @@ public:
   }
 
 public:
-  explicit JournalingObjectStore(const std::string& path)
+  explicit CStoreJournalingObjectStore(const std::string& path)
     : ObjectStore(path),
       journal(NULL),
       finisher(g_ceph_context, "JournalObjectStore", "fn_jrn_objstore"),
       apply_manager(journal, finisher),
       replaying(false) {}
 
-  ~JournalingObjectStore() {
+  ~CStoreJournalingObjectStore() {
   }
 };
 

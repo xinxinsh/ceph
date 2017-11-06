@@ -12,8 +12,8 @@
  *
  */
 
-#ifndef WBTHROTTLE_H
-#define WBTHROTTLE_H
+#ifndef CSTORE_WBTHROTTLE_H
+#define CSTORE_WBTHROTTLE_H
 
 #include "include/unordered_map.h"
 #include <boost/tuple/tuple.hpp>
@@ -21,28 +21,28 @@
 #include "common/Formatter.h"
 #include "common/hobject.h"
 #include "include/interval_set.h"
-#include "FDCache.h"
+#include "CStoreFDCache.h"
 #include "common/Thread.h"
 #include "common/ceph_context.h"
 
 class PerfCounters;
 enum {
-  l_wbthrottle_first = 999090,
-  l_wbthrottle_bytes_dirtied,
-  l_wbthrottle_bytes_wb,
-  l_wbthrottle_ios_dirtied,
-  l_wbthrottle_ios_wb,
-  l_wbthrottle_inodes_dirtied,
-  l_wbthrottle_inodes_wb,
-  l_wbthrottle_last
+  l_cstore_wbthrottle_first = 999090,
+  l_cstore_wbthrottle_bytes_dirtied,
+  l_cstore_wbthrottle_bytes_wb,
+  l_cstore_wbthrottle_ios_dirtied,
+  l_cstore_wbthrottle_ios_wb,
+  l_cstore_wbthrottle_inodes_dirtied,
+  l_cstore_wbthrottle_inodes_wb,
+  l_cstore_wbthrottle_last
 };
 
 /**
- * WBThrottle
+ * CStoreWBThrottle
  *
  * Tracks, throttles, and flushes outstanding IO
  */
-class WBThrottle : Thread, public md_config_obs_t {
+class CStoreWBThrottle : Thread, public md_config_obs_t {
   ghobject_t clearing;
   /* *_limits.first is the start_flusher limit and
    * *_limits.second is the hard limit
@@ -112,11 +112,11 @@ class WBThrottle : Thread, public md_config_obs_t {
     rev_lru.insert(make_pair(oid, --lru.end()));
   }
 
-  ceph::unordered_map<ghobject_t, pair<PendingWB, FDRef> > pending_wbs;
+  ceph::unordered_map<ghobject_t, pair<PendingWB, CFDRef> > pending_wbs;
 
   /// get next flush to perform
   bool get_next_should_flush(
-    boost::tuple<ghobject_t, FDRef, PendingWB> *next ///< [out] next to flush
+    boost::tuple<ghobject_t, CFDRef, PendingWB> *next ///< [out] next to flush
     ); ///< @return false if we are shutting down
 public:
   enum FS {
@@ -146,8 +146,8 @@ private:
   }
 
 public:
-  explicit WBThrottle(CephContext *cct);
-  ~WBThrottle();
+  explicit CStoreWBThrottle(CephContext *cct);
+  ~CStoreWBThrottle();
 
   void start();
   void stop();
@@ -160,7 +160,7 @@ public:
 
   /// Queue wb on oid, fd taking throttle (does not block)
   void queue_wb(
-    FDRef fd,              ///< [in] FDRef to oid
+    CFDRef fd,              ///< [in] CFDRef to oid
     const ghobject_t &oid, ///< [in] object
     uint64_t offset,       ///< [in] offset written
     uint64_t len,          ///< [in] length written

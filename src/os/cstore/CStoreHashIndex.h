@@ -12,14 +12,14 @@
  *
  */
 
-#ifndef CEPH_HASHINDEX_H
-#define CEPH_HASHINDEX_H
+#ifndef CEPH_CSTORE_HASHINDEX_H
+#define CEPH_CSTORE_HASHINDEX_H
 
 #include "include/buffer_fwd.h"
 #include "include/encoding.h"
-#include "LFNIndex.h"
+#include "CStoreLFNIndex.h"
 
-extern string reverse_hexdigit_bits_string(string l);
+extern string cstore_reverse_hexdigit_bits_string(string l);
 
 /**
  * Implements collection prehashing.
@@ -47,7 +47,7 @@ extern string reverse_hexdigit_bits_string(string l);
  * exceed (abs(merge_threshhold)) * 16 * split_multiplier.  The number of objects in a directory
  * is encoded as subdir_info_s in an xattr on the directory.
  */
-class HashIndex : public LFNIndex {
+class CStoreHashIndex : public CStoreLFNIndex {
 private:
   /// Attribute name for storing subdir info @see subdir_info_s
   static const string SUBDIR_ATTR;
@@ -133,31 +133,31 @@ private:
 
 public:
   /// Constructor.
-  HashIndex(
+  CStoreHashIndex(
     coll_t collection,     ///< [in] Collection
     const char *base_path, ///< [in] Path to the index root.
     int merge_at,          ///< [in] Merge threshhold.
     int split_multiple,	   ///< [in] Split threshhold.
     uint32_t index_version,///< [in] Index version
     double retry_probability=0) ///< [in] retry probability
-    : LFNIndex(collection, base_path, index_version, retry_probability),
+    : CStoreLFNIndex(collection, base_path, index_version, retry_probability),
       merge_threshold(merge_at),
       split_multiplier(split_multiple) {}
 
-  /// @see CollectionIndex
+  /// @see CStoreCollectionIndex
   uint32_t collection_version() { return index_version; }
 
-  /// @see CollectionIndex
+  /// @see CStoreCollectionIndex
   int cleanup();
 
-  /// @see CollectionIndex
+  /// @see CStoreCollectionIndex
   int prep_delete();
 
-  /// @see CollectionIndex
+  /// @see CStoreCollectionIndex
   int _split(
     uint32_t match,
     uint32_t bits,
-    CollectionIndex* dest
+    CStoreCollectionIndex* dest
     );
 
 protected:
@@ -290,8 +290,8 @@ private:
 
   /// do collection split for path
   static int col_split_level(
-    HashIndex &from,            ///< [in] from index
-    HashIndex &dest,            ///< [in] to index
+    CStoreHashIndex &from,            ///< [in] from index
+    CStoreHashIndex &dest,            ///< [in] to index
     const vector<string> &path, ///< [in] path to split
     uint32_t bits,              ///< [in] num bits to match
     uint32_t match,             ///< [in] bits to match
@@ -386,7 +386,7 @@ private:
 
   struct CmpHexdigitStringBitwise {
     bool operator()(const string& l, const string& r) {
-      return reverse_hexdigit_bits_string(l) < reverse_hexdigit_bits_string(r);
+      return cstore_reverse_hexdigit_bits_string(l) < cstore_reverse_hexdigit_bits_string(r);
     }
   };
 

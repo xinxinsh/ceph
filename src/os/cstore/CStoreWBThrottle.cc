@@ -3,15 +3,15 @@
 
 #include "acconfig.h"
 
-#include "os/cstore/WBThrottle.h"
+#include "os/cstore/CStoreWBThrottle.h"
 #include "common/perf_counters.h"
 
-WBThrottle::WBThrottle(CephContext *cct) :
+CStoreWBThrottle::CStoreWBThrottle(CephContext *cct) :
   cur_ios(0), cur_size(0),
   cct(cct),
   logger(NULL),
   stopping(true),
-  lock("WBThrottle::lock", false, true, false, cct),
+  lock("CStoreWBThrottle::lock", false, true, false, cct),
   fs(XFS)
 {
   {
@@ -20,30 +20,30 @@ WBThrottle::WBThrottle(CephContext *cct) :
   }
   assert(cct);
   PerfCountersBuilder b(
-    cct, string("WBThrottle"),
-    l_wbthrottle_first, l_wbthrottle_last);
-  b.add_u64(l_wbthrottle_bytes_dirtied, "bytes_dirtied", "Dirty data");
-  b.add_u64(l_wbthrottle_bytes_wb, "bytes_wb", "Written data");
-  b.add_u64(l_wbthrottle_ios_dirtied, "ios_dirtied", "Dirty operations");
-  b.add_u64(l_wbthrottle_ios_wb, "ios_wb", "Written operations");
-  b.add_u64(l_wbthrottle_inodes_dirtied, "inodes_dirtied", "Entries waiting for write");
-  b.add_u64(l_wbthrottle_inodes_wb, "inodes_wb", "Written entries");
+    cct, string("CStoreWBThrottle"),
+    l_cstore_wbthrottle_first, l_cstore_wbthrottle_last);
+  b.add_u64(l_cstore_wbthrottle_bytes_dirtied, "bytes_dirtied", "Dirty data");
+  b.add_u64(l_cstore_wbthrottle_bytes_wb, "bytes_wb", "Written data");
+  b.add_u64(l_cstore_wbthrottle_ios_dirtied, "ios_dirtied", "Dirty operations");
+  b.add_u64(l_cstore_wbthrottle_ios_wb, "ios_wb", "Written operations");
+  b.add_u64(l_cstore_wbthrottle_inodes_dirtied, "inodes_dirtied", "Entries waiting for write");
+  b.add_u64(l_cstore_wbthrottle_inodes_wb, "inodes_wb", "Written entries");
   logger = b.create_perf_counters();
   cct->get_perfcounters_collection()->add(logger);
-  for (unsigned i = l_wbthrottle_first + 1; i != l_wbthrottle_last; ++i)
+  for (unsigned i = l_cstore_wbthrottle_first + 1; i != l_cstore_wbthrottle_last; ++i)
     logger->set(i, 0);
 
   cct->_conf->add_observer(this);
 }
 
-WBThrottle::~WBThrottle() {
+CStoreWBThrottle::~CStoreWBThrottle() {
   assert(cct);
   cct->get_perfcounters_collection()->remove(logger);
   delete logger;
   cct->_conf->remove_observer(this);
 }
 
-void WBThrottle::start()
+void CStoreWBThrottle::start()
 {
   {
     Mutex::Locker l(lock);
@@ -52,7 +52,7 @@ void WBThrottle::start()
   create("wb_throttle");
 }
 
-void WBThrottle::stop()
+void CStoreWBThrottle::stop()
 {
   {
     Mutex::Locker l(lock);
@@ -63,7 +63,7 @@ void WBThrottle::stop()
   join();
 }
 
-const char** WBThrottle::get_tracked_conf_keys() const
+const char** CStoreWBThrottle::get_tracked_conf_keys() const
 {
   static const char* KEYS[] = {
     "filestore_wbthrottle_btrfs_bytes_start_flusher",
@@ -83,7 +83,7 @@ const char** WBThrottle::get_tracked_conf_keys() const
   return KEYS;
 }
 
-void WBThrottle::set_from_conf()
+void CStoreWBThrottle::set_from_conf()
 {
   assert(lock.is_locked());
   if (fs == BTRFS) {
@@ -118,7 +118,7 @@ void WBThrottle::set_from_conf()
   cond.Signal();
 }
 
-void WBThrottle::handle_conf_change(const md_config_t *conf,
+void CStoreWBThrottle::handle_conf_change(const md_config_t *conf,
 				    const std::set<std::string> &changed)
 {
   Mutex::Locker l(lock);
@@ -130,8 +130,8 @@ void WBThrottle::handle_conf_change(const md_config_t *conf,
   }
 }
 
-bool WBThrottle::get_next_should_flush(
-  boost::tuple<ghobject_t, FDRef, PendingWB> *next)
+bool CStoreWBThrottle::get_next_should_flush(
+  boost::tuple<ghobject_t, CFDRef, PendingWB> *next)
 {
   assert(lock.is_locked());
   assert(next);
@@ -142,7 +142,7 @@ bool WBThrottle::get_next_should_flush(
   assert(!pending_wbs.empty());
   ghobject_t obj(pop_object());
 
-  ceph::unordered_map<ghobject_t, pair<PendingWB, FDRef> >::iterator i =
+  ceph::unordered_map<ghobject_t, pair<PendingWB, CFDRef> >::iterator i =
     pending_wbs.find(obj);
   *next = boost::make_tuple(obj, i->second.second, i->second.first);
   pending_wbs.erase(i);
@@ -150,20 +150,20 @@ bool WBThrottle::get_next_should_flush(
 }
 
 
-void *WBThrottle::entry()
+void *CStoreWBThrottle::entry()
 {
   Mutex::Locker l(lock);
-  boost::tuple<ghobject_t, FDRef, PendingWB> wb;
+  boost::tuple<ghobject_t, CFDRef, PendingWB> wb;
   while (get_next_should_flush(&wb)) {
     clearing = wb.get<0>();
     cur_ios -= wb.get<2>().ios;
-    logger->dec(l_wbthrottle_ios_dirtied, wb.get<2>().ios);
-    logger->inc(l_wbthrottle_ios_wb, wb.get<2>().ios);
+    logger->dec(l_cstore_wbthrottle_ios_dirtied, wb.get<2>().ios);
+    logger->inc(l_cstore_wbthrottle_ios_wb, wb.get<2>().ios);
     cur_size -= wb.get<2>().size;
-    logger->dec(l_wbthrottle_bytes_dirtied, wb.get<2>().size);
-    logger->inc(l_wbthrottle_bytes_wb, wb.get<2>().size);
-    logger->dec(l_wbthrottle_inodes_dirtied);
-    logger->inc(l_wbthrottle_inodes_wb);
+    logger->dec(l_cstore_wbthrottle_bytes_dirtied, wb.get<2>().size);
+    logger->inc(l_cstore_wbthrottle_bytes_wb, wb.get<2>().size);
+    logger->dec(l_cstore_wbthrottle_inodes_dirtied);
+    logger->inc(l_cstore_wbthrottle_inodes_wb);
     lock.Unlock();
 #ifdef HAVE_FDATASYNC
     ::fdatasync(**wb.get<1>());
@@ -179,17 +179,17 @@ void *WBThrottle::entry()
     lock.Lock();
     clearing = ghobject_t();
     cond.Signal();
-    wb = boost::tuple<ghobject_t, FDRef, PendingWB>();
+    wb = boost::tuple<ghobject_t, CFDRef, PendingWB>();
   }
   return 0;
 }
 
-void WBThrottle::queue_wb(
-  FDRef fd, const ghobject_t &hoid, uint64_t offset, uint64_t len,
+void CStoreWBThrottle::queue_wb(
+  CFDRef fd, const ghobject_t &hoid, uint64_t offset, uint64_t len,
   bool nocache)
 {
   Mutex::Locker l(lock);
-  ceph::unordered_map<ghobject_t, pair<PendingWB, FDRef> >::iterator wbiter =
+  ceph::unordered_map<ghobject_t, pair<PendingWB, CFDRef> >::iterator wbiter =
     pending_wbs.find(hoid);
   if (wbiter == pending_wbs.end()) {
     wbiter = pending_wbs.insert(
@@ -197,15 +197,15 @@ void WBThrottle::queue_wb(
 	make_pair(
 	  PendingWB(),
 	  fd))).first;
-    logger->inc(l_wbthrottle_inodes_dirtied);
+    logger->inc(l_cstore_wbthrottle_inodes_dirtied);
   } else {
     remove_object(hoid);
   }
 
   cur_ios++;
-  logger->inc(l_wbthrottle_ios_dirtied);
+  logger->inc(l_cstore_wbthrottle_ios_dirtied);
   cur_size += len;
-  logger->inc(l_wbthrottle_bytes_dirtied, len);
+  logger->inc(l_cstore_wbthrottle_bytes_dirtied, len);
 
   wbiter->second.first.add(nocache, len, 1);
   insert_object(hoid);
@@ -213,10 +213,10 @@ void WBThrottle::queue_wb(
     cond.Signal();
 }
 
-void WBThrottle::clear()
+void CStoreWBThrottle::clear()
 {
   Mutex::Locker l(lock);
-  for (ceph::unordered_map<ghobject_t, pair<PendingWB, FDRef> >::iterator i =
+  for (ceph::unordered_map<ghobject_t, pair<PendingWB, CFDRef> >::iterator i =
 	 pending_wbs.begin();
        i != pending_wbs.end();
        ++i) {
@@ -229,37 +229,37 @@ void WBThrottle::clear()
 
   }
   cur_ios = cur_size = 0;
-  logger->set(l_wbthrottle_ios_dirtied, 0);
-  logger->set(l_wbthrottle_bytes_dirtied, 0);
-  logger->set(l_wbthrottle_inodes_dirtied, 0);
+  logger->set(l_cstore_wbthrottle_ios_dirtied, 0);
+  logger->set(l_cstore_wbthrottle_bytes_dirtied, 0);
+  logger->set(l_cstore_wbthrottle_inodes_dirtied, 0);
   pending_wbs.clear();
   lru.clear();
   rev_lru.clear();
   cond.Signal();
 }
 
-void WBThrottle::clear_object(const ghobject_t &hoid)
+void CStoreWBThrottle::clear_object(const ghobject_t &hoid)
 {
   Mutex::Locker l(lock);
   while (clearing == hoid)
     cond.Wait(lock);
-  ceph::unordered_map<ghobject_t, pair<PendingWB, FDRef> >::iterator i =
+  ceph::unordered_map<ghobject_t, pair<PendingWB, CFDRef> >::iterator i =
     pending_wbs.find(hoid);
   if (i == pending_wbs.end())
     return;
 
   cur_ios -= i->second.first.ios;
-  logger->dec(l_wbthrottle_ios_dirtied, i->second.first.ios);
+  logger->dec(l_cstore_wbthrottle_ios_dirtied, i->second.first.ios);
   cur_size -= i->second.first.size;
-  logger->dec(l_wbthrottle_bytes_dirtied, i->second.first.size);
-  logger->dec(l_wbthrottle_inodes_dirtied);
+  logger->dec(l_cstore_wbthrottle_bytes_dirtied, i->second.first.size);
+  logger->dec(l_cstore_wbthrottle_inodes_dirtied);
 
   pending_wbs.erase(i);
   remove_object(hoid);
   cond.Signal();
 }
 
-void WBThrottle::throttle()
+void CStoreWBThrottle::throttle()
 {
   Mutex::Locker l(lock);
   while (!stopping && need_flush())

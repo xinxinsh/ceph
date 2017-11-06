@@ -13,18 +13,18 @@
  */
 
 
-#ifndef CEPH_FILEJOURNAL_H
-#define CEPH_FILEJOURNAL_H
+#ifndef CEPH_CSTOREJOURNAL_H
+#define CEPH_CSTOREJOURNAL_H
 
 #include <deque>
 using std::deque;
 
-#include "Journal.h"
+#include "CStoreJournal.h"
 #include "common/Cond.h"
 #include "common/Mutex.h"
 #include "common/Thread.h"
 #include "common/Throttle.h"
-#include "JournalThrottle.h"
+#include "CStoreJournalThrottle.h"
 
 
 #ifdef HAVE_LIBAIO
@@ -36,8 +36,8 @@ using std::deque;
  *
  * Lock ordering is write_lock > aio_lock > (completions_lock | finisher_lock)
  */
-class FileJournal :
-  public Journal,
+class CStoreFileJournal :
+  public CStoreJournal,
   public md_config_obs_t {
 public:
   /// Protected by finisher_lock
@@ -316,7 +316,7 @@ private:
   }
 
   void complete_write(uint64_t ops, uint64_t bytes);
-  JournalThrottle throttle;
+  CStoreJournalThrottle throttle;
 
   // write thread
   Mutex write_lock;
@@ -366,9 +366,9 @@ private:
   void do_discard(int64_t offset, int64_t end);
 
   class Writer : public Thread {
-    FileJournal *journal;
+    CStoreFileJournal *journal;
   public:
-    explicit Writer(FileJournal *fj) : journal(fj) {}
+    explicit Writer(CStoreFileJournal *fj) : journal(fj) {}
     void *entry() {
       journal->write_thread_entry();
       return 0;
@@ -376,9 +376,9 @@ private:
   } write_thread;
 
   class WriteFinisher : public Thread {
-    FileJournal *journal;
+    CStoreFileJournal *journal;
   public:
-    explicit WriteFinisher(FileJournal *fj) : journal(fj) {}
+    explicit WriteFinisher(CStoreFileJournal *fj) : journal(fj) {}
     void *entry() {
       journal->write_finish_thread_entry();
       return 0;
@@ -390,14 +390,14 @@ private:
   }
 
  public:
-  FileJournal(uuid_d fsid, Finisher *fin, Cond *sync_cond, const char *f, bool dio=false, bool ai=true, bool faio=false) :
-    Journal(fsid, fin, sync_cond),
-    finisher_lock("FileJournal::finisher_lock", false, true, false, g_ceph_context),
+  CStoreFileJournal(uuid_d fsid, Finisher *fin, Cond *sync_cond, const char *f, bool dio=false, bool ai=true, bool faio=false) :
+    CStoreJournal(fsid, fin, sync_cond),
+    finisher_lock("CStoreFileJournal::finisher_lock", false, true, false, g_ceph_context),
     journaled_seq(0),
     plug_journal_completions(false),
-    writeq_lock("FileJournal::writeq_lock", false, true, false, g_ceph_context),
+    writeq_lock("CStoreFileJournal::writeq_lock", false, true, false, g_ceph_context),
     completions_lock(
-      "FileJournal::completions_lock", false, true, false, g_ceph_context),
+      "CStoreFileJournal::completions_lock", false, true, false, g_ceph_context),
     fn(f),
     zero_buf(NULL),
     max_size(0), block_size(0),
@@ -406,7 +406,7 @@ private:
     write_pos(0), read_pos(0),
     discard(false),
 #ifdef HAVE_LIBAIO
-    aio_lock("FileJournal::aio_lock"),
+    aio_lock("CStoreFileJournal::aio_lock"),
     aio_ctx(0),
     aio_num(0), aio_bytes(0),
     aio_write_queue_ops(0),
@@ -418,26 +418,26 @@ private:
     fd(-1),
     writing_seq(0),
     throttle(g_conf->filestore_caller_concurrency),
-    write_lock("FileJournal::write_lock", false, true, false, g_ceph_context),
+    write_lock("CStoreFileJournal::write_lock", false, true, false, g_ceph_context),
     write_stop(true),
     aio_stop(true),
     write_thread(this),
     write_finish_thread(this) {
 
       if (aio && !directio) {
-        derr << "FileJournal::_open_any: aio not supported without directio; disabling aio" << dendl;
+        derr << "CStoreFileJournal::_open_any: aio not supported without directio; disabling aio" << dendl;
         aio = false;
       }
 #ifndef HAVE_LIBAIO
       if (aio) {
-        derr << "FileJournal::_open_any: libaio not compiled in; disabling aio" << dendl;
+        derr << "CStoreFileJournal::_open_any: libaio not compiled in; disabling aio" << dendl;
         aio = false;
       }
 #endif
 
       g_conf->add_observer(this);
   }
-  ~FileJournal() {
+  ~CStoreFileJournal() {
     assert(fd == -1);
     delete[] zero_buf;
     g_conf->remove_observer(this);
@@ -536,6 +536,6 @@ private:
     uint64_t seq);
 };
 
-WRITE_CLASS_ENCODER(FileJournal::header_t)
+WRITE_CLASS_ENCODER(CStoreFileJournal::header_t)
 
 #endif

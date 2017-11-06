@@ -33,9 +33,10 @@
 
 #include "include/compat.h"
 #include "include/linux_fiemap.h"
+#include "compressor/Compressor.h"
 
 #include "common/xattr.h"
-#include "chain_xattr.h"
+#include "cstore_chain_xattr.h"
 
 #if defined(DARWIN) || defined(__FreeBSD__)
 #include <sys/param.h>
@@ -48,12 +49,11 @@
 
 #include "CStore.h"
 #include "GenericCStoreBackend.h"
-#include "BtrfsCStoreBackend.h"
 #include "XfsCStoreBackend.h"
-#include "ZFSCStoreBackend.h"
 #include "common/BackTrace.h"
 #include "include/types.h"
-#include "FileJournal.h"
+#include "CStoreFileJournal.h"
+#include "cstore_kv.h"
 
 #include "osd/osd_types.h"
 #include "include/color.h"
@@ -67,8 +67,8 @@
 #include "common/perf_counters.h"
 #include "common/sync_filesystem.h"
 #include "common/fd.h"
-#include "HashIndex.h"
-#include "DBObjectMap.h"
+#include "CStoreHashIndex.h"
+#include "DBCStoreObjectMap.h"
 #include "kv/KeyValueDB.h"
 
 #include "common/ceph_crypto.h"
@@ -92,11 +92,16 @@ using ceph::crypto::SHA1;
 #define GLOBAL_REPLAY_GUARD_XATTR "user.cephos.gseq"
 
 // XATTR_SPILL_OUT_NAME as a xattr is used to maintain that indicates whether
-// xattrs spill over into DBObjectMap, if XATTR_SPILL_OUT_NAME exists in file
-// xattrs and the value is "no", it indicates no xattrs in DBObjectMap
+// xattrs spill over into DBCStoreObjectMap, if XATTR_SPILL_OUT_NAME exists in file
+// xattrs and the value is "no", it indicates no xattrs in DBCStoreObjectMap
 #define XATTR_SPILL_OUT_NAME "user.cephos.spill_out"
 #define XATTR_NO_SPILL_OUT "0"
 #define XATTR_SPILL_OUT "1"
+#define OBJ_DATA "odata"
+#define PREFIX_COMPRESS "CO"
+#define PREFIX_DECOMPRESS "DO"
+#define NS_COMPRESS ".ceph-compress"
+#define NS_DECOMPRESS ".ceph-decompress"
 
 //Initial features in new superblock.
 static CompatSet get_fs_initial_compat_set() {
@@ -115,9 +120,199 @@ static CompatSet get_fs_supported_compat_set() {
   return compat;
 }
 
+/*
+ * object name key structure
+ *
+ * 2 chars: shard (-- for none, or hex digit, so that we sort properly)
+ * encoded u64: poolid + 2^63 (so that it sorts properly)
+ * encoded u32: hash (bit reversed)
+ *
+ * 1 char: '.'
+ *
+ * escaped string: namespace
+ *
+ * 1 char: '<', '=', or '>'.  if =, then object key == object name, and
+ *         we are followed just by the key.  otherwise, we are followed by
+ *         the key and then the object name.
+ * escaped string: key
+ * escaped string: object name (unless '=' above)
+ *
+ * encoded u64: snap
+ * encoded u64: generation
+ */
+
+/*
+ * string encoding in the key
+ *
+ * The key string needs to lexicographically sort the same way that
+ * ghobject_t does.  We do this by escaping anything <= to '#' with #
+ * plus a 2 digit hex string, and anything >= '~' with ~ plus the two
+ * hex digits.
+ *
+ * We use ! as a terminator for strings; this works because it is < #
+ * and will get escaped if it is present in the string.
+ *
+ */
+
+static void append_escaped(const string &in, string *out) {
+  char hexbyte[8];
+  for (string::const_iterator i = in.begin(); i != in.end(); ++i) {
+    if (*i <= '#') {
+      snprintf(hexbyte, sizeof(hexbyte), "#%02x", (unsigned)*i);
+      out->append(hexbyte);
+    } else if (*i >= '~') {
+      snprintf(hexbyte, sizeof(hexbyte), "~%02x", (unsigned)*i);
+      out->append(hexbyte);
+    } else {
+      out->push_back(*i);
+    }
+  }
+  out->push_back('!');
+}
+
+static int decode_escaped(const char *p, string *out) {
+  const char *orig_p = p;
+  while (*p && *p != '!') {
+    if (*p == '#' || *p == '~') {
+      unsigned hex;
+      int r = sscanf(++p, "%2x", &hex);
+      if (r < 1)
+	return -EINVAL;
+      out->push_back((char)hex);
+      p += 2;
+    } else {
+      out->push_back(*p++);
+    }
+  }
+  return p - orig_p;
+}
+
+static void _key_encode_shard(shard_id_t shard, string *key)
+{
+  // make field ordering match with ghobject_t compare operations
+  if (shard == shard_id_t::NO_SHARD) {
+    // otherwise ff will sort *after* 0, not before.
+    key->append("--");
+  } else {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%02x", (int)shard);
+    key->append(buf);
+  }
+}
+static const char *_key_decode_shard(const char *key, shard_id_t *pshard)
+{
+  if (key[0] == '-') {
+    *pshard = shard_id_t::NO_SHARD;
+  } else {
+    unsigned shard;
+    int r = sscanf(key, "%x", &shard);
+    if (r < 1)
+      return NULL;
+    *pshard = shard_id_t(shard);
+  }
+  return key + 2;
+}
+
+void get_object_key(const ghobject_t& oid, string* key) {
+  key->clear();
+
+  _key_encode_shard(oid.shard_id, key);
+  _key_encode_u64(oid.hobj.pool + 0x8000000000000000ull, key);
+  _key_encode_u32(oid.hobj.get_bitwise_key_u32(), key);
+  key->append(".");
+
+  append_escaped(oid.hobj.nspace, key);
+
+  if (oid.hobj.get_key().length()) {
+    // is a key... could be < = or >.
+    // (ASCII chars < = and > sort in that order, yay)
+    if (oid.hobj.get_key() < oid.hobj.oid.name) {
+      key->append("<");
+      append_escaped(oid.hobj.get_key(), key);
+      append_escaped(oid.hobj.oid.name, key);
+    } else if (oid.hobj.get_key() > oid.hobj.oid.name) {
+      key->append(">");
+      append_escaped(oid.hobj.get_key(), key);
+      append_escaped(oid.hobj.oid.name, key);
+    } else {
+      // same as no key
+      key->append("=");
+      append_escaped(oid.hobj.oid.name, key);
+    }
+  } else {
+    // no key
+    key->append("=");
+    append_escaped(oid.hobj.oid.name, key);
+  }
+
+  _key_encode_u64(oid.hobj.snap, key);
+  _key_encode_u64(oid.generation, key);
+}
+
+int get_key_object(string& key, ghobject_t* oid) {
+  int r;
+  const char *p = key.c_str();
+
+  if (key.length() < 2 + 8 + 4)
+    return -2;
+  p = _key_decode_shard(p, &oid->shard_id);
+
+  uint64_t pool;
+  p = _key_decode_u64(p, &pool);
+  oid->hobj.pool = pool - 0x8000000000000000ull;
+
+  unsigned hash;
+  p = _key_decode_u32(p, &hash);
+
+  oid->hobj.set_bitwise_key_u32(hash);
+  if (*p != '.')
+    return -5;
+  ++p;
+
+  r = decode_escaped(p, &oid->hobj.nspace);
+  if (r < 0)
+    return -6;
+  p += r + 1;
+
+  if (*p == '=') {
+    // no key
+    ++p;
+    r = decode_escaped(p, &oid->hobj.oid.name);
+    if (r < 0)
+      return -7;
+    p += r + 1;
+  } else if (*p == '<' || *p == '>') {
+    // key + name
+    ++p;
+    string okey;
+    r = decode_escaped(p, &okey);
+    if (r < 0)
+      return -8;
+    p += r + 1;
+    r = decode_escaped(p, &oid->hobj.oid.name);
+    if (r < 0)
+      return -9;
+    p += r + 1;
+    oid->hobj.set_key(okey);
+  } else {
+    // malformed
+    return -10;
+  }
+
+  p = _key_decode_u64(p, &oid->hobj.snap.val);
+  p = _key_decode_u64(p, &oid->generation);
+  if (*p) {
+    // if we get something other than a null terminator here, 
+    // something goes wrong.
+    return -12;
+  }  
+
+  return 0;
+}
+
 int CStore::validate_hobject_key(const hobject_t &obj) const
 {
-  unsigned len = LFNIndex::get_max_escaped_name_len(obj);
+  unsigned len = CStoreLFNIndex::get_max_escaped_name_len(obj);
   return len > m_filestore_max_xattr_value_size ? -ENAMETOOLONG : 0;
 }
 
@@ -126,7 +321,7 @@ int CStore::get_block_device_fsid(const string& path, uuid_d *fsid)
   // make sure we don't try to use aio or direct_io (and get annoying
   // error messages from failing to do so); performance implications
   // should be irrelevant for this use
-  FileJournal j(*fsid, 0, 0, path.c_str(), false, false);
+  CStoreFileJournal j(*fsid, 0, 0, path.c_str(), false, false);
   return j.peek_fsid(*fsid);
 }
 
@@ -154,7 +349,7 @@ int CStore::get_cdir(const coll_t& cid, char *s, int len)
   return snprintf(s, len, "%s/current/%s", basedir.c_str(), cid_str.c_str());
 }
 
-int CStore::get_index(const coll_t& cid, Index *index)
+int CStore::get_index(const coll_t& cid, CStoreIndex *index)
 {
   int r = index_manager.get_index(cid, basedir, index);
   assert(!m_filestore_fail_eio || r != -EIO);
@@ -170,9 +365,9 @@ int CStore::init_index(const coll_t& cid)
   return r;
 }
 
-int CStore::lfn_find(const ghobject_t& oid, const Index& index, IndexedPath *path)
+int CStore::lfn_find(const ghobject_t& oid, const CStoreIndex& index, CIndexedPath *path)
 {
-  IndexedPath path2;
+  CIndexedPath path2;
   if (!path)
     path = &path2;
   int r, exist;
@@ -189,7 +384,7 @@ int CStore::lfn_find(const ghobject_t& oid, const Index& index, IndexedPath *pat
 
 int CStore::lfn_truncate(const coll_t& cid, const ghobject_t& oid, off_t length)
 {
-  FDRef fd;
+  CFDRef fd;
   int r = lfn_open(cid, oid, false, &fd);
   if (r < 0)
     return r;
@@ -207,8 +402,8 @@ int CStore::lfn_truncate(const coll_t& cid, const ghobject_t& oid, off_t length)
 
 int CStore::lfn_stat(const coll_t& cid, const ghobject_t& oid, struct stat *buf)
 {
-  IndexedPath path;
-  Index index;
+  CIndexedPath path;
+  CStoreIndex index;
   int r = get_index(cid, &index);
   if (r < 0)
     return r;
@@ -228,8 +423,8 @@ int CStore::lfn_stat(const coll_t& cid, const ghobject_t& oid, struct stat *buf)
 int CStore::lfn_open(const coll_t& cid,
 			const ghobject_t& oid,
 			bool create,
-			FDRef *outfd,
-                        Index *index)
+			CFDRef *outfd,
+                        CStoreIndex *index)
 {
   assert(outfd);
   int r = 0;
@@ -242,7 +437,7 @@ int CStore::lfn_open(const coll_t& cid,
     flags |= O_DSYNC;
   }
 
-  Index index2;
+  CStoreIndex index2;
   if (!index) {
     index = &index2;
   }
@@ -272,8 +467,8 @@ int CStore::lfn_open(const coll_t& cid,
   }
 
 
-  IndexedPath path2;
-  IndexedPath *path = &path2;
+  CIndexedPath path2;
+  CIndexedPath *path = &path2;
 
   r = (*index)->lookup(oid, path, &exist);
   if (r < 0) {
@@ -316,7 +511,7 @@ int CStore::lfn_open(const coll_t& cid,
       TEMP_FAILURE_RETRY(::close(fd));
     }
   } else {
-    *outfd = FDRef(new FDCache::FD(fd));
+    *outfd = CFDRef(new CStoreFDCache::FD(fd));
   }
 
   if (need_lock) {
@@ -335,14 +530,15 @@ int CStore::lfn_open(const coll_t& cid,
   return r;
 }
 
-void CStore::lfn_close(FDRef fd)
+void CStore::lfn_close(CFDRef fd)
 {
 }
 
 int CStore::lfn_link(const coll_t& c, const coll_t& newcid, const ghobject_t& o, const ghobject_t& newoid)
 {
-  Index index_new, index_old;
-  IndexedPath path_new, path_old;
+  dout(25) << __func__ << " " << newcid << "/" << newoid  << " to " << c << "/" << o << dendl;
+  CStoreIndex index_new, index_old;
+  CIndexedPath path_new, path_old;
   int exist;
   int r;
   bool index_same = false;
@@ -442,10 +638,11 @@ int CStore::lfn_link(const coll_t& c, const coll_t& newcid, const ghobject_t& o,
 }
 
 int CStore::lfn_unlink(const coll_t& cid, const ghobject_t& o,
-			  const SequencerPosition &spos,
+			  const CStoreSequencerPosition &spos,
 			  bool force_clear_omap)
 {
-  Index index;
+  dout(25) << __func__ << " " << cid << "/" << o << dendl;
+  CStoreIndex index;
   int r = get_index(cid, &index);
   if (r < 0) {
     dout(25) << __func__ << " get_index failed " << cpp_strerror(r) << dendl;
@@ -456,7 +653,7 @@ int CStore::lfn_unlink(const coll_t& cid, const ghobject_t& o,
   RWLock::WLocker l((index.index)->access_lock);
 
   {
-    IndexedPath path;
+    CIndexedPath path;
     int hardlink;
     r = index->lookup(o, &path, &hardlink);
     if (r < 0) {
@@ -507,8 +704,56 @@ int CStore::lfn_unlink(const coll_t& cid, const ghobject_t& o,
   return 0;
 }
 
+int CStore::lfn_unlink(const coll_t& cid, const ghobject_t& o,
+			  bool force_clear_omap)
+{
+  dout(25) << __func__ << " " << cid << "/" << o << dendl;
+  CStoreIndex index;
+  int r = get_index(cid, &index);
+  if (r < 0) {
+    dout(25) << __func__ << " get_index failed " << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  assert(NULL != index.index);
+  RWLock::WLocker l((index.index)->access_lock);
+
+  {
+    CIndexedPath path;
+    int hardlink;
+    r = index->lookup(o, &path, &hardlink);
+    if (r < 0) {
+      assert(!m_filestore_fail_eio || r != -EIO);
+      return r;
+    }
+
+    if (hardlink == 0) {
+      if (!m_disable_wbthrottle) {
+	wbthrottle.clear_object(o); // should be only non-cache ref
+      }
+      fdcache.clear(o);
+      return 0;
+    } else {
+      if (g_conf->filestore_debug_inject_read_err) {
+	debug_obj_on_delete(o);
+      }
+      if (!m_disable_wbthrottle) {
+	wbthrottle.clear_object(o); // should be only non-cache ref
+      }
+      fdcache.clear(o);
+    }
+  }
+
+  r = index->unlink(o);
+  if (r < 0 && r != -ENOENT) {
+    dout(25) << __func__ << " index unlink failed " << cpp_strerror(r) << dendl;
+    return r;
+  }
+  return 0;
+}
+
 CStore::CStore(const std::string &base, const std::string &jdev, osflagbits_t flags, const char *name, bool do_update) :
-  JournalingObjectStore(base),
+  CStoreJournalingObjectStore(base),
   internal_name(name),
   basedir(base), journalpath(jdev),
   generic_flags(flags),
@@ -519,8 +764,8 @@ CStore::CStore(const std::string &base, const std::string &jdev, osflagbits_t fl
   index_manager(do_update),
   lock("CStore::lock"),
   force_sync(false),
-  sync_entry_timeo_lock("sync_entry_timeo_lock"),
-  timer(g_ceph_context, sync_entry_timeo_lock),
+  timer_lock("timer_lock"),
+  timer(g_ceph_context, timer_lock),
   stop(false), sync_thread(this),
   fdcache(g_ceph_context),
   wbthrottle(g_ceph_context),
@@ -531,9 +776,12 @@ CStore::CStore(const std::string &base, const std::string &jdev, osflagbits_t fl
   throttle_bytes(g_conf->filestore_caller_concurrency),
   m_ondisk_finisher_num(g_conf->filestore_ondisk_finisher_threads),
   m_apply_finisher_num(g_conf->filestore_apply_finisher_threads),
-  op_tp(g_ceph_context, "CStore::op_tp", "tp_fstore_op", g_conf->filestore_op_threads, "filestore_op_threads"),
+  op_tp(g_ceph_context, "CStore::op_tp", "tp_cstore_op", g_conf->filestore_op_threads, "ctore_op_threads"),
   op_wq(this, g_conf->filestore_op_thread_timeout,
 	g_conf->filestore_op_thread_suicide_timeout, &op_tp),
+  comp_tp(g_ceph_context, "CStore::comp_tp", "tp_cstore_comp", g_conf->cstore_comp_threads, "cstore_comp_threads"),
+  comp_wq(this, g_conf->cstore_comp_thread_timeout,
+	g_conf->cstore_comp_thread_suicide_timeout, &comp_tp),
   logger(NULL),
   read_error_lock("CStore::read_error_lock"),
   m_filestore_commit_timeout(g_conf->filestore_commit_timeout),
@@ -559,19 +807,23 @@ CStore::CStore(const std::string &base, const std::string &jdev, osflagbits_t fl
   m_fs_type(0),
   m_filestore_max_inline_xattr_size(0),
   m_filestore_max_inline_xattrs(0),
-  m_filestore_max_xattr_value_size(0)
+  m_filestore_max_xattr_value_size(0),
+  m_block_size(g_conf->cstore_block_size),
+  m_compress_type(g_conf->cstore_compress_type),
+  comp_lock("CStore::comp_lock"),
+  op_lock("CStore::op_lock")
 {
   m_filestore_kill_at.set(g_conf->filestore_kill_at);
   for (int i = 0; i < m_ondisk_finisher_num; ++i) {
     ostringstream oss;
-    oss << "filestore-ondisk-" << i;
-    Finisher *f = new Finisher(g_ceph_context, oss.str(), "fn_odsk_fstore");
+    oss << "cstore-ondisk-" << i;
+    Finisher *f = new Finisher(g_ceph_context, oss.str(), "fn_odsk_cstore");
     ondisk_finishers.push_back(f);
   }
   for (int i = 0; i < m_apply_finisher_num; ++i) {
     ostringstream oss;
-    oss << "filestore-apply-" << i;
-    Finisher *f = new Finisher(g_ceph_context, oss.str(), "fn_appl_fstore");
+    oss << "cstore-apply-" << i;
+    Finisher *f = new Finisher(g_ceph_context, oss.str(), "fn_appl_cstore");
     apply_finishers.push_back(f);
   }
 
@@ -668,10 +920,10 @@ void CStore::collect_metadata(map<string,string> *pm)
   char dev_node[PATH_MAX];
   int rc = 0;
 
-  (*pm)["filestore_backend"] = backend->get_name();
+  (*pm)["cstore_backend"] = backend->get_name();
   ostringstream ss;
   ss << "0x" << std::hex << m_fs_type << std::dec;
-  (*pm)["filestore_f_type"] = ss.str();
+  (*pm)["cstore_f_type"] = ss.str();
 
   if (g_conf->filestore_collect_device_partition_information) {
     rc = get_device_by_uuid(get_fsid(), "PARTUUID", partition_path,
@@ -683,16 +935,16 @@ void CStore::collect_metadata(map<string,string> *pm)
   switch (rc) {
     case -EOPNOTSUPP:
     case -EINVAL:
-      (*pm)["backend_filestore_partition_path"] = "unknown";
-      (*pm)["backend_filestore_dev_node"] = "unknown";
+      (*pm)["backend_cstore_partition_path"] = "unknown";
+      (*pm)["backend_cstore_dev_node"] = "unknown";
       break;
     case -ENODEV:
-      (*pm)["backend_filestore_partition_path"] = string(partition_path);
-      (*pm)["backend_filestore_dev_node"] = "unknown";
+      (*pm)["backend_cstore_partition_path"] = string(partition_path);
+      (*pm)["backend_cstore_dev_node"] = "unknown";
       break;
     default:
-      (*pm)["backend_filestore_partition_path"] = string(partition_path);
-      (*pm)["backend_filestore_dev_node"] = string(dev_node);
+      (*pm)["backend_cstore_partition_path"] = string(partition_path);
+      (*pm)["backend_cstore_dev_node"] = string(dev_node);
   }
 }
 
@@ -712,7 +964,7 @@ void CStore::new_journal()
 {
   if (journalpath.length()) {
     dout(10) << "open_journal at " << journalpath << dendl;
-    journal = new FileJournal(fsid, &finisher, &sync_cond, journalpath.c_str(),
+    journal = new CStoreFileJournal(fsid, &finisher, &sync_cond, journalpath.c_str(),
 			      m_journal_dio, m_journal_aio, m_journal_force_aio);
     if (journal)
       journal->logger = logger;
@@ -727,7 +979,7 @@ int CStore::dump_journal(ostream& out)
   if (!journalpath.length())
     return -EINVAL;
 
-  FileJournal *journal = new FileJournal(fsid, &finisher, &sync_cond, journalpath.c_str(), m_journal_dio);
+  CStoreFileJournal *journal = new CStoreFileJournal(fsid, &finisher, &sync_cond, journalpath.c_str(), m_journal_dio);
   r = journal->dump(out);
   delete journal;
   return r;
@@ -737,16 +989,10 @@ CStoreBackend *CStoreBackend::create(long f_type, CStore *fs)
 {
   switch (f_type) {
 #if defined(__linux__)
-  case BTRFS_SUPER_MAGIC:
-    return new BtrfsCStoreBackend(fs);
 # ifdef HAVE_LIBXFS
   case XFS_SUPER_MAGIC:
     return new XfsCStoreBackend(fs);
 # endif
-#endif
-#ifdef HAVE_LIBZFS
-  case ZFS_SUPER_MAGIC:
-    return new ZFSCStoreBackend(fs);
 #endif
   default:
     return new GenericCStoreBackend(fs);
@@ -768,12 +1014,12 @@ void CStore::create_backend(long f_type)
 #if defined(__linux__)
   case BTRFS_SUPER_MAGIC:
     if (!m_disable_wbthrottle){
-      wbthrottle.set_fs(WBThrottle::BTRFS);
+      wbthrottle.set_fs(CStoreWBThrottle::BTRFS);
     }
     break;
 
   case XFS_SUPER_MAGIC:
-    // wbthrottle is constructed with fs(WBThrottle::XFS)
+    // wbthrottle is constructed with fs(CStoreWBThrottle::XFS)
     break;
 #endif
   }
@@ -1236,7 +1482,7 @@ int CStore::upgrade()
   }
 
   // nothing necessary in CStore for v3 -> v4 upgrade; we just need to
-  // open up DBObjectMap with the do_upgrade flag, which we already did.
+  // open up DBCStoreObjectMap with the do_upgrade flag, which we already did.
   update_version_stamp();
   return 0;
 }
@@ -1274,6 +1520,22 @@ int CStore::write_op_seq(int fd, uint64_t seq)
   return ret;
 }
 
+class CompContext : public Context {
+public:
+  CompContext(CStore *fs, const coll_t &cid, const ghobject_t &oid)
+    : fs(fs), cid(cid), oid(oid) {}
+
+  void finish(int r) {
+    assert(fs);
+    fs->_filter_comp(cid, oid);
+  }
+
+private:
+  CStore *fs;
+  coll_t cid;
+  ghobject_t oid;
+};
+
 int CStore::mount()
 {
   int ret;
@@ -1281,6 +1543,7 @@ int CStore::mount()
   uint64_t initial_op_seq;
   set<string> cluster_snaps;
   CompatSet supported_compat_set = get_fs_supported_compat_set();
+  DBCStoreObjectMap::CStoreObjectMapIterator omap_it;
 
   dout(5) << "basedir " << basedir << " journal " << journalpath << dendl;
 
@@ -1534,11 +1797,11 @@ int CStore::mount()
       goto close_current_fd;
     }
 
-    DBObjectMap *dbomap = new DBObjectMap(omap_store);
+    DBCStoreObjectMap *dbomap = new DBCStoreObjectMap(omap_store);
     ret = dbomap->init(do_update);
     if (ret < 0) {
       delete dbomap;
-      derr << "Error initializing DBObjectMap: " << ret << dendl;
+      derr << "Error initializing DBCStoreObjectMap: " << ret << dendl;
       goto close_current_fd;
     }
     stringstream err2;
@@ -1550,6 +1813,13 @@ int CStore::mount()
       goto close_current_fd;
     }
     object_map.reset(dbomap);
+  }
+
+  // replay compress/decompress wal
+  ret = _wal_replay();
+  if (ret < 0) {
+    derr << "CStore::mount _wal_replay failed with error " << ret << dendl;
+    goto close_current_fd;
   }
 
   // journal
@@ -1599,7 +1869,7 @@ int CStore::mount()
     for (vector<coll_t>::iterator i = collections.begin();
 	 i != collections.end();
 	 ++i) {
-      Index index;
+      CStoreIndex index;
       ret = get_index(*i, &index);
       if (ret < 0) {
 	derr << "Unable to mount index " << *i
@@ -1620,7 +1890,7 @@ int CStore::mount()
       dout(0) << "mount INFO: O_DSYNC write is enabled" << dendl;
     }
   }
-  sync_thread.create("filestore_sync");
+  sync_thread.create("cstore_sync");
 
   if (!(generic_flags & SKIP_JOURNAL_REPLAY)) {
     ret = journal_replay(initial_op_seq);
@@ -1649,6 +1919,9 @@ int CStore::mount()
   journal_start();
 
   op_tp.start();
+
+  comp_tp.start();
+
   for (vector<Finisher*>::iterator it = ondisk_finishers.begin(); it != ondisk_finishers.end(); ++it) {
     (*it)->start();
   }
@@ -1658,6 +1931,24 @@ int CStore::mount()
 
   timer.init();
 
+  omap_it = object_map->get_whole_iterator(DBCStoreObjectMap::HOBJECT_TO_SEQ);
+  for(omap_it->lower_bound(string()); omap_it->valid(); omap_it->next()) {
+    bufferlist bl = omap_it->value();
+    bufferlist::iterator p = bl.begin();
+    DBCStoreObjectMap::_Header *h = new DBCStoreObjectMap::_Header();
+    try {
+      ::decode(*h, p);
+    } catch (buffer::error& e) {
+      derr << __func__ << " failed to decode header " << dendl;
+    }
+
+    dout(20) << __func__ << " init periodical event " << dendl;
+    CompContext *c = new CompContext(this, h->c, h->oid);
+    {
+      Mutex::Locker l(timer_lock);
+      timer.add_event_after(g_conf->cstore_compress_interval, c);
+    }
+  }
   // upgrade?
   if (g_conf->filestore_update_to >= (int)get_target_version()) {
     int err = upgrade();
@@ -1704,7 +1995,7 @@ void CStore::init_temp_collections()
 
   dout(20) << " ls " << ls << dendl;
 
-  SequencerPosition spos;
+  CStoreSequencerPosition spos;
 
   set<coll_t> temps;
   for (vector<coll_t>::iterator p = ls.begin(); p != ls.end(); ++p)
@@ -1750,6 +2041,9 @@ int CStore::umount()
   if (!m_disable_wbthrottle){
     wbthrottle.stop();
   }
+
+  comp_tp.stop();
+
   op_tp.stop();
 
   journal_stop();
@@ -1788,7 +2082,7 @@ int CStore::umount()
   object_map.reset();
 
   {
-    Mutex::Locker l(sync_entry_timeo_lock);
+    Mutex::Locker l(timer_lock);
     timer.shutdown();
   }
 
@@ -1921,13 +2215,13 @@ void CStore::_finish_op(OpSequencer *osr)
 }
 
 
-struct C_JournaledAhead : public Context {
+struct C_CStoreJournaledAhead : public Context {
   CStore *fs;
   CStore::OpSequencer *osr;
   CStore::Op *o;
   Context *ondisk;
 
-  C_JournaledAhead(CStore *f, CStore::OpSequencer *os, CStore::Op *o, Context *ondisk):
+  C_CStoreJournaledAhead(CStore *f, CStore::OpSequencer *os, CStore::Op *o, Context *ondisk):
     fs(f), osr(os), o(o), ondisk(ondisk) { }
   void finish(int r) {
     fs->_journaled_ahead(osr, o, ondisk);
@@ -2006,7 +2300,7 @@ int CStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
       osr->queue_journal(o->op);
 
       _op_journal_transactions(tbl, orig_len, o->op,
-			       new C_JournaledAhead(this, osr, o, ondisk),
+			       new C_CStoreJournaledAhead(this, osr, o, ondisk),
 			       osd_op);
     } else {
       assert(0);
@@ -2119,7 +2413,7 @@ int CStore::_do_transactions(
 }
 
 void CStore::_set_global_replay_guard(const coll_t& cid,
-					 const SequencerPosition &spos)
+					 const CStoreSequencerPosition &spos)
 {
   if (backend->can_checkpoint())
     return;
@@ -2168,7 +2462,7 @@ void CStore::_set_global_replay_guard(const coll_t& cid,
 }
 
 int CStore::_check_global_replay_guard(const coll_t& cid,
-					  const SequencerPosition& spos)
+					  const CStoreSequencerPosition& spos)
 {
   char fn[PATH_MAX];
   get_cdir(cid, fn, sizeof(fn));
@@ -2189,7 +2483,7 @@ int CStore::_check_global_replay_guard(const coll_t& cid,
   bufferlist bl;
   bl.append(buf, r);
 
-  SequencerPosition opos;
+  CStoreSequencerPosition opos;
   bufferlist::iterator p = bl.begin();
   ::decode(opos, p);
 
@@ -2199,7 +2493,7 @@ int CStore::_check_global_replay_guard(const coll_t& cid,
 
 
 void CStore::_set_replay_guard(const coll_t& cid,
-                                  const SequencerPosition &spos,
+                                  const CStoreSequencerPosition &spos,
                                   bool in_progress=false)
 {
   char fn[PATH_MAX];
@@ -2216,7 +2510,7 @@ void CStore::_set_replay_guard(const coll_t& cid,
 
 
 void CStore::_set_replay_guard(int fd,
-				  const SequencerPosition& spos,
+				  const CStoreSequencerPosition& spos,
 				  const ghobject_t *hoid,
 				  bool in_progress)
 {
@@ -2257,7 +2551,7 @@ void CStore::_set_replay_guard(int fd,
 }
 
 void CStore::_close_replay_guard(const coll_t& cid,
-                                    const SequencerPosition &spos)
+                                    const CStoreSequencerPosition &spos)
 {
   char fn[PATH_MAX];
   get_cdir(cid, fn, sizeof(fn));
@@ -2271,7 +2565,7 @@ void CStore::_close_replay_guard(const coll_t& cid,
   VOID_TEMP_FAILURE_RETRY(::close(fd));
 }
 
-void CStore::_close_replay_guard(int fd, const SequencerPosition& spos)
+void CStore::_close_replay_guard(int fd, const CStoreSequencerPosition& spos)
 {
   if (backend->can_checkpoint())
     return;
@@ -2300,7 +2594,7 @@ void CStore::_close_replay_guard(int fd, const SequencerPosition& spos)
   dout(10) << "_close_replay_guard " << spos << " done" << dendl;
 }
 
-int CStore::_check_replay_guard(const coll_t& cid, ghobject_t oid, const SequencerPosition& spos)
+int CStore::_check_replay_guard(const coll_t& cid, ghobject_t oid, const CStoreSequencerPosition& spos)
 {
   if (!replaying || backend->can_checkpoint())
     return 1;
@@ -2309,7 +2603,7 @@ int CStore::_check_replay_guard(const coll_t& cid, ghobject_t oid, const Sequenc
   if (r < 0)
     return r;
 
-  FDRef fd;
+  CFDRef fd;
   r = lfn_open(cid, oid, false, &fd);
   if (r < 0) {
     dout(10) << "_check_replay_guard " << cid << " " << oid << " dne" << dendl;
@@ -2320,7 +2614,7 @@ int CStore::_check_replay_guard(const coll_t& cid, ghobject_t oid, const Sequenc
   return ret;
 }
 
-int CStore::_check_replay_guard(const coll_t& cid, const SequencerPosition& spos)
+int CStore::_check_replay_guard(const coll_t& cid, const CStoreSequencerPosition& spos)
 {
   if (!replaying || backend->can_checkpoint())
     return 1;
@@ -2337,7 +2631,7 @@ int CStore::_check_replay_guard(const coll_t& cid, const SequencerPosition& spos
   return ret;
 }
 
-int CStore::_check_replay_guard(int fd, const SequencerPosition& spos)
+int CStore::_check_replay_guard(int fd, const CStoreSequencerPosition& spos)
 {
   if (!replaying || backend->can_checkpoint())
     return 1;
@@ -2352,7 +2646,7 @@ int CStore::_check_replay_guard(int fd, const SequencerPosition& spos)
   bufferlist bl;
   bl.append(buf, r);
 
-  SequencerPosition opos;
+  CStoreSequencerPosition opos;
   bufferlist::iterator p = bl.begin();
   ::decode(opos, p);
   bool in_progress = false;
@@ -2391,7 +2685,7 @@ void CStore::_do_transaction(
 
   Transaction::iterator i = t.begin();
 
-  SequencerPosition spos(op_seq, trans_num, 0);
+  CStoreSequencerPosition spos(op_seq, trans_num, 0);
   while (i.have_op()) {
     if (handle)
       handle->reset_tp_timeout();
@@ -2949,7 +3243,40 @@ int CStore::stat(
 {
   tracepoint(objectstore, stat_enter, _cid.c_str());
   const coll_t& cid = !_need_temp_object_collection(_cid, oid) ? _cid : _cid.get_temp();
-  int r = lfn_stat(cid, oid, st);
+  
+  op_lock.Lock();
+  while(in_progress_comp.count(oid)) {
+    dout(20) << __func__ << " object " << oid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(oid);
+  op_lock.Unlock();
+
+	int r;
+  set<string> keys;
+  map<string, bufferlist> values;
+  ObjnodeRef obj;
+  objnode *node = new objnode(_cid, oid, m_block_size, 0);;
+  keys.insert(OBJ_DATA);
+  r = object_map->get_values(oid, keys, &values);
+  if (r < 0) {
+    dout(0) << "cannot find object data " << dendl;
+    goto out;
+  } else {
+    bufferlist::iterator p = values[OBJ_DATA].begin();
+    ::decode(*node, p);
+    obj.reset(node);
+  }
+
+  if (obj->is_compressed()) {
+    r = _decompress(_cid, oid, obj);
+    if (r < 0) {
+      derr << " decompress error " << dendl;
+      goto out;
+    }
+  } 
+
+  r = lfn_stat(cid, oid, st);
   assert(allow_eio || !m_filestore_fail_eio || r != -EIO);
   if (r < 0) {
     dout(10) << "stat " << cid << "/" << oid
@@ -2961,44 +3288,757 @@ int CStore::stat(
   }
   if (g_conf->filestore_debug_inject_read_err &&
       debug_mdata_eio(oid)) {
-    return -EIO;
+    r = -EIO;
   } else {
     tracepoint(objectstore, stat_exit, r);
-    return r;
+  }
+
+out:
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(oid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
+	return r;
+}
+
+int CStore::_replay_event(const coll_t &cid, const ghobject_t &oid, uint8_t state, bool compression) {
+  dout(20) << __func__ << " replay object " << oid << " compression " << compression << dendl;
+
+  set<string> keys;
+  struct stat st;
+  string key;
+  bufferlist bl;
+  map<string, bufferlist> vals;
+  ghobject_t coid;
+  objnode *node;
+  string prefix;
+  objnode::state_t ctype;
+  int r;
+  CFDRef fd, cfd;
+  char buf[2];
+  map<string, bufferptr> aset;
+
+  compression_header h(cid, oid, (compression_header::state_t)state);
+
+  if (compression) {
+    coid = h.oid.make_temp_obj(NS_COMPRESS);
+    prefix = PREFIX_COMPRESS;
+    // FIXME
+    ctype = objnode::COMP_ALG_SNAPPY;
+  } else {
+    coid = h.oid.make_temp_obj(NS_DECOMPRESS);
+    prefix = PREFIX_DECOMPRESS;
+    ctype = objnode::COMP_ALG_NONE;
+  }
+
+  keys.insert(OBJ_DATA);
+  r = object_map->get_values(oid, keys, &vals);
+
+  assert(r == 0);
+
+  node = new objnode(cid, oid, m_block_size, 0);
+  bufferlist::iterator p = vals[OBJ_DATA].begin();
+  ::decode(*node, p);
+  keys.clear();
+  vals.clear();
+
+  get_object_key(oid, &key);
+  r = lfn_stat(cid, oid, &st);
+  dout(20) << __func__ << " temp obj stat r = " << r << dendl;
+
+  if (r == -ENOENT) {
+    // non-exist temp object, clear WAL
+    keys.insert(key);
+    if (h.state == compression_header::STATE_INIT) {
+      assert(!node->is_compressed());
+      r = object_map->rm_keys_by_prefix(prefix, keys);   
+    } else if (h.state == compression_header::STATE_PROGRESS) {
+      assert(node->is_compressed());
+      r = object_map->rm_keys_by_prefix(prefix, keys);   
+    }
+    keys.clear();
+    if (r < 0) {
+      derr << __func__ << " clear wal error " << dendl;
+      goto out;
+    }
+
+    r = object_map->sync();
+    if (r < 0) {
+      derr << __func__ << " sync wal & metadata error " << dendl;
+      goto out;
+    }
+  } else if (r == 0) {
+    // temp object exist
+    if (h.state == compression_header::STATE_INIT) {
+      // copy attres
+      r = lfn_open(cid, oid, false, &fd);
+      if (r < 0) {
+        derr << "cannot open " << oid << dendl;
+        goto out1;
+      }
+
+      r = _fgetattrs(**fd, aset);
+      if (r < 0) {
+	derr << "cannot get extend attrs " << cpp_strerror(r) << dendl;
+	goto out1;
+      }
+
+      r = chain_fgetxattr(**fd, XATTR_SPILL_OUT_NAME, buf, sizeof(buf));
+      if (r < 0) {
+	derr << "cannot get spill attr " << cpp_strerror(r) << dendl;
+	goto out1;
+      }
+
+      r = lfn_open(cid, coid, true, &cfd);
+      if (r < 0) {
+        derr << "cannot open " << coid << dendl;
+        goto out2;
+      }
+
+      if (!strncmp(buf, XATTR_NO_SPILL_OUT, sizeof(XATTR_NO_SPILL_OUT))) {
+	r = chain_fsetxattr<true, true>(**cfd, XATTR_SPILL_OUT_NAME, XATTR_NO_SPILL_OUT,
+			    sizeof(XATTR_NO_SPILL_OUT));
+      } else {
+	r = chain_fsetxattr<true, true>(**cfd, XATTR_SPILL_OUT_NAME, XATTR_SPILL_OUT,
+			    sizeof(XATTR_SPILL_OUT));
+      }
+      if (r < 0) {
+        derr << __func__ << " set spillout error" << dendl;
+        goto out2;
+      }
+
+      r = _fsetattrs(**cfd, aset);
+      if (r < 0) {
+	derr << __func__ << " _fsetattrs error " << dendl;
+	goto out2;
+      }
+
+      r = ::fsync(**cfd);
+      if (r < 0) {
+	derr << __func__ << " fsync " << coid << " error " << dendl;
+	goto out2;
+      }
+
+      // update object metadata
+      node->c_type = ctype;
+      ::encode(*node, bl);
+      vals[OBJ_DATA] = bl;
+      r = object_map->set_keys(oid, vals);
+      if (r < 0) {
+	derr << __func__ << " set metadata " << oid << dendl;
+	goto out;
+      }
+      bl.clear();
+      vals.clear();
+
+      h.state = compression_header::STATE_INIT;
+      ::encode(h, bl);
+      vals[key] = bl;
+      r = object_map->set_keys_by_prefix(prefix, vals);
+      if (r < 0) {
+	derr << __func__ << " set wal " << oid << dendl;
+	goto out;
+      }
+      bl.clear();
+      vals.clear();
+
+      r = object_map->sync();
+      if (r < 0) {
+	derr << __func__ << " sync wal & metadata error " << dendl;
+	goto out;
+      }
+
+      r = lfn_unlink(h.cid, oid, false);
+
+      r = lfn_link(h.cid, h.cid, coid, h.oid);
+
+      r = lfn_unlink(h.cid, coid, false);
+
+      keys.insert(key);
+      r = object_map->rm_keys_by_prefix(prefix, keys);   
+      if (r < 0) {
+	derr << __func__ << " clear wal error " << dendl;
+	goto out;
+      }
+
+      r = object_map->sync();
+      if (r < 0) {
+	derr << __func__ << " sync wal & metadata error " << dendl;
+	goto out;
+      }
+    } else if (h.state == compression_header::STATE_PROGRESS) {
+
+      r = lfn_unlink(h.cid, oid, false);
+
+      r = lfn_link(h.cid, h.cid, coid, h.oid);
+
+      r = lfn_unlink(h.cid, coid, false);
+
+      keys.insert(key);
+      r = object_map->rm_keys_by_prefix(prefix, keys);   
+      if (r < 0) {
+	derr << __func__ << " clear wal error " << dendl;
+	goto out;
+      }
+
+      r = object_map->sync();
+      if (r < 0) {
+	derr << __func__ << " sync wal & metadata error " << dendl;
+	goto out;
+      }
+    }
+  }
+out2:
+  lfn_close(cfd);
+out1:
+  lfn_close(fd);
+out:
+  dout(20) << __func__ << " r = " << r << dendl;
+  return r;
+}
+
+int CStore::_wal_replay() {
+  int r = 0;
+  compression_header h(coll_t(), ghobject_t(), compression_header::STATE_INIT);
+  bufferlist bl;
+  bufferlist::iterator p;
+  DBCStoreObjectMap::CStoreObjectMapIterator it;
+
+  // replay compress wal
+  dout(20) << __func__ << " replay compress wal" << dendl;
+  it = object_map->get_whole_iterator(PREFIX_COMPRESS);
+  for(it->lower_bound(string()); it->valid(); it->next()) {
+    bl = it->value();
+    p = bl.begin();
+    try {
+      ::decode(h, p);
+    } catch (buffer::error& e) {
+      derr << __func__ << " failed to decode compression wal " << dendl;
+    }
+    dout(20) << "compress object " << h.cid << "/" << h.oid << dendl;
+    r = _replay_event(h.cid, h.oid, h.state, true);
+    if (r < 0)
+      goto out;
+  }
+
+  // replay decompress wal
+  dout(20) << __func__ << " replay decompress wal" << dendl;
+  it = object_map->get_whole_iterator(PREFIX_DECOMPRESS);
+  for(it->lower_bound(string()); it->valid(); it->next()) {
+    bl = it->value();
+    p = bl.begin();
+    try {
+      ::decode(h, p);
+    } catch (buffer::error& e) {
+      derr << __func__ << " failed to decode compression wal " << dendl;
+      return -EIO;
+    }
+    dout(20) << "decompress object " << h.cid << "/" << h.oid << dendl;
+    r = _replay_event(h.cid, h.oid, h.state, false);
+    if (r < 0)
+      goto out;
+  }
+out:
+  dout(20) << __func__ << " r= " << r << dendl;
+  return r;
+}
+
+bool CStore::_need_compress(const coll_t &cid, const ghobject_t &oid) {
+  return true;
+  //return false;
+}
+
+void CStore::_filter_comp(const coll_t &cid, const ghobject_t &oid) {
+  set<string> keys;
+  map<string, bufferlist> values;
+  objnode *obj = new objnode(cid, oid, m_block_size, 0);
+
+  keys.insert(OBJ_DATA);
+  int r = object_map->get_values(oid, keys, &values);
+  if (r < 0) {
+    derr << __func__ << " get object metadata error " << dendl;
+    return;
+  }
+
+  bufferlist::iterator p = values[OBJ_DATA].begin();
+  ::decode(*obj, p);
+  if (obj->is_compressed())
+    return;
+
+  dout(20) << __func__ << " object " << cid << "/" << oid << dendl;
+  if (g_conf->cstore_inject_compress) {
+    // compress object randomly
+  } else {
+    // FIXME
+    // compress objects depending on hotness 
+    if (_need_compress(cid, oid)) {
+      comp_wq.queue(obj);
+      // _filter_comp is executed by timer thread, timer_lock is locked
+    } else {
+      // _filter_comp is executed by timer thread, timer_lock is locked
+			CompContext *c = new CompContext(this, cid, oid);
+      timer.add_event_after(g_conf->cstore_compress_interval, c);
+    }
   }
 }
 
-int CStore::read(
-  const coll_t& _cid,
-  const ghobject_t& oid,
+int CStore::_compress(const coll_t &cid, const ghobject_t &oid, ThreadPool::TPHandle &handle) {
+  dout(20) << __func__ << " " << cid << "/" << oid << dendl;
+  comp_lock.Lock();
+  while(in_progress_op.count(oid)) {
+    dout(20) << "object " << oid << " is in progress op, wait ..." << dendl;
+    comp_cond.Wait(comp_lock);
+  }
+
+  in_progress_comp.insert(oid);
+  comp_lock.Unlock();
+
+  int r;
+  CFDRef fd, cfd;
+  bufferlist bl, cbl;
+	bufferlist::iterator bp;
+	CompressorRef c;
+	uint64_t rawlen, wantlen;
+  map<uint64_t, uint64_t> exomap;
+  set<string> keys;
+  map<string, bufferlist> vals;
+  objnode *node;
+  string key;
+  string prefix = PREFIX_COMPRESS;
+  char buf[2];
+  map<string, bufferptr> aset;
+  struct stat st;
+
+  handle.reset_tp_timeout();
+
+  keys.insert(OBJ_DATA);
+  r = object_map->get_values(oid, keys, &vals);
+  if (r < 0) {
+    derr << "cannot get object metadata " << cpp_strerror(r) << dendl;
+    goto out;
+  }
+  assert(r==0);
+  node = new objnode(cid, oid, m_block_size, 0);
+  bp = vals[OBJ_DATA].begin();
+  ::decode(*node, bp);
+  if (node->is_compressed())
+    return 0;
+  keys.clear();
+  vals.clear();
+
+  get_object_key(oid, &key);
+
+  r = lfn_open(cid, oid, false, &fd);
+  if (r < 0) {
+    derr << "cannot open object " << cpp_strerror(r) << dendl;
+    goto out2;
+  }
+
+  memset(&st, 0, sizeof(struct stat));
+  r = ::fstat(**fd, &st);
+  assert(r==0);
+
+  r = _fgetattrs(**fd, aset);
+  if (r < 0) {
+    derr << "cannot get extend attrs " << cpp_strerror(r) << dendl;
+    goto out2;
+  }
+
+  r = chain_fgetxattr(**fd, XATTR_SPILL_OUT_NAME, buf, sizeof(buf));
+  if (r < 0) {
+    derr << "cannot get spill attr " << cpp_strerror(r) << dendl;
+    goto out2;
+  }
+
+  r = fiemap(cid, oid, 0, st.st_size, bl);
+  if (r < 0) {
+		derr << "cannot get fiemap " << cpp_strerror(r) << dendl;
+    goto out2;
+	}
+
+  bp = bl.begin();
+  ::decode(exomap, bp);
+  bl.clear();
+
+  for(map<uint64_t, uint64_t>::iterator it = exomap.begin();
+    it != exomap.end(); it++) {
+    int got;
+    bufferptr bptr(it->second);
+    got = safe_pread(**fd, bptr.c_str(), it->second, it->first);
+    if (got < 0) {
+      dout(10) << "CStore::read(" << cid << "/" << oid << ") pread error: " << cpp_strerror(got) << dendl;
+      lfn_close(fd);
+      return got;
+    }
+    bptr.set_length(it->second);
+    bl.push_back(std::move(bptr));
+  }
+
+  // compress data
+  c = Compressor::create(g_ceph_context, g_conf->cstore_compress_type);
+  c->compress(bl, cbl);
+  dout(10) << __func__ << " " << bl.length() << " -> " << cbl.length() << dendl;
+  rawlen = bl.length();
+  wantlen = bl.length() * g_conf->cstore_compress_ratio;
+  bl.clear();
+  if (cbl.length() <= wantlen) {
+    dout(20) << "Start Compress " << oid << dendl;
+    ghobject_t coid = oid.make_temp_obj(NS_COMPRESS);
+    compression_header h(cid, oid, compression_header::STATE_INIT);
+
+    // persist wal
+    h.state = compression_header::STATE_INIT;
+    ::encode(h, vals[key]);
+    r = object_map->set_keys_by_prefix(prefix, vals);
+    if (r < 0) {
+      derr << __func__ << " set wal " << oid << dendl;
+      goto out;
+    }
+    vals.clear();
+    
+    r = object_map->sync();
+    if (r < 0) {
+      derr << __func__ << " sync wal " << dendl;
+      goto out;
+    }
+
+    // write data to temp object and persist
+    r = lfn_open(cid, coid, true, &cfd);
+    if (r < 0) {
+      derr << "cannot open temp object " << cpp_strerror(r) << dendl;
+      goto out;
+    }
+
+    r = cbl.write_fd(**cfd, 0);
+    if (r < 0) {
+      derr << __func__ << " write error " << dendl;
+      goto out1;
+    }
+
+    if (!strncmp(buf, XATTR_NO_SPILL_OUT, sizeof(XATTR_NO_SPILL_OUT))) {
+      r = chain_fsetxattr<true, true>(**cfd, XATTR_SPILL_OUT_NAME, XATTR_NO_SPILL_OUT,
+                          sizeof(XATTR_NO_SPILL_OUT));
+    } else {
+      r = chain_fsetxattr<true, true>(**cfd, XATTR_SPILL_OUT_NAME, XATTR_SPILL_OUT,
+                          sizeof(XATTR_SPILL_OUT));
+    }
+
+    r = _fsetattrs(**cfd, aset);
+    if (r < 0) {
+      derr << __func__ << " _fsetattrs error " << dendl;
+      goto out1;
+    }
+
+    r = ::fsync(**cfd);
+    if (r < 0) {
+      derr << __func__ << " fsync " << coid << " error " << dendl;
+      goto out1;
+    }
+
+    // update metadata and persist
+    node->c_type = node->get_alg_type(g_conf->cstore_compress_type);
+    ::encode(*node, vals[OBJ_DATA]);
+    r = object_map->set_keys(oid, vals);
+    if (r < 0) {
+      derr << __func__ << " set metadata " << oid << dendl;
+      goto out1;
+    }
+    vals.clear();
+
+    h.state = compression_header::STATE_INIT;
+    ::encode(h, vals[key]);
+    r = object_map->set_keys_by_prefix(prefix, vals);
+    if (r < 0) {
+      derr << __func__ << " set wal " << oid << dendl;
+      goto out1;
+    }
+    vals.clear();
+
+    r = object_map->sync();
+    if (r < 0) {
+      derr << __func__ << " sync wal & metadata error " << dendl;
+      goto out1;
+    }
+
+    // unlink object
+    r = lfn_unlink(h.cid, oid, false);
+    if (r < 0) {
+      derr << __func__ << " unlink " << oid << " error " << dendl;
+      goto out1;
+    }
+
+    // link object to temp object
+    r = lfn_link(h.cid, h.cid, coid, h.oid);
+    if (r < 0) {
+      derr << __func__ << " link " << h.oid << " to " << coid << " error " << dendl;
+      goto out1;
+    }
+
+    // unlink temp object
+    r = lfn_unlink(h.cid, coid, false);
+    if (r < 0) {
+      derr << __func__ << " unlink " << coid << " error " << dendl;
+      goto out1;
+    }
+
+    // clear wal and persist
+    keys.insert(key);
+    r = object_map->rm_keys_by_prefix(prefix, keys);   
+    if (r < 0) {
+      derr << __func__ << " clear wal error " << dendl;
+      goto out1;
+    }
+
+    r = object_map->sync();
+    if (r < 0) {
+      derr << __func__ << " sync wal & metadata error " << dendl;
+      goto out1;
+    }
+  } else {
+    dout(10) << __func__ << " " << rawlen << " -> " << cbl.length() << " which is more than required " << wantlen << " leaving uncompressed " << dendl;
+  }
+
+out1:
+  lfn_close(cfd);
+out2:
+  lfn_close(fd);
+out:
+  comp_lock.Lock();
+  in_progress_comp.erase(oid);
+  comp_lock.Unlock();
+  {
+    Mutex::Locker l(op_lock);
+    op_cond.SignalAll();
+  }
+  dout(20) << __func__ << " " << cid << "/" << oid << " r=" << r << dendl;
+  return r;
+}
+
+int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
+  ObjnodeRef obj) {
+  int r;
+  CFDRef fd, cfd;
+  bufferlist bl, cbl, ubl;
+  map<uint64_t, uint64_t> exomap;
+  set<string> keys;
+  map<string, bufferlist> vals;
+  string key;
+  string prefix = PREFIX_DECOMPRESS;
+  char buf[2];
+  map<string, bufferptr> aset;
+
+  dout(20) << __func__ << " " << cid << "/" << oid << dendl;
+  if (!obj->is_compressed())
+    return 0;
+
+  get_object_key(oid, &key);
+
+  r = lfn_open(cid, oid, false, &fd);
+  if (r < 0) {
+    derr << "cannot open object " << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  struct stat st;
+  memset(&st, 0, sizeof(struct stat));
+  r = ::fstat(**fd, &st);
+  assert(r==0);
+
+  int got;
+  bufferptr bpr(st.st_size);
+  got = safe_pread(**fd, bpr.c_str(), st.st_size, 0);
+  if (got < 0) {
+    dout(10) << "CStore::read(" << cid << "/" << oid << ") pread error: " << cpp_strerror(got) << dendl;
+    lfn_close(fd);
+    return got;
+  }
+  bpr.set_length(st.st_size);
+  cbl.push_back(std::move(bpr));
+
+  // decompress data
+  CompressorRef c = Compressor::create(g_ceph_context, g_conf->cstore_compress_type);
+  c->decompress(cbl, ubl);
+  dout(20) << "compressed buffer len " << cbl.length() << " to " << " raw buffer " << ubl.length() << dendl;
+
+  bufferptr bptr(obj->size);
+	bptr.zero(0, obj->size);
+  bufferlist::iterator bp = ubl.begin();
+
+  uint64_t s = 0;
+  uint64_t e = P2ROUNDUP(obj->size, m_block_size) / m_block_size;
+  uint64_t n;
+  dout(20) << __func__ << " start " << s << " ~ " << e << " bitmap " << obj->blocks << dendl;
+  while((obj->get_next_set_block(s, &n) != -1) && (s < e)) {
+    uint64_t copy_len;
+    bufferlist tbl;
+    if (m_block_size * (n + 1) > obj->size)
+      copy_len = obj->size - m_block_size * n;
+    else
+      copy_len = m_block_size;
+    s = n+1;
+    bp.copy(copy_len, tbl);
+    bptr.copy_in(n * m_block_size, copy_len, tbl.c_str());
+  }
+  cbl.clear();
+  cbl.push_back(std::move(bptr));
+
+  r = _fgetattrs(**fd, aset);
+  if (r < 0) {
+    derr << "cannot get extend attrs " << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  r = chain_fgetxattr(**fd, XATTR_SPILL_OUT_NAME, buf, sizeof(buf));
+  if (r < 0) {
+    derr << "cannot get spill attr " << cpp_strerror(r) << dendl;
+    return r;
+  }
+  lfn_close(fd);
+
+  ghobject_t coid = oid.make_temp_obj(NS_DECOMPRESS);
+  compression_header h(cid, oid, compression_header::STATE_INIT);
+
+  // persist wal
+  h.state = compression_header::STATE_INIT;
+  ::encode(h, vals[key]);
+  r = object_map->set_keys_by_prefix(prefix, vals);
+  if (r < 0) {
+    derr << __func__ << " set wal " << oid << dendl;
+    goto out;
+  }
+  vals.clear();
+  
+  r = object_map->sync();
+  if (r < 0) {
+    derr << __func__ << " sync wal " << dendl;
+    goto out;
+  }
+
+  // write data to temp object and persist
+  r = lfn_open(cid, coid, true, &cfd);
+  if (r < 0) {
+    derr << "cannot open temp object " << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  r = cbl.write_fd(**cfd, 0);
+  if (r < 0) {
+    derr << __func__ << " write error " << dendl;
+    goto out1;
+  }
+
+  if (!strncmp(buf, XATTR_NO_SPILL_OUT, sizeof(XATTR_NO_SPILL_OUT))) {
+    r = chain_fsetxattr<true, true>(**cfd, XATTR_SPILL_OUT_NAME, XATTR_NO_SPILL_OUT,
+			sizeof(XATTR_NO_SPILL_OUT));
+  } else {
+    r = chain_fsetxattr<true, true>(**cfd, XATTR_SPILL_OUT_NAME, XATTR_SPILL_OUT,
+			sizeof(XATTR_SPILL_OUT));
+  }
+
+  r = _fsetattrs(**cfd, aset);
+  if (r < 0) {
+    derr << __func__ << " _fsetattrs error " << dendl;
+    goto out1;
+  }
+
+  r = ::fsync(**cfd);
+  if (r < 0) {
+    derr << __func__ << " fsync " << coid << " error " << dendl;
+    goto out;
+  }
+
+  lfn_close(fd);
+
+  // update metadata and persist
+  obj->c_type = objnode::COMP_ALG_NONE;
+  ::encode(*obj, vals[OBJ_DATA]);
+  r = object_map->set_keys(oid, vals);
+  if (r < 0) {
+    derr << __func__ << " set metadata " << oid << dendl;
+    goto out;
+  }
+  vals.clear();
+
+  h.state = compression_header::STATE_PROGRESS;
+  ::encode(h, vals[key]);
+  r = object_map->set_keys_by_prefix(prefix, vals);
+  if (r < 0) {
+    derr << __func__ << " set wal " << oid << dendl;
+    goto out;
+  }
+  vals.clear();
+
+  r = object_map->sync();
+  if (r < 0) {
+    derr << __func__ << " sync wal & metadata error " << dendl;
+    goto out;
+  }
+
+  // unlink object
+  r = lfn_unlink(h.cid, oid, false);
+  if (r < 0) {
+    derr << __func__ << " unlink " << oid << " error " << dendl;
+    goto out;
+  }
+
+  // link object to temp object
+  r = lfn_link(h.cid, h.cid, coid, h.oid);
+  if (r < 0) {
+    derr << __func__ << " link " << h.oid << " to " << coid << " error " << dendl;
+    goto out;
+  }
+
+  // unlink temp object
+  r = lfn_unlink(h.cid, coid, false);
+  if (r < 0) {
+    derr << __func__ << " unlink " << coid << " error " << dendl;
+    goto out;
+  }
+
+  // clear wal and persist
+  keys.insert(key);
+  r = object_map->rm_keys_by_prefix(prefix, keys);   
+  if (r < 0) {
+    derr << __func__ << " clear wal error " << dendl;
+    goto out;
+  }
+
+  r = object_map->sync();
+  if (r < 0) {
+    derr << __func__ << " sync wal & metadata error " << dendl;
+    goto out;
+  }
+
+  {
+		CompContext *c = new CompContext(this, cid, oid);
+		{
+			Mutex::Locker l(timer_lock);
+		  timer.add_event_after(g_conf->cstore_compress_interval, c);
+		}
+  }
+
+out1:
+  lfn_close(cfd);
+out:
+  dout(20) << __func__ << " " << cid << "/" << oid << " r=" << r << dendl;
+  return r;
+}
+
+int CStore::_read_data(
+  CFDRef fd,
   uint64_t offset,
   size_t len,
   bufferlist& bl,
   uint32_t op_flags,
-  bool allow_eio)
-{
+  bool allow_eio) {
+
+  dout(10) << __func__ << "  " << fd << "  " << offset << "~" << len << dendl;
   int got;
-  tracepoint(objectstore, read_enter, _cid.c_str(), offset, len);
-  const coll_t& cid = !_need_temp_object_collection(_cid, oid) ? _cid : _cid.get_temp();
-
-  dout(15) << "read " << cid << "/" << oid << " " << offset << "~" << len << dendl;
-
-  FDRef fd;
-  int r = lfn_open(cid, oid, false, &fd);
-  if (r < 0) {
-    dout(10) << "CStore::read(" << cid << "/" << oid << ") open error: "
-	     << cpp_strerror(r) << dendl;
-    return r;
-  }
-
-  if (offset == 0 && len == 0) {
-    struct stat st;
-    memset(&st, 0, sizeof(struct stat));
-    int r = ::fstat(**fd, &st);
-    assert(r == 0);
-    len = st.st_size;
-  }
-
 #ifdef HAVE_POSIX_FADVISE
   if (op_flags & CEPH_OSD_OP_FLAG_FADVISE_RANDOM)
     posix_fadvise(**fd, offset, len, POSIX_FADV_RANDOM);
@@ -3009,14 +4049,15 @@ int CStore::read(
   bufferptr bptr(len);  // prealloc space for entire read
   got = safe_pread(**fd, bptr.c_str(), len, offset);
   if (got < 0) {
-    dout(10) << "CStore::read(" << cid << "/" << oid << ") pread error: " << cpp_strerror(got) << dendl;
+    dout(10) << "CStore::read " << fd << " pread error: " << cpp_strerror(got) << dendl;
     lfn_close(fd);
     if (!(allow_eio || !m_filestore_fail_eio || got != -EIO)) {
-      derr << "CStore::read(" << cid << "/" << oid << ") pread error: " << cpp_strerror(got) << dendl;
+      derr << "CStore::read " << fd << " pread error: " << cpp_strerror(got) << dendl;
       assert(0 == "eio on pread");
     }
     return got;
   }
+  dout(10) << "Read FD " << **fd << " got " << got << dendl;
   bptr.set_length(got);   // properly size the buffer
   bl.clear();
   bl.push_back(std::move(bptr));   // put it in the target bufferlist
@@ -3028,15 +4069,62 @@ int CStore::read(
     posix_fadvise(**fd, offset, len, POSIX_FADV_NORMAL);
 #endif
 
-  if (m_filestore_sloppy_crc && (!replaying || backend->can_checkpoint())) {
-    ostringstream ss;
-    int errors = backend->_crc_verify_read(**fd, offset, got, bl, &ss);
-    if (errors != 0) {
-      dout(0) << "CStore::read " << cid << "/" << oid << " " << offset << "~"
-	      << got << " ... BAD CRC:\n" << ss.str() << dendl;
-      assert(0 == "bad crc on read");
+  dout(10) << __func__ << "  " << fd << "  " << offset << "~" << len << " r=" << got << dendl;
+  return got;
+}
+
+int CStore::read(
+  const coll_t& _cid,
+  const ghobject_t& oid,
+  uint64_t offset,
+  size_t len,
+  bufferlist& bl,
+  uint32_t op_flags,
+  bool allow_eio)
+{
+  tracepoint(objectstore, read_enter, _cid.c_str(), offset, len);
+  const coll_t& cid = !_need_temp_object_collection(_cid, oid) ? _cid : _cid.get_temp();
+
+  dout(15) << "read " << cid << "/" << oid << " " << offset << "~" << len << dendl;
+
+  int got;
+  set<string> keys;
+  map<string, bufferlist> values;
+  ObjnodeRef obj_node;
+  objnode *node = new objnode(_cid, oid, m_block_size, 0);
+  keys.insert(OBJ_DATA);
+  int r = object_map->get_values(oid, keys, &values);
+  if (r < 0) {
+    return r;
+  } else {
+    bufferlist::iterator p = values[OBJ_DATA].begin();
+    ::decode(*node, p);
+    obj_node.reset(node);
+  }
+
+  if (obj_node->is_compressed()) {
+    r = _decompress(cid, oid, obj_node);
+    if (r < 0) {
+      dout(10) << "uncompresse error " << cpp_strerror(r) << dendl;
+      return r;
     }
   }
+
+  CFDRef fd;
+  r = lfn_open(cid, oid, false, &fd);
+  if (r < 0) {
+    dout(10) << "CStore::read(" << cid << "/" << oid << ") open error: "
+	     << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  if (offset == 0 && len == 0) {
+    len = obj_node->size;
+  }
+
+  dout(10) << "CStore::read " << cid << "/" << oid << " " << offset << "~"
+             << len << " from raw data" << dendl;
+  got = _read_data(fd, offset, len, bl, op_flags, allow_eio);
 
   lfn_close(fd);
 
@@ -3051,108 +4139,48 @@ int CStore::read(
   }
 }
 
-int CStore::_do_fiemap(int fd, uint64_t offset, size_t len,
-                          map<uint64_t, uint64_t> *m)
-{
-  struct fiemap *fiemap = NULL;
-  uint64_t i;
-  struct fiemap_extent *extent = NULL;
-  int r = 0;
+int CStore::_do_fiemap(const coll_t& _cid, const ghobject_t& oid,
+                        uint64_t offset, size_t len,
+			map<uint64_t, uint64_t>& exomap) {
+  dout(20) << __func__ << "  " << _cid << "/" << oid << "  " << offset << "~" << len << dendl;
 
-  r = backend->do_fiemap(fd, offset, len, &fiemap);
-  if (r < 0)
+  set<string> keys;
+  map<string, bufferlist> values;
+  objnode *node = new objnode(_cid, oid, m_block_size, 0);
+
+  keys.insert(OBJ_DATA);
+  int r = object_map->get_values(oid, keys, &values);
+  if (r < 0) {
+    dout(0) << "cannot get object data" << dendl;
     return r;
-
-  if (fiemap->fm_mapped_extents == 0) {
-    free(fiemap);
-    return r;
   }
 
-  extent = &fiemap->fm_extents[0];
-
-  /* start where we were asked to start */
-  if (extent->fe_logical < offset) {
-    extent->fe_length -= offset - extent->fe_logical;
-    extent->fe_logical = offset;
-  }
-
-  i = 0;
-
-  while (i < fiemap->fm_mapped_extents) {
-    struct fiemap_extent *next = extent + 1;
-
-    dout(10) << "CStore::fiemap() fm_mapped_extents=" << fiemap->fm_mapped_extents
-             << " fe_logical=" << extent->fe_logical << " fe_length=" << extent->fe_length << dendl;
-
-    /* try to merge extents */
-    while ((i < fiemap->fm_mapped_extents - 1) &&
-           (extent->fe_logical + extent->fe_length == next->fe_logical)) {
-        next->fe_length += extent->fe_length;
-        next->fe_logical = extent->fe_logical;
-        extent = next;
-        next = extent + 1;
-        i++;
+  bufferlist::iterator p = values[OBJ_DATA].begin();
+  ::decode(*node, p);
+  uint64_t s = offset / m_block_size;
+  uint64_t e = P2ROUNDUP(offset+len, m_block_size) / m_block_size;
+  uint64_t n;
+  dout(20) << __func__ << " start " << s << "~" << e << dendl;
+  while((node->get_next_set_block(s, &n) != -1) && (s < e)) {
+    if (exomap.empty()) {
+      exomap[n * m_block_size] = m_block_size;
+      s = n+1;
+      continue;
     }
-
-    if (extent->fe_logical + extent->fe_length > offset + len)
-      extent->fe_length = offset + len - extent->fe_logical;
-    (*m)[extent->fe_logical] = extent->fe_length;
-    i++;
-    extent++;
+    if ((exomap.rbegin()->first +  exomap.rbegin()->second) == n * m_block_size) {
+      exomap.rbegin()->second = m_block_size + exomap.rbegin()->second;
+    } else {
+      if (offset > n * m_block_size)
+	exomap[offset] = m_block_size * (n + 1) - offset;
+      else
+        exomap[n * m_block_size] = m_block_size;
+    }
+    s = n+1;
   }
-  free(fiemap);
-
+  map<uint64_t, uint64_t>::reverse_iterator rb = exomap.rbegin();
+  if (rb->first + rb->second > offset + len)
+    rb->second = offset + len - rb->first;
   return r;
-}
-
-int CStore::_do_seek_hole_data(int fd, uint64_t offset, size_t len,
-                                  map<uint64_t, uint64_t> *m)
-{
-#if defined(__linux__) && defined(SEEK_HOLE) && defined(SEEK_DATA)
-  off_t hole_pos, data_pos;
-  int r = 0;
-
-  // If lseek fails with errno setting to be ENXIO, this means the current
-  // file offset is beyond the end of the file.
-  off_t start = offset;
-  while(start < (off_t)(offset + len)) {
-    data_pos = lseek(fd, start, SEEK_DATA);
-    if (data_pos < 0) {
-      if (errno == ENXIO)
-        break;
-      else {
-        r = -errno;
-        dout(10) << "failed to lseek: " << cpp_strerror(r) << dendl;
-	return r;
-      }
-    } else if (data_pos > (off_t)(offset + len)) {
-      break;
-    }
-
-    hole_pos = lseek(fd, data_pos, SEEK_HOLE);
-    if (hole_pos < 0) {
-      if (errno == ENXIO) {
-        break;
-      } else {
-        r = -errno;
-        dout(10) << "failed to lseek: " << cpp_strerror(r) << dendl;
-	return r;
-      }
-    }
-
-    if (hole_pos >= (off_t)(offset + len)) {
-      (*m)[data_pos] = offset + len - data_pos;
-      break;
-    }
-    (*m)[data_pos] = hole_pos - data_pos;
-    start = hole_pos;
-  }
-
-  return r;
-#else
-  (*m)[offset] = len;
-  return 0;
-#endif
 }
 
 int CStore::fiemap(const coll_t& _cid, const ghobject_t& oid,
@@ -3161,6 +4189,7 @@ int CStore::fiemap(const coll_t& _cid, const ghobject_t& oid,
 {
   tracepoint(objectstore, fiemap_enter, _cid.c_str(), offset, len);
   const coll_t& cid = !_need_temp_object_collection(_cid, oid) ? _cid : _cid.get_temp();
+  map<uint64_t, uint64_t> exomap;
 
   if ((!backend->has_seek_data_hole() && !backend->has_fiemap()) ||
       len <= (size_t)m_filestore_fiemap_threshold) {
@@ -3172,52 +4201,122 @@ int CStore::fiemap(const coll_t& _cid, const ghobject_t& oid,
 
   dout(15) << "fiemap " << cid << "/" << oid << " " << offset << "~" << len << dendl;
 
-  map<uint64_t, uint64_t> exomap;
-  FDRef fd;
+  int r = _do_fiemap(_cid, oid, offset, len, exomap);
 
-  int r = lfn_open(cid, oid, false, &fd);
-  if (r < 0) {
-    dout(10) << "read couldn't open " << cid << "/" << oid << ": " << cpp_strerror(r) << dendl;
-    goto done;
-  }
 
-  if (backend->has_seek_data_hole()) {
-    dout(15) << "seek_data/seek_hole " << cid << "/" << oid << " " << offset << "~" << len << dendl;
-    r = _do_seek_hole_data(**fd, offset, len, &exomap);
-  } else if (backend->has_fiemap()) {
-    dout(15) << "fiemap ioctl" << cid << "/" << oid << " " << offset << "~" << len << dendl;
-    r = _do_fiemap(**fd, offset, len, &exomap);
-  }
-
-  lfn_close(fd);
-
-  if (r >= 0) {
+  if (r >=0 )
     ::encode(exomap, bl);
-  }
-
-done:
-
   dout(10) << "fiemap " << cid << "/" << oid << " " << offset << "~" << len << " = " << r << " num_extents=" << exomap.size() << " " << exomap << dendl;
-  assert(!m_filestore_fail_eio || r != -EIO);
   tracepoint(objectstore, fiemap_exit, r);
   return r;
 }
 
 
 int CStore::_remove(const coll_t& cid, const ghobject_t& oid,
-		       const SequencerPosition &spos)
+		       const CStoreSequencerPosition &spos)
 {
   dout(15) << "remove " << cid << "/" << oid << dendl;
+
+  op_lock.Lock();
+  while(in_progress_comp.count(oid)) {
+    dout(20) << __func__ << " object " << oid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(oid);
+  op_lock.Unlock();
+
   int r = lfn_unlink(cid, oid, spos);
+	if (r < 0) {
+		derr << __func__ << " unlink error " << cpp_strerror(r) << dendl;
+		goto out;
+	}
+
+  r = object_map->clear(oid, NULL);
   dout(10) << "remove " << cid << "/" << oid << " = " << r << dendl;
+  
+out:
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(oid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
   return r;
 }
 
 int CStore::_truncate(const coll_t& cid, const ghobject_t& oid, uint64_t size)
 {
   dout(15) << "truncate " << cid << "/" << oid << " size " << size << dendl;
-  int r = lfn_truncate(cid, oid, size);
+
+  op_lock.Lock();
+  while(in_progress_comp.count(oid)) {
+    dout(20) << __func__ << " object " << oid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(oid);
+  op_lock.Unlock();
+
+  CFDRef fd;
+  set<string> keys;
+  map<string, bufferlist> values;
+  ObjnodeRef obj;
+  objnode *node = new objnode(cid, oid, m_block_size, 0);
+  keys.insert(OBJ_DATA);
+  int r = object_map->get_values(oid, keys, &values);
+  if (r < 0) {
+    goto out;
+  } else {
+    bufferlist::iterator p = values[OBJ_DATA].begin();
+    ::decode(*node, p);
+    obj.reset(node);
+  }
+
+  if (obj->is_compressed()) {
+    r = _decompress(cid, oid, obj);
+    if (r < 0) {
+      derr << __func__ << " uncompresse error " << cpp_strerror(r) << dendl;
+      goto out;
+    }
+  }
+
+  r = lfn_open(cid, oid, false, &fd);
+  if (r < 0)
+    goto out;
+
+  r = ::ftruncate(**fd, size);
+	if (r < 0) {
+		derr << __func__ << " ftruncate " << cpp_strerror(r) << dendl;
+		goto out1;
+	}
+
+  obj->set_size(size);
+  obj->update_blocks(0, size);
+
+  values[OBJ_DATA].clear();
+  ::encode(*obj, values[OBJ_DATA]);
+  r = object_map->set_keys(oid, values, NULL);
+  if (r < 0) {
+    derr << "update object data r=" << cpp_strerror(r) << dendl;
+		goto out1;
+	}
+
+out1:
+  lfn_close(fd);
+out:
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(oid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
   dout(10) << "truncate " << cid << "/" << oid << " size " << size << " = " << r << dendl;
+
   return r;
 }
 
@@ -3226,14 +4325,71 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
 {
   dout(15) << "touch " << cid << "/" << oid << dendl;
 
-  FDRef fd;
-  int r = lfn_open(cid, oid, true, &fd);
+  op_lock.Lock();
+  while(in_progress_comp.count(oid)) {
+    dout(20) << __func__ << " object " << oid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(oid);
+  op_lock.Unlock();
+
+  CFDRef fd;
+  set<string> keys;
+  map<string, bufferlist> values;
+  objnode *node;
+  keys.insert(OBJ_DATA);
+  int r = object_map->get_values(oid, keys, &values);
   if (r < 0) {
-    return r;
+    if (r == -ENOENT) {
+      node = new objnode(cid, oid, m_block_size, 0);
+			CompContext *c = new CompContext(this, cid, oid);
+			{
+        Mutex::Locker l(timer_lock);
+        timer.add_event_after(g_conf->cstore_compress_interval, c);
+			}
+    } else {
+      goto out;
+    }
+  } else {
+    node = new objnode(cid, oid, m_block_size, 0);
+    bufferlist::iterator p = values[OBJ_DATA].begin();
+    ::decode(*node, p);
+  }
+  r = lfn_open(cid, oid, true, &fd);
+  if (r < 0) {
+    goto out;
   } else {
     lfn_close(fd);
   }
+
+  values[OBJ_DATA].clear();
+  ::encode(*node, values[OBJ_DATA]);
+  r = object_map->set_keys(oid, values, NULL);
+
+out:
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(oid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
   dout(10) << "touch " << cid << "/" << oid << " = " << r << dendl;
+
+  return r;
+}
+
+int CStore::_write_data(CFDRef fd, uint64_t offset,
+                        size_t len, const bufferlist& bl,
+		        uint32_t fadvise_flags) {
+  int r;
+  // write
+  r = bl.write_fd(**fd, offset);
+  if (r == 0)
+    r = bl.length();
+
   return r;
 }
 
@@ -3244,7 +4400,48 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
   dout(15) << "write " << cid << "/" << oid << " " << offset << "~" << len << dendl;
   int r;
 
-  FDRef fd;
+  op_lock.Lock();
+  while(in_progress_comp.count(oid)) {
+    dout(20) << __func__ << " object " << oid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(oid);
+  op_lock.Unlock();
+
+  CFDRef fd;
+  set<string> keys;
+  map<string, bufferlist> values;
+  ObjnodeRef obj;
+  objnode *node = new objnode(cid, oid, m_block_size, offset+len);;
+  keys.insert(OBJ_DATA);
+  r = object_map->get_values(oid, keys, &values);
+  if (r < 0) {
+    if (r == -ENOENT) {
+      obj.reset(node);
+      obj->c_type = objnode::COMP_ALG_NONE;
+			CompContext *c = new CompContext(this, cid, oid);
+			{
+        Mutex::Locker l(timer_lock);
+        timer.add_event_after(g_conf->cstore_compress_interval, c);
+			}
+    } else {
+      dout(0) << "cannot find object data " << dendl;
+      goto out;
+    }
+  } else {
+    bufferlist::iterator p = values[OBJ_DATA].begin();
+    ::decode(*node, p);
+    obj.reset(node);
+  }
+
+  if (obj->is_compressed()) {
+    r = _decompress(cid, oid, obj);
+    if (r < 0) {
+      derr << " decompress error " << dendl;
+      goto out;
+    }
+  } 
+  // write uncompressed data
   r = lfn_open(cid, oid, true, &fd);
   if (r < 0) {
     dout(0) << "write couldn't open " << cid << "/"
@@ -3253,10 +4450,7 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
     goto out;
   }
 
-  // write
-  r = bl.write_fd(**fd, offset);
-  if (r == 0)
-    r = bl.length();
+  r = _write_data(fd, offset, len, bl, fadvise_flags);
 
   if (r >= 0 && m_filestore_sloppy_crc) {
     int rc = backend->_crc_update_write(**fd, offset, len, bl);
@@ -3271,11 +4465,32 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
     wbthrottle.queue_wb(fd, oid, offset, len,
         fadvise_flags & CEPH_OSD_OP_FLAG_FADVISE_DONTNEED);
   }
- 
-  lfn_close(fd);
 
- out:
+  // update blocks map
+  obj->update_blocks(offset, len);
+  values[OBJ_DATA].clear();
+  ::encode(*obj, values[OBJ_DATA]);
+
+  r = object_map->set_keys(oid, values, NULL);
+  if (r < 0 ) {
+		derr << __func__ << " update metadata error " << cpp_strerror(r) << dendl;
+		goto out1;
+	}
+
+out1:
+  lfn_close(fd);
+out:
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(oid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
   dout(10) << "write " << cid << "/" << oid << " " << offset << "~" << len << " = " << r << dendl;
+
   return r;
 }
 
@@ -3284,89 +4499,39 @@ int CStore::_zero(const coll_t& cid, const ghobject_t& oid, uint64_t offset, siz
   dout(15) << "zero " << cid << "/" << oid << " " << offset << "~" << len << dendl;
   int ret = 0;
 
-  if (g_conf->filestore_punch_hole) {
-#ifdef CEPH_HAVE_FALLOCATE
-# if !defined(DARWIN) && !defined(__FreeBSD__)
-#    ifdef FALLOC_FL_KEEP_SIZE
-    // first try to punch a hole.
-    FDRef fd;
-    ret = lfn_open(cid, oid, false, &fd);
-    if (ret < 0) {
-      goto out;
-    }
-
-    struct stat st;
-    ret = ::fstat(**fd, &st);
-    if (ret < 0) {
-      ret = -errno;
-      lfn_close(fd);
-      goto out;
-    }
-
-    // first try fallocate
-    ret = fallocate(**fd, FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE,
-		    offset, len);
-    if (ret < 0) {
-      ret = -errno;
-    } else {
-      // ensure we extent file size, if needed
-      if (offset + len > (uint64_t)st.st_size) {
-	ret = ::ftruncate(**fd, offset + len);
-	if (ret < 0) {
-	  ret = -errno;
-	  lfn_close(fd);
-	  goto out;
-	}
-      }
-    }
-    lfn_close(fd);
-
-    if (ret >= 0 && m_filestore_sloppy_crc) {
-      int rc = backend->_crc_update_zero(**fd, offset, len);
-      assert(rc >= 0);
-    }
-
-    if (ret == 0)
-      goto out;  // yay!
-    if (ret != -EOPNOTSUPP)
-      goto out;  // some other error
-#    endif
-# endif
-#endif
-  }
-
-  // lame, kernel is old and doesn't support it.
-  // write zeros.. yuck!
-  dout(20) << "zero falling back to writing zeros" << dendl;
   {
     bufferlist bl;
     bl.append_zero(len);
     ret = _write(cid, oid, offset, len, bl);
   }
 
-#ifdef CEPH_HAVE_FALLOCATE
-# if !defined(DARWIN) && !defined(__FreeBSD__)
-#    ifdef FALLOC_FL_KEEP_SIZE
- out:
-#    endif
-# endif
-#endif
   dout(20) << "zero " << cid << "/" << oid << " " << offset << "~" << len << " = " << ret << dendl;
   return ret;
 }
 
 int CStore::_clone(const coll_t& cid, const ghobject_t& oldoid, const ghobject_t& newoid,
-		      const SequencerPosition& spos)
+		      const CStoreSequencerPosition& spos)
 {
   dout(15) << "clone " << cid << "/" << oldoid << " -> " << cid << "/" << newoid << dendl;
 
-  if (_check_replay_guard(cid, newoid, spos) < 0)
-    return 0;
+  op_lock.Lock();
+  while(in_progress_comp.count(oldoid)) {
+    dout(20) << __func__ << " object " << oldoid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(oldoid);
+  op_lock.Unlock();
 
   int r;
-  FDRef o, n;
+  CFDRef o, n;
+
+  if (_check_replay_guard(cid, newoid, spos) < 0) {
+		r = 0;
+		goto out2;
+	}
+
   {
-    Index index;
+    CStoreIndex index;
     r = lfn_open(cid, oldoid, false, &o, &index);
     if (r < 0) {
       goto out2;
@@ -3383,14 +4548,8 @@ int CStore::_clone(const coll_t& cid, const ghobject_t& oldoid, const ghobject_t
       r = -errno;
       goto out3;
     }
-    struct stat st;
-    r = ::fstat(**o, &st);
-    if (r < 0) {
-      r = -errno;
-      goto out3;
-    }
 
-    r = _do_clone_range(**o, **n, 0, st.st_size, 0);
+    r = _do_clone_full(**o, **n);
     if (r < 0) {
       goto out3;
     }
@@ -3433,79 +4592,193 @@ int CStore::_clone(const coll_t& cid, const ghobject_t& oldoid, const ghobject_t
   lfn_close(o);
  out2:
   dout(10) << "clone " << cid << "/" << oldoid << " -> " << cid << "/" << newoid << " = " << r << dendl;
+  
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(oldoid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
   assert(!m_filestore_fail_eio || r != -EIO);
   return r;
 }
 
-int CStore::_do_clone_range(int from, int to, uint64_t srcoff, uint64_t len, uint64_t dstoff)
-{
-  dout(20) << "_do_clone_range copy " << srcoff << "~" << len << " to " << dstoff << dendl;
-  return backend->clone_range(from, to, srcoff, len, dstoff);
+int CStore::_do_fiemap_full(int fd, map<uint64_t, uint64_t>& m) {
+  struct fiemap *fiemap = NULL;
+  struct stat st;
+  int r = ::fstat(fd, &st);
+  if (r < 0) {
+    return r;
+  }
+  dout(10) << __func__ << " st " << st.st_size << dendl;
+  r = backend->do_fiemap(fd, 0, st.st_size, &fiemap);
+  dout(10) << __func__ << " fiemap r=" << r << dendl;
+  if (r < 0) {
+    return r;
+  }
+
+  dout(10) << __func__ << " fiemap  " << fiemap->fm_mapped_extents << dendl;
+  if (fiemap->fm_mapped_extents == 0) {
+    free(fiemap);
+    return r;
+  }
+
+  uint64_t i = 0;
+  struct fiemap_extent *extent = &fiemap->fm_extents[0];
+
+  while (i < fiemap->fm_mapped_extents) {
+    struct fiemap_extent *next = extent + 1;
+    dout(10) << __func__ << "  " << fiemap->fm_mapped_extents << " fe_logical="
+            << extent->fe_logical << " fe_length=" << extent->fe_length << dendl;
+    while ((i < fiemap->fm_mapped_extents - 1) && 
+	   (extent->fe_logical + extent->fe_length == next->fe_logical)) {
+      next->fe_length += extent->fe_length;
+      next->fe_logical = extent->fe_logical;
+      extent = next;
+      next = extent + 1;
+      i++;
+    }
+    if (extent->fe_logical + extent->fe_length > (uint64_t)st.st_size)
+      extent->fe_length = st.st_size - extent->fe_logical;
+    m[extent->fe_logical] = extent->fe_length;
+    i++;
+    extent++;
+  }
+  return r;
 }
 
-int CStore::_do_sparse_copy_range(int from, int to, uint64_t srcoff, uint64_t len, uint64_t dstoff)
-{
-  dout(20) << __func__ << " " << srcoff << "~" << len << " to " << dstoff << dendl;
-  int r = 0;
-  map<uint64_t, uint64_t> exomap;
-  // fiemap doesn't allow zero length
-  if (len == 0)
-    return 0;
+int CStore::_do_seek_hole_data_full(int fd, map<uint64_t, uint64_t>& m) {
 
-  if (backend->has_seek_data_hole()) {
-    dout(15) << "seek_data/seek_hole " << from << " " << srcoff << "~" << len << dendl;
-    r = _do_seek_hole_data(from, srcoff, len, &exomap);
-  } else if (backend->has_fiemap()) {
-    dout(15) << "fiemap ioctl" << from << " " << srcoff << "~" << len << dendl;
-    r = _do_fiemap(from, srcoff, len, &exomap);
+  uint64_t offset = 0;
+  uint64_t len;
+  struct stat st;
+  int r = ::fstat(fd, &st);
+  if (r < 0) {
+    return r;
   }
+  len = st.st_size;
 
- 
- int64_t written = 0;
- if (r < 0)
-    goto out;
+#if defined(__linux__) && defined(SEEK_HOLE) && defined(SEEK_DATA)
+  off_t hole_pos, data_pos;
 
-  for (map<uint64_t, uint64_t>::iterator miter = exomap.begin(); miter != exomap.end(); ++miter) {
-    uint64_t it_off = miter->first - srcoff + dstoff;
-    r = _do_copy_range(from, to, miter->first, miter->second, it_off, true);
-    if (r < 0) {
-      derr << "CStore::_do_copy_range: copy error at " << miter->first << "~" << miter->second
-             << " to " << it_off << ", " << cpp_strerror(r) << dendl;
+  // If lseek fails with errno setting to be ENXIO, this means the current
+  // file offset is beyond the end of the file.
+  off_t start = offset;
+  while(start < (off_t)(offset + len)) {
+    data_pos = lseek(fd, start, SEEK_DATA);
+    if (data_pos < 0) {
+      if (errno == ENXIO)
+        break;
+      else {
+        r = -errno;
+        dout(10) << "failed to lseek: " << cpp_strerror(r) << dendl;
+	return r;
+      }
+    } else if (data_pos > (off_t)(offset + len)) {
       break;
     }
-    written += miter->second;
+
+    hole_pos = lseek(fd, data_pos, SEEK_HOLE);
+    if (hole_pos < 0) {
+      if (errno == ENXIO) {
+        break;
+      } else {
+        r = -errno;
+        dout(10) << "failed to lseek: " << cpp_strerror(r) << dendl;
+	return r;
+      }
+    }
+
+    if (hole_pos >= (off_t)(offset + len)) {
+      m[data_pos] = offset + len - data_pos;
+      break;
+    }
+    m[data_pos] = hole_pos - data_pos;
+    start = hole_pos;
   }
 
-  if (r >= 0) {
-    if (m_filestore_sloppy_crc) {
-      int rc = backend->_crc_update_clone_range(from, to, srcoff, len, dstoff);
-      assert(rc >= 0);
+  return r;
+#else
+  m[offset] = len;
+  return 0;
+#endif
+}
+
+int CStore::_do_clone_full(int from, int to) {
+  return backend->clone_full(from, to);
+}
+
+int CStore::_do_sparse_copy_full(int from, int to) {
+  struct stat st;
+  int r = ::fstat(from, &st);
+  if (r < 0)
+    return r;
+
+  if (st.st_size == 0)
+    return 0;
+
+  dout(10) << __func__ << "  from " << from  << " to " << to << " with size " << st.st_size << dendl;
+  map<uint64_t, uint64_t> exomap;
+  if (backend->has_seek_data_hole()) {
+    dout(15) << "seek hole/data " << dendl;
+    r = _do_seek_hole_data_full(from, exomap);
+  } else if (backend->has_fiemap()) {
+    dout(15) << "fiemap ioctl" << dendl;
+    r = _do_fiemap_full(from, exomap);
+  }
+
+  uint64_t written = 0;
+  if (r < 0)
+    goto out;
+
+  for(map<uint64_t, uint64_t>::iterator it = exomap.begin(); it != exomap.end(); ++it) {
+		dout(20) << __func__ << "  " << it->first << it->second << dendl; 
+    r = _do_copy_range(from, to, it->first, it->second, it->first);
+    if (r < 0) {
+      derr << "CStore::_do_copy_range err at " << it->first << "~" << it->second << cpp_strerror(r) << dendl;
+      break;
     }
-    struct stat st;
-    r = ::fstat(to, &st);
+    written += it->second;
+  }
+  if (r >= 0) {
+    struct stat dst;
+    r = ::fstat(to, &dst);
     if (r < 0) {
       r = -errno;
       derr << __func__ << ": fstat error at " << to << " " << cpp_strerror(r) << dendl;
-      goto out;
+       goto out;
     }
-    if (st.st_size < (int)(dstoff + len)) {
-      r = ::ftruncate(to, dstoff + len);
+    if (dst.st_size < (int)(st.st_size)) {
+      r = ::ftruncate(to, st.st_size);
       if (r < 0) {
         r = -errno;
-        derr << __func__ << ": ftruncate error at " << dstoff+len << " " << cpp_strerror(r) << dendl;
+        derr << __func__ << ": ftruncate error at " << st.st_size << " " << cpp_strerror(r) << dendl;
         goto out;
       }
     }
     r = written;
   }
-
  out:
-  dout(20) << __func__ << " " << srcoff << "~" << len << " to " << dstoff << " = " << r << dendl;
+  dout(10) << __func__ << "  from " << from  << " to " << to  << " r=" << r << dendl;
   return r;
 }
 
-int CStore::_do_copy_range(int from, int to, uint64_t srcoff, uint64_t len, uint64_t dstoff, bool skip_sloppycrc)
-{
+int CStore::_do_copy_full(int from, int to, bool skip_sloppycrc) {
+  dout(10) << __func__ << " " << from << " to " << to << dendl;
+  struct stat st;
+  int r = ::fstat(from, &st);
+  if (r < 0)
+    return r;
+
+  r = _do_copy_range(from, to, 0, st.st_size, 0);
+  dout(10) << __func__ << " " << from << " to " << to << " r=" << r << dendl;
+  return r;
+}
+
+int CStore::_do_copy_range(int from, int to, uint64_t srcoff, uint64_t len, uint64_t dstoff) {
   dout(20) << "_do_copy_range " << srcoff << "~" << len << " to " << dstoff << dendl;
   int r = 0;
   loff_t pos = srcoff;
@@ -3584,7 +4857,7 @@ int CStore::_do_copy_range(int from, int to, uint64_t srcoff, uint64_t len, uint
 	  continue;
 	} else {
 	  r = -errno;
-	  derr << "CStore::_do_copy_range: read error at " << pos << "~" << len
+	  derr << "FileStore::_do_copy_range: read error at " << pos << "~" << len
 	    << ", " << cpp_strerror(r) << dendl;
 	  break;
 	}
@@ -3592,7 +4865,7 @@ int CStore::_do_copy_range(int from, int to, uint64_t srcoff, uint64_t len, uint
       if (r == 0) {
 	// hrm, bad source range, wtf.
 	r = -ERANGE;
-	derr << "CStore::_do_copy_range got short read result at " << pos
+	derr << "FileStore::_do_copy_range got short read result at " << pos
 	  << " of fd " << from << " len " << len << dendl;
 	break;
       }
@@ -3603,7 +4876,7 @@ int CStore::_do_copy_range(int from, int to, uint64_t srcoff, uint64_t len, uint
 	  << " got " << r2 << dendl;
 	if (r2 < 0) {
 	  r = r2;
-	  derr << "CStore::_do_copy_range: write error at " << pos << "~"
+	  derr << "FileStore::_do_copy_range: write error at " << pos << "~"
 	    << r-op << ", " << cpp_strerror(r) << dendl;
 
 	  break;
@@ -3615,57 +4888,78 @@ int CStore::_do_copy_range(int from, int to, uint64_t srcoff, uint64_t len, uint
       pos += r;
     }
   }
-
   assert(pos == end);
-  if (r >= 0 && !skip_sloppycrc && m_filestore_sloppy_crc) {
-    int rc = backend->_crc_update_clone_range(from, to, srcoff, len, dstoff);
-    assert(rc >= 0);
-  }
   dout(20) << "_do_copy_range " << srcoff << "~" << len << " to " << dstoff << " = " << r << dendl;
   return r;
 }
 
 int CStore::_clone_range(const coll_t& cid, const ghobject_t& oldoid, const ghobject_t& newoid,
 			    uint64_t srcoff, uint64_t len, uint64_t dstoff,
-			    const SequencerPosition& spos)
+			    const CStoreSequencerPosition& spos)
 {
   dout(15) << "clone_range " << cid << "/" << oldoid << " -> " << cid << "/" << newoid << " " << srcoff << "~" << len << " to " << dstoff << dendl;
 
-  if (_check_replay_guard(cid, newoid, spos) < 0)
-    return 0;
+  op_lock.Lock();
+  while(in_progress_comp.count(oldoid)) {
+    dout(20) << __func__ << " object " << oldoid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(oldoid);
+  op_lock.Unlock();
 
   int r;
-  FDRef o, n;
+  CFDRef o, n;
+  bufferlist bl;
+  if (_check_replay_guard(cid, newoid, spos) < 0) {
+		r = 0;
+		goto out2;
+	}
+
   r = lfn_open(cid, oldoid, false, &o);
   if (r < 0) {
     goto out2;
   }
   r = lfn_open(cid, newoid, true, &n);
   if (r < 0) {
+    goto out1;
+  }
+
+  r = read(cid, oldoid, srcoff, len, bl, 0, false);
+  if (r < 0) {
     goto out;
   }
-  r = _do_clone_range(**o, **n, srcoff, len, dstoff);
+
+  r = _write(cid, newoid, dstoff, len, bl, 0);
   if (r < 0) {
-    r = -errno;
-    goto out3;
+    goto out;
   }
 
   // clone is non-idempotent; record our work.
   _set_replay_guard(**n, spos, &newoid);
 
- out3:
-  lfn_close(n);
  out:
+  lfn_close(n);
+ out1:
   lfn_close(o);
  out2:
   dout(10) << "clone_range " << cid << "/" << oldoid << " -> " << cid << "/" << newoid << " "
 	   << srcoff << "~" << len << " to " << dstoff << " = " << r << dendl;
+  
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(oldoid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
   return r;
 }
 
-class SyncEntryTimeout : public Context {
+class CStoreSyncEntryTimeout : public Context {
 public:
-  explicit SyncEntryTimeout(int commit_timeo)
+  explicit CStoreSyncEntryTimeout(int commit_timeo)
     : m_commit_timeo(commit_timeo)
   {
   }
@@ -3725,16 +5019,17 @@ void CStore::sync_entry()
     fin.swap(sync_waiters);
     lock.Unlock();
 
+    comp_tp.pause();
     op_tp.pause();
     if (apply_manager.commit_start()) {
       utime_t start = ceph_clock_now(g_ceph_context);
       uint64_t cp = apply_manager.get_committing_seq();
 
-      sync_entry_timeo_lock.Lock();
-      SyncEntryTimeout *sync_entry_timeo =
-	new SyncEntryTimeout(m_filestore_commit_timeout);
+      timer_lock.Lock();
+      CStoreSyncEntryTimeout *sync_entry_timeo =
+	new CStoreSyncEntryTimeout(m_filestore_commit_timeout);
       timer.add_event_after(m_filestore_commit_timeout, sync_entry_timeo);
-      sync_entry_timeo_lock.Unlock();
+      timer_lock.Unlock();
 
       logger->set(l_os_committing, 1);
 
@@ -3764,6 +5059,7 @@ void CStore::sync_entry()
 
 	snaps.push_back(cp);
 	apply_manager.commit_started();
+	comp_tp.unpause();
 	op_tp.unpause();
 
 	if (cid > 0) {
@@ -3778,6 +5074,7 @@ void CStore::sync_entry()
       } else
       {
 	apply_manager.commit_started();
+	comp_tp.unpause();
 	op_tp.unpause();
 
 	int err = object_map->sync();
@@ -3837,10 +5134,11 @@ void CStore::sync_entry()
 
       dout(15) << "sync_entry committed to op_seq " << cp << dendl;
 
-      sync_entry_timeo_lock.Lock();
+      timer_lock.Lock();
       timer.cancel_event(sync_entry_timeo);
-      sync_entry_timeo_lock.Unlock();
+      timer_lock.Unlock();
     } else {
+      comp_tp.unpause();
       op_tp.unpause();
     }
 
@@ -4131,7 +5429,7 @@ int CStore::getattr(const coll_t& _cid, const ghobject_t& oid, const char *name,
   tracepoint(objectstore, getattr_enter, _cid.c_str());
   const coll_t& cid = !_need_temp_object_collection(_cid, oid) ? _cid : _cid.get_temp();
   dout(15) << "getattr " << cid << "/" << oid << " '" << name << "'" << dendl;
-  FDRef fd;
+  CFDRef fd;
   int r = lfn_open(cid, oid, false, &fd);
   if (r < 0) {
     goto out;
@@ -4144,7 +5442,7 @@ int CStore::getattr(const coll_t& _cid, const ghobject_t& oid, const char *name,
     map<string, bufferlist> got;
     set<string> to_get;
     to_get.insert(string(name));
-    Index index;
+    CStoreIndex index;
     r = get_index(cid, &index);
     if (r < 0) {
       dout(10) << __func__ << " could not get index r = " << r << dendl;
@@ -4181,9 +5479,9 @@ int CStore::getattrs(const coll_t& _cid, const ghobject_t& oid, map<string,buffe
   const coll_t& cid = !_need_temp_object_collection(_cid, oid) ? _cid : _cid.get_temp();
   set<string> omap_attrs;
   map<string, bufferlist> omap_aset;
-  Index index;
+  CStoreIndex index;
   dout(15) << "getattrs " << cid << "/" << oid << dendl;
-  FDRef fd;
+  CFDRef fd;
   bool spill_out = true;
   char buf[2];
 
@@ -4198,7 +5496,7 @@ int CStore::getattrs(const coll_t& _cid, const ghobject_t& oid, map<string,buffe
 
   r = _fgetattrs(**fd, aset);
   lfn_close(fd);
-  fd = FDRef(); // defensive
+  fd = CFDRef(); // defensive
   if (r < 0) {
     goto out;
   }
@@ -4250,15 +5548,23 @@ int CStore::getattrs(const coll_t& _cid, const ghobject_t& oid, map<string,buffe
 }
 
 int CStore::_setattrs(const coll_t& cid, const ghobject_t& oid, map<string,bufferptr>& aset,
-			 const SequencerPosition &spos)
+			 const CStoreSequencerPosition &spos)
 {
   map<string, bufferlist> omap_set;
   set<string> omap_remove;
   map<string, bufferptr> inline_set;
   map<string, bufferptr> inline_to_set;
-  FDRef fd;
+  CFDRef fd;
   int spill_out = -1;
   bool incomplete_inline = false;
+
+  op_lock.Lock();
+  while(in_progress_comp.count(oid)) {
+    dout(20) << __func__ << " object " << oid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(oid);
+  op_lock.Unlock();
 
   int r = lfn_open(cid, oid, false, &fd);
   if (r < 0) {
@@ -4345,15 +5651,34 @@ int CStore::_setattrs(const coll_t& cid, const ghobject_t& oid, map<string,buffe
   lfn_close(fd);
  out:
   dout(10) << "setattrs " << cid << "/" << oid << " = " << r << dendl;
+
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(oid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
   return r;
 }
 
 
 int CStore::_rmattr(const coll_t& cid, const ghobject_t& oid, const char *name,
-		       const SequencerPosition &spos)
+		       const CStoreSequencerPosition &spos)
 {
   dout(15) << "rmattr " << cid << "/" << oid << " '" << name << "'" << dendl;
-  FDRef fd;
+
+  op_lock.Lock();
+  while(in_progress_comp.count(oid)) {
+    dout(20) << __func__ << " object " << oid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(oid);
+  op_lock.Unlock();
+
+  CFDRef fd;
   bool spill_out = true;
   bufferptr bp;
 
@@ -4372,7 +5697,7 @@ int CStore::_rmattr(const coll_t& cid, const ghobject_t& oid, const char *name,
   get_attrname(name, n, CHAIN_XATTR_MAX_NAME_LEN);
   r = chain_fremovexattr(**fd, n);
   if (r == -ENODATA && spill_out) {
-    Index index;
+    CStoreIndex index;
     r = get_index(cid, &index);
     if (r < 0) {
       dout(10) << __func__ << " could not get index r = " << r << dendl;
@@ -4391,18 +5716,36 @@ int CStore::_rmattr(const coll_t& cid, const ghobject_t& oid, const char *name,
   lfn_close(fd);
  out:
   dout(10) << "rmattr " << cid << "/" << oid << " '" << name << "' = " << r << dendl;
+  
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(oid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
   return r;
 }
 
 int CStore::_rmattrs(const coll_t& cid, const ghobject_t& oid,
-			const SequencerPosition &spos)
+			const CStoreSequencerPosition &spos)
 {
   dout(15) << "rmattrs " << cid << "/" << oid << dendl;
 
+  op_lock.Lock();
+  while(in_progress_comp.count(oid)) {
+    dout(20) << __func__ << " object " << oid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(oid);
+  op_lock.Unlock(); 
+
   map<string,bufferptr> aset;
-  FDRef fd;
+  CFDRef fd;
   set<string> omap_attrs;
-  Index index;
+  CStoreIndex index;
   bool spill_out = true;
 
   int r = lfn_open(cid, oid, false, &fd);
@@ -4461,6 +5804,17 @@ int CStore::_rmattrs(const coll_t& cid, const ghobject_t& oid,
   lfn_close(fd);
  out:
   dout(10) << "rmattrs " << cid << "/" << oid << " = " << r << dendl;
+
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(oid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+ 
+    comp_cond.SignalAll();
+  }
+
   return r;
 }
 
@@ -4602,7 +5956,7 @@ int CStore::_collection_setattrs(const coll_t& cid, map<string,bufferptr>& aset)
 }
 
 int CStore::_collection_remove_recursive(const coll_t &cid,
-					    const SequencerPosition &spos)
+					    const CStoreSequencerPosition &spos)
 {
   struct stat st;
   int r = collection_stat(cid, &st);
@@ -4637,7 +5991,7 @@ int CStore::_collection_remove_recursive(const coll_t &cid,
 
 int CStore::collection_version_current(const coll_t& c, uint32_t *version)
 {
-  Index index;
+  CStoreIndex index;
   int r = get_index(c, &index);
   if (r < 0)
     return r;
@@ -4754,7 +6108,7 @@ bool CStore::collection_empty(const coll_t& c)
 {
   tracepoint(objectstore, collection_empty_enter, c.c_str());
   dout(15) << "collection_empty " << c << dendl;
-  Index index;
+  CStoreIndex index;
   int r = get_index(c, &index);
   if (r < 0)
     return false;
@@ -4827,7 +6181,7 @@ int CStore::collection_list(const coll_t& c, ghobject_t start, ghobject_t end,
     }
   }
 
-  Index index;
+  CStoreIndex index;
   int r = get_index(c, &index);
   if (r < 0)
     return r;
@@ -4843,7 +6197,7 @@ int CStore::collection_list(const coll_t& c, ghobject_t start, ghobject_t end,
   }
   dout(20) << "objects: " << *ls << dendl;
 
-  // HashIndex doesn't know the pool when constructing a 'next' value
+  // CStoreHashIndex doesn't know the pool when constructing a 'next' value
   if (next && !next->is_max()) {
     next->hobj.pool = pool;
     next->set_shard(shard);
@@ -4860,7 +6214,7 @@ int CStore::omap_get(const coll_t& _c, const ghobject_t &hoid,
   tracepoint(objectstore, omap_get_enter, _c.c_str());
   const coll_t& c = !_need_temp_object_collection(_c, hoid) ? _c : _c.get_temp();
   dout(15) << __func__ << " " << c << "/" << hoid << dendl;
-  Index index;
+  CStoreIndex index;
   int r = get_index(c, &index);
   if (r < 0)
     return r;
@@ -4889,7 +6243,7 @@ int CStore::omap_get_header(
   tracepoint(objectstore, omap_get_header_enter, _c.c_str());
   const coll_t& c = !_need_temp_object_collection(_c, hoid) ? _c : _c.get_temp();
   dout(15) << __func__ << " " << c << "/" << hoid << dendl;
-  Index index;
+  CStoreIndex index;
   int r = get_index(c, &index);
   if (r < 0)
     return r;
@@ -4914,7 +6268,7 @@ int CStore::omap_get_keys(const coll_t& _c, const ghobject_t &hoid, set<string> 
   tracepoint(objectstore, omap_get_keys_enter, _c.c_str());
   const coll_t& c = !_need_temp_object_collection(_c, hoid) ? _c : _c.get_temp();
   dout(15) << __func__ << " " << c << "/" << hoid << dendl;
-  Index index;
+  CStoreIndex index;
   int r = get_index(c, &index);
   if (r < 0)
     return r;
@@ -4941,7 +6295,7 @@ int CStore::omap_get_values(const coll_t& _c, const ghobject_t &hoid,
   tracepoint(objectstore, omap_get_values_enter, _c.c_str());
   const coll_t& c = !_need_temp_object_collection(_c, hoid) ? _c : _c.get_temp();
   dout(15) << __func__ << " " << c << "/" << hoid << dendl;
-  Index index;
+  CStoreIndex index;
   const char *where = 0;
   int r = get_index(c, &index);
   if (r < 0) {
@@ -4978,7 +6332,7 @@ int CStore::omap_check_keys(const coll_t& _c, const ghobject_t &hoid,
   const coll_t& c = !_need_temp_object_collection(_c, hoid) ? _c : _c.get_temp();
   dout(15) << __func__ << " " << c << "/" << hoid << dendl;
 
-  Index index;
+  CStoreIndex index;
   int r = get_index(c, &index);
   if (r < 0)
     return r;
@@ -5004,12 +6358,12 @@ ObjectMap::ObjectMapIterator CStore::get_omap_iterator(const coll_t& _c,
   tracepoint(objectstore, get_omap_iterator, _c.c_str());
   const coll_t& c = !_need_temp_object_collection(_c, hoid) ? _c : _c.get_temp();
   dout(15) << __func__ << " " << c << "/" << hoid << dendl;
-  Index index;
+  CStoreIndex index;
   int r = get_index(c, &index);
   if (r < 0) {
     dout(10) << __func__ << " " << c << "/" << hoid << " = 0 "
 	     << "(get_index failed with " << cpp_strerror(r) << ")" << dendl;
-    return ObjectMap::ObjectMapIterator();
+    return CStoreObjectMap::CStoreObjectMapIterator();
   }
   {
     assert(NULL != index.index);
@@ -5018,7 +6372,7 @@ ObjectMap::ObjectMapIterator CStore::get_omap_iterator(const coll_t& _c,
     if (r < 0) {
       dout(10) << __func__ << " " << c << "/" << hoid << " = 0 "
 	       << "(lfn_find failed with " << cpp_strerror(r) << ")" << dendl;
-      return ObjectMap::ObjectMapIterator();
+      return CStoreObjectMap::CStoreObjectMapIterator();
     }
   }
   return object_map->get_iterator(hoid);
@@ -5026,7 +6380,7 @@ ObjectMap::ObjectMapIterator CStore::get_omap_iterator(const coll_t& _c,
 
 int CStore::_collection_hint_expected_num_objs(const coll_t& c, uint32_t pg_num,
     uint64_t expected_num_objs,
-    const SequencerPosition &spos)
+    const CStoreSequencerPosition &spos)
 {
   dout(15) << __func__ << " collection: " << c << " pg number: "
      << pg_num << " expected number of objects: " << expected_num_objs << dendl;
@@ -5038,7 +6392,7 @@ int CStore::_collection_hint_expected_num_objs(const coll_t& c, uint32_t pg_num,
   }
 
   int ret;
-  Index index;
+  CStoreIndex index;
   ret = get_index(c, &index);
   if (ret < 0)
     return ret;
@@ -5054,7 +6408,7 @@ int CStore::_collection_hint_expected_num_objs(const coll_t& c, uint32_t pg_num,
 
 int CStore::_create_collection(
   const coll_t& c,
-  const SequencerPosition &spos)
+  const CStoreSequencerPosition &spos)
 {
   char fn[PATH_MAX];
   get_cdir(c, fn, sizeof(fn));
@@ -5091,7 +6445,7 @@ int CStore::_destroy_collection(const coll_t& c)
   get_cdir(c, fn, sizeof(fn));
   dout(15) << "_destroy_collection " << fn << dendl;
   {
-    Index from;
+    CStoreIndex from;
     r = get_index(c, &from);
     if (r < 0)
       goto out;
@@ -5126,31 +6480,44 @@ int CStore::_destroy_collection(const coll_t& c)
 
 
 int CStore::_collection_add(const coll_t& c, const coll_t& oldcid, const ghobject_t& o,
-			       const SequencerPosition& spos)
+			       const CStoreSequencerPosition& spos)
 {
   dout(15) << "collection_add " << c << "/" << o << " from " << oldcid << "/" << o << dendl;
 
-  int dstcmp = _check_replay_guard(c, o, spos);
-  if (dstcmp < 0)
-    return 0;
+  op_lock.Lock();
+  while(in_progress_comp.count(o)) {
+    dout(20) << __func__ << " object " << o << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(o);
+  op_lock.Unlock();
+
+	int r, srccmp, dstcmp;
+  CFDRef fd;
+  dstcmp = _check_replay_guard(c, o, spos);
+  if (dstcmp < 0) {
+		r = 0;
+		goto out;
+	}
 
   // check the src name too; it might have a newer guard, and we don't
   // want to clobber it
-  int srccmp = _check_replay_guard(oldcid, o, spos);
-  if (srccmp < 0)
-    return 0;
+  srccmp = _check_replay_guard(oldcid, o, spos);
+  if (srccmp < 0) {
+		r = 0;
+		goto out;
+	}
 
   // open guard on object so we don't any previous operations on the
   // new name that will modify the source inode.
-  FDRef fd;
-  int r = lfn_open(oldcid, o, 0, &fd);
+  r = lfn_open(oldcid, o, 0, &fd);
   if (r < 0) {
     // the source collection/object does not exist. If we are replaying, we
     // should be safe, so just return 0 and move on.
     assert(replaying);
     dout(10) << "collection_add " << c << "/" << o << " from "
 	     << oldcid << "/" << o << " (dne, continue replay) " << dendl;
-    return 0;
+    goto out;
   }
   if (dstcmp > 0) {      // if dstcmp == 0 the guard already says "in-progress"
     _set_replay_guard(**fd, spos, &o, true);
@@ -5169,16 +6536,36 @@ int CStore::_collection_add(const coll_t& c, const coll_t& oldcid, const ghobjec
   }
   lfn_close(fd);
 
+out:
   dout(10) << "collection_add " << c << "/" << o << " from " << oldcid << "/" << o << " = " << r << dendl;
+  
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(o);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
   return r;
 }
 
 int CStore::_collection_move_rename(const coll_t& oldcid, const ghobject_t& oldoid,
 				       coll_t c, const ghobject_t& o,
-				       const SequencerPosition& spos,
+				       const CStoreSequencerPosition& spos,
 				       bool allow_enoent)
 {
   dout(15) << __func__ << " " << c << "/" << o << " from " << oldcid << "/" << oldoid << dendl;
+
+  op_lock.Lock();
+  while(in_progress_comp.count(oldoid)) {
+    dout(20) << __func__ << " object " << oldoid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(oldoid);
+  op_lock.Unlock();
+
   int r = 0;
   int dstcmp, srccmp;
 
@@ -5197,13 +6584,13 @@ int CStore::_collection_move_rename(const coll_t& oldcid, const ghobject_t& oldo
   // check the src name too; it might have a newer guard, and we don't
   // want to clobber it
   srccmp = _check_replay_guard(oldcid, oldoid, spos);
-  if (srccmp < 0)
-    return 0;
+  if (srccmp < 0) 
+    goto out_rm_src;
 
   {
     // open guard on object so we don't any previous operations on the
     // new name that will modify the source inode.
-    FDRef fd;
+    CFDRef fd;
     r = lfn_open(oldcid, oldoid, 0, &fd);
     if (r < 0) {
       // the source collection/object does not exist. If we are replaying, we
@@ -5218,7 +6605,7 @@ int CStore::_collection_move_rename(const coll_t& oldcid, const ghobject_t& oldo
       } else {
 	assert(0 == "ERROR: source must exist");
       }
-      return 0;
+      goto out_rm_src;
     }
     if (dstcmp > 0) {      // if dstcmp == 0 the guard already says "in-progress"
       _set_replay_guard(**fd, spos, &o, true);
@@ -5241,7 +6628,7 @@ int CStore::_collection_move_rename(const coll_t& oldcid, const ghobject_t& oldo
     _inject_failure();
 
     lfn_close(fd);
-    fd = FDRef();
+    fd = CFDRef();
 
     if (r == 0)
       r = lfn_unlink(oldcid, oldoid, spos, true);
@@ -5258,6 +6645,16 @@ int CStore::_collection_move_rename(const coll_t& oldcid, const ghobject_t& oldo
 
   dout(10) << __func__ << " " << c << "/" << o << " from " << oldcid << "/" << oldoid
 	   << " = " << r << dendl;
+  
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(oldoid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
   return r;
 
  out_rm_src:
@@ -5268,6 +6665,16 @@ int CStore::_collection_move_rename(const coll_t& oldcid, const ghobject_t& oldo
 
   dout(10) << __func__ << " " << c << "/" << o << " from " << oldcid << "/" << oldoid
 	   << " = " << r << dendl;
+  
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(oldoid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
   return r;
 }
 
@@ -5285,30 +6692,59 @@ void CStore::_inject_failure()
 }
 
 int CStore::_omap_clear(const coll_t& cid, const ghobject_t &hoid,
-			   const SequencerPosition &spos) {
+			   const CStoreSequencerPosition &spos) {
   dout(15) << __func__ << " " << cid << "/" << hoid << dendl;
-  Index index;
+
+  op_lock.Lock();
+  while(in_progress_comp.count(hoid)) {
+    dout(20) << __func__ << " object " << hoid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(hoid);
+  op_lock.Unlock();
+
+  CStoreIndex index;
   int r = get_index(cid, &index);
   if (r < 0)
-    return r;
+    goto out;
   {
     assert(NULL != index.index);
     RWLock::RLocker l((index.index)->access_lock);
     r = lfn_find(hoid, index);
     if (r < 0)
-      return r;
+      goto out;
   }
   r = object_map->clear_keys_header(hoid, &spos);
   if (r < 0 && r != -ENOENT)
-    return r;
-  return 0;
+    goto out;
+  
+out:
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(hoid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
+  return r;
 }
 
 int CStore::_omap_setkeys(const coll_t& cid, const ghobject_t &hoid,
 			     const map<string, bufferlist> &aset,
-			     const SequencerPosition &spos) {
+			     const CStoreSequencerPosition &spos) {
   dout(15) << __func__ << " " << cid << "/" << hoid << dendl;
-  Index index;
+
+  op_lock.Lock();
+  while(in_progress_comp.count(hoid)) {
+    dout(20) << __func__ << " object " << hoid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(hoid);
+  op_lock.Unlock();
+
+  CStoreIndex index;
   int r;
   //treat pgmeta as a logical object, skip to check exist
   if (hoid.is_pgmeta())
@@ -5317,7 +6753,7 @@ int CStore::_omap_setkeys(const coll_t& cid, const ghobject_t &hoid,
   r = get_index(cid, &index);
   if (r < 0) {
     dout(20) << __func__ << " get_index got " << cpp_strerror(r) << dendl;
-    return r;
+    goto out;
   }
   {
     assert(NULL != index.index);
@@ -5325,20 +6761,41 @@ int CStore::_omap_setkeys(const coll_t& cid, const ghobject_t &hoid,
     r = lfn_find(hoid, index);
     if (r < 0) {
       dout(20) << __func__ << " lfn_find got " << cpp_strerror(r) << dendl;
-      return r;
+      goto out;
     }
   }
 skip:
   r = object_map->set_keys(hoid, aset, &spos);
+
+out:
   dout(20) << __func__ << " " << cid << "/" << hoid << " = " << r << dendl;
+  
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(hoid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
   return r;
 }
 
 int CStore::_omap_rmkeys(const coll_t& cid, const ghobject_t &hoid,
 			    const set<string> &keys,
-			    const SequencerPosition &spos) {
+			    const CStoreSequencerPosition &spos) {
   dout(15) << __func__ << " " << cid << "/" << hoid << dendl;
-  Index index;
+
+  op_lock.Lock();
+  while(in_progress_comp.count(hoid)) {
+    dout(20) << __func__ << " object " << hoid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(hoid);
+  op_lock.Unlock();
+
+  CStoreIndex index;
   int r;
   //treat pgmeta as a logical object, skip to check exist
   if (hoid.is_pgmeta())
@@ -5346,16 +6803,26 @@ int CStore::_omap_rmkeys(const coll_t& cid, const ghobject_t &hoid,
 
   r = get_index(cid, &index);
   if (r < 0)
-    return r;
+    goto out;
   {
     assert(NULL != index.index);
     RWLock::RLocker l((index.index)->access_lock);
     r = lfn_find(hoid, index);
     if (r < 0)
-      return r;
+      goto out;
   }
 skip:
   r = object_map->rm_keys(hoid, keys, &spos);
+out:	
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(hoid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
   if (r < 0 && r != -ENOENT)
     return r;
   return 0;
@@ -5363,7 +6830,7 @@ skip:
 
 int CStore::_omap_rmkeyrange(const coll_t& cid, const ghobject_t &hoid,
 				const string& first, const string& last,
-				const SequencerPosition &spos) {
+				const CStoreSequencerPosition &spos) {
   dout(15) << __func__ << " " << cid << "/" << hoid << " [" << first << "," << last << "]" << dendl;
   set<string> keys;
   {
@@ -5380,59 +6847,83 @@ int CStore::_omap_rmkeyrange(const coll_t& cid, const ghobject_t &hoid,
 
 int CStore::_omap_setheader(const coll_t& cid, const ghobject_t &hoid,
 			       const bufferlist &bl,
-			       const SequencerPosition &spos)
+			       const CStoreSequencerPosition &spos)
 {
   dout(15) << __func__ << " " << cid << "/" << hoid << dendl;
-  Index index;
+
+  op_lock.Lock();
+  while(in_progress_comp.count(hoid)) {
+    dout(20) << __func__ << " object " << hoid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(hoid);
+  op_lock.Unlock();
+
+  CStoreIndex index;
   int r = get_index(cid, &index);
   if (r < 0)
-    return r;
+    goto out;
   {
     assert(NULL != index.index);
     RWLock::RLocker l((index.index)->access_lock);
     r = lfn_find(hoid, index);
     if (r < 0)
-      return r;
+      goto out;
   }
-  return object_map->set_header(hoid, bl, &spos);
+  
+  r = object_map->set_header(hoid, bl, &spos);
+
+out:
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(hoid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
+  return r;
 }
 
 int CStore::_split_collection(const coll_t& cid,
 				 uint32_t bits,
 				 uint32_t rem,
 				 coll_t dest,
-				 const SequencerPosition &spos)
+				 const CStoreSequencerPosition &spos)
 {
-  int r;
+	// stop compress while pg splits
+	comp_op.pause();
+  int r = 0;
   {
     dout(15) << __func__ << " " << cid << " bits: " << bits << dendl;
     if (!collection_exists(cid)) {
       dout(2) << __func__ << ": " << cid << " DNE" << dendl;
       assert(replaying);
-      return 0;
+      goto out;
     }
     if (!collection_exists(dest)) {
       dout(2) << __func__ << ": " << dest << " DNE" << dendl;
       assert(replaying);
-      return 0;
+      goto out;
     }
 
     int dstcmp = _check_replay_guard(dest, spos);
     if (dstcmp < 0)
-      return 0;
+      goto out;
 
     int srccmp = _check_replay_guard(cid, spos);
     if (srccmp < 0)
-      return 0;
+      goto out;
 
     _set_global_replay_guard(cid, spos);
     _set_replay_guard(cid, spos, true);
     _set_replay_guard(dest, spos, true);
 
-    Index from;
+    CStoreIndex from;
     r = get_index(cid, &from);
 
-    Index to;
+    CStoreIndex to;
     if (!r)
       r = get_index(dest, &to);
 
@@ -5492,6 +6983,9 @@ int CStore::_split_collection(const coll_t& cid,
       objects.clear();
     }
   }
+
+out:
+	comp_op.unpause();
   return r;
 }
 
@@ -5501,7 +6995,15 @@ int CStore::_set_alloc_hint(const coll_t& cid, const ghobject_t& oid,
 {
   dout(15) << "set_alloc_hint " << cid << "/" << oid << " object_size " << expected_object_size << " write_size " << expected_write_size << dendl;
 
-  FDRef fd;
+  op_lock.Lock();
+  while(in_progress_comp.count(oid)) {
+    dout(20) << __func__ << " object " << oid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(oid);
+  op_lock.Unlock();
+
+  CFDRef fd;
   int ret;
 
   ret = lfn_open(cid, oid, false, &fd);
@@ -5520,6 +7022,16 @@ int CStore::_set_alloc_hint(const coll_t& cid, const ghobject_t& oid,
 out:
   dout(10) << "set_alloc_hint " << cid << "/" << oid << " object_size " << expected_object_size << " write_size " << expected_write_size << " = " << ret << dendl;
   assert(!m_filestore_fail_eio || ret != -EIO);
+
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(oid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
   return ret;
 }
 
@@ -5596,7 +7108,7 @@ void CStore::handle_conf_change(const struct md_config_t *conf,
     m_filestore_max_alloc_hint_size = conf->filestore_max_alloc_hint_size;
   }
   if (changed.count("filestore_commit_timeout")) {
-    Mutex::Locker l(sync_entry_timeo_lock);
+    Mutex::Locker l(timer_lock);
     m_filestore_commit_timeout = conf->filestore_commit_timeout;
   }
   if (changed.count("filestore_dump_file")) {
