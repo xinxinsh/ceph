@@ -54,6 +54,7 @@
 #include "common/BackTrace.h"
 #include "include/types.h"
 #include "FileJournal.h"
+#include "kv.h"
 
 #include "osd/osd_types.h"
 #include "include/color.h"
@@ -97,6 +98,7 @@ using ceph::crypto::SHA1;
 #define XATTR_SPILL_OUT_NAME "user.cephos.spill_out"
 #define XATTR_NO_SPILL_OUT "0"
 #define XATTR_SPILL_OUT "1"
+#define OBJ_DATA "odata"
 
 //Initial features in new superblock.
 static CompatSet get_fs_initial_compat_set() {
@@ -113,6 +115,196 @@ static CompatSet get_fs_supported_compat_set() {
   //Any features here can be set in code, but not in initial superblock
   compat.incompat.insert(CEPH_FS_FEATURE_INCOMPAT_SHARDS);
   return compat;
+}
+
+/*
+ * object name key structure
+ *
+ * 2 chars: shard (-- for none, or hex digit, so that we sort properly)
+ * encoded u64: poolid + 2^63 (so that it sorts properly)
+ * encoded u32: hash (bit reversed)
+ *
+ * 1 char: '.'
+ *
+ * escaped string: namespace
+ *
+ * 1 char: '<', '=', or '>'.  if =, then object key == object name, and
+ *         we are followed just by the key.  otherwise, we are followed by
+ *         the key and then the object name.
+ * escaped string: key
+ * escaped string: object name (unless '=' above)
+ *
+ * encoded u64: snap
+ * encoded u64: generation
+ */
+
+/*
+ * string encoding in the key
+ *
+ * The key string needs to lexicographically sort the same way that
+ * ghobject_t does.  We do this by escaping anything <= to '#' with #
+ * plus a 2 digit hex string, and anything >= '~' with ~ plus the two
+ * hex digits.
+ *
+ * We use ! as a terminator for strings; this works because it is < #
+ * and will get escaped if it is present in the string.
+ *
+ */
+
+static void append_escaped(const string &in, string *out) {
+  char hexbyte[8];
+  for (string::const_iterator i = in.begin(); i != in.end(); ++i) {
+    if (*i <= '#') {
+      snprintf(hexbyte, sizeof(hexbyte), "#%02x", (unsigned)*i);
+      out->append(hexbyte);
+    } else if (*i >= '~') {
+      snprintf(hexbyte, sizeof(hexbyte), "~%02x", (unsigned)*i);
+      out->append(hexbyte);
+    } else {
+      out->push_back(*i);
+    }
+  }
+  out->push_back('!');
+}
+
+static int decode_escaped(const char *p, string *out) {
+  const char *orig_p = p;
+  while (*p && *p != '!') {
+    if (*p == '#' || *p == '~') {
+      unsigned hex;
+      int r = sscanf(++p, "%2x", &hex);
+      if (r < 1)
+	return -EINVAL;
+      out->push_back((char)hex);
+      p += 2;
+    } else {
+      out->push_back(*p++);
+    }
+  }
+  return p - orig_p;
+}
+
+static void _key_encode_shard(shard_id_t shard, string *key)
+{
+  // make field ordering match with ghobject_t compare operations
+  if (shard == shard_id_t::NO_SHARD) {
+    // otherwise ff will sort *after* 0, not before.
+    key->append("--");
+  } else {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%02x", (int)shard);
+    key->append(buf);
+  }
+}
+static const char *_key_decode_shard(const char *key, shard_id_t *pshard)
+{
+  if (key[0] == '-') {
+    *pshard = shard_id_t::NO_SHARD;
+  } else {
+    unsigned shard;
+    int r = sscanf(key, "%x", &shard);
+    if (r < 1)
+      return NULL;
+    *pshard = shard_id_t(shard);
+  }
+  return key + 2;
+}
+
+void get_object_key(ghobject_t& oid, string* key) {
+  key->clear();
+
+  _key_encode_shard(oid.shard_id, key);
+  _key_encode_u64(oid.hobj.pool + 0x8000000000000000ull, key);
+  _key_encode_u32(oid.hobj.get_bitwise_key_u32(), key);
+  key->append(".");
+
+  append_escaped(oid.hobj.nspace, key);
+
+  if (oid.hobj.get_key().length()) {
+    // is a key... could be < = or >.
+    // (ASCII chars < = and > sort in that order, yay)
+    if (oid.hobj.get_key() < oid.hobj.oid.name) {
+      key->append("<");
+      append_escaped(oid.hobj.get_key(), key);
+      append_escaped(oid.hobj.oid.name, key);
+    } else if (oid.hobj.get_key() > oid.hobj.oid.name) {
+      key->append(">");
+      append_escaped(oid.hobj.get_key(), key);
+      append_escaped(oid.hobj.oid.name, key);
+    } else {
+      // same as no key
+      key->append("=");
+      append_escaped(oid.hobj.oid.name, key);
+    }
+  } else {
+    // no key
+    key->append("=");
+    append_escaped(oid.hobj.oid.name, key);
+  }
+
+  _key_encode_u64(oid.hobj.snap, key);
+  _key_encode_u64(oid.generation, key);
+}
+
+int get_key_object(string& key, ghobject_t* oid) {
+  int r;
+  const char *p = key.c_str();
+
+  if (key.length() < 2 + 8 + 4)
+    return -2;
+  p = _key_decode_shard(p, &oid->shard_id);
+
+  uint64_t pool;
+  p = _key_decode_u64(p, &pool);
+  oid->hobj.pool = pool - 0x8000000000000000ull;
+
+  unsigned hash;
+  p = _key_decode_u32(p, &hash);
+
+  oid->hobj.set_bitwise_key_u32(hash);
+  if (*p != '.')
+    return -5;
+  ++p;
+
+  r = decode_escaped(p, &oid->hobj.nspace);
+  if (r < 0)
+    return -6;
+  p += r + 1;
+
+  if (*p == '=') {
+    // no key
+    ++p;
+    r = decode_escaped(p, &oid->hobj.oid.name);
+    if (r < 0)
+      return -7;
+    p += r + 1;
+  } else if (*p == '<' || *p == '>') {
+    // key + name
+    ++p;
+    string okey;
+    r = decode_escaped(p, &okey);
+    if (r < 0)
+      return -8;
+    p += r + 1;
+    r = decode_escaped(p, &oid->hobj.oid.name);
+    if (r < 0)
+      return -9;
+    p += r + 1;
+    oid->hobj.set_key(okey);
+  } else {
+    // malformed
+    return -10;
+  }
+
+  p = _key_decode_u64(p, &oid->hobj.snap.val);
+  p = _key_decode_u64(p, &oid->generation);
+  if (*p) {
+    // if we get something other than a null terminator here, 
+    // something goes wrong.
+    return -12;
+  }  
+
+  return 0;
 }
 
 int CStore::validate_hobject_key(const hobject_t &obj) const
@@ -559,7 +751,9 @@ CStore::CStore(const std::string &base, const std::string &jdev, osflagbits_t fl
   m_fs_type(0),
   m_filestore_max_inline_xattr_size(0),
   m_filestore_max_inline_xattrs(0),
-  m_filestore_max_xattr_value_size(0)
+  m_filestore_max_xattr_value_size(0),
+  m_block_size(g_conf->cstore_block_size),
+  m_compression_type(g_confi->cstore_compression_type)
 {
   m_filestore_kill_at.set(g_conf->filestore_kill_at);
   for (int i = 0; i < m_ondisk_finisher_num; ++i) {
@@ -2968,51 +3162,90 @@ int CStore::stat(
   }
 }
 
-int CStore::read(
-  const coll_t& _cid,
-  const ghobject_t& oid,
+int _read_compressed_data(
+  FDRef fd,
+  ObjnodeRef obj,
   uint64_t offset,
   size_t len,
   bufferlist& bl,
   uint32_t op_flags,
-  bool allow_eio)
-{
-  int got;
-  tracepoint(objectstore, read_enter, _cid.c_str(), offset, len);
-  const coll_t& cid = !_need_temp_object_collection(_cid, oid) ? _cid : _cid.get_temp();
+  bool allow_eio) {
 
-  dout(15) << "read " << cid << "/" << oid << " " << offset << "~" << len << dendl;
+  size_t read_len;
+  //get compressed file size
+  struct stat st;
+  memset(st, 0, sizeof(struct stat));
+  int r = fstat(**fd, &st);
+  aasert(r == 0);
+  read_len = st.st_size;
 
-  FDRef fd;
-  int r = lfn_open(cid, oid, false, &fd);
+  bufferptr bptr(read_len);
+  r = safe_pread(**fd, bptr.c_str(), 0, read_len);
   if (r < 0) {
-    dout(10) << "CStore::read(" << cid << "/" << oid << ") open error: "
-	     << cpp_strerror(r) << dendl;
+    dout(0) << "CStore read compressed data error " << r << dendl;
     return r;
   }
-
-  if (offset == 0 && len == 0) {
-    struct stat st;
-    memset(&st, 0, sizeof(struct stat));
-    int r = ::fstat(**fd, &st);
-    assert(r == 0);
-    len = st.st_size;
+  bptr.set_length(read_len);
+  bufferlist cbl, ucbl;
+  cbl.clear();
+  cbl.push_back(std::move(bptr));
+  Compressor *c = Compressor::create(g_ceph_context, obj->get_alg_str());
+  r = c->uncompress(cbl, ucbl);
+  if (r < 0) {
+    dout(0) << "uncompress data error " << r << dendl;
+    return r;
+  }
+  if (g_conf->cstore_debug) {
   }
 
+  int s = 0;
+  int next;
+  uint32_t blk_off = 0;
+  while((next=obj->get_next_set_bit(s)) != -1) {
+    if (next == s) {
+      // append data
+      bufferlist substr;
+      substr.substr_of(ucbl, blk_off, m_block_size);
+      bl.append(substr);
+      blk_off += m_block_size;
+      s = next + 1;
+    } else if(next > s) {
+      // append zero
+      bl.append_zero(m_block_size * (next - s));
+      s = next;
+    } else {
+      // error
+      assert(0 == "read uncomressed error");
+    }
+  }
+  assert(bl.length() == len);
+  r = bl.length():
+  return r;
+}
+
+int _read_uncompressed_data(
+  FDRef fd,
+  uint64_t offset,
+  size_t len,
+  bufferlist& bl,
+  uint32_t op_flags,
+  bool allow_eio) {
+
+  int got;
 #ifdef HAVE_POSIX_FADVISE
   if (op_flags & CEPH_OSD_OP_FLAG_FADVISE_RANDOM)
-    posix_fadvise(**fd, offset, len, POSIX_FADV_RANDOM);
+    posix_fadvise(fd, offset, len, POSIX_FADV_RANDOM);
   if (op_flags & CEPH_OSD_OP_FLAG_FADVISE_SEQUENTIAL)
-    posix_fadvise(**fd, offset, len, POSIX_FADV_SEQUENTIAL);
+    posix_fadvise(fd, offset, len, POSIX_FADV_SEQUENTIAL);
 #endif
 
   bufferptr bptr(len);  // prealloc space for entire read
   got = safe_pread(**fd, bptr.c_str(), len, offset);
   if (got < 0) {
-    dout(10) << "CStore::read(" << cid << "/" << oid << ") pread error: " << cpp_strerror(got) << dendl;
+    dout(10) << "CStore::read " << fd << " pread error: " << cpp_strerror(got) << dendl;
     lfn_close(fd);
     if (!(allow_eio || !m_filestore_fail_eio || got != -EIO)) {
-      derr << "CStore::read(" << cid << "/" << oid << ") pread error: " << cpp_strerror(got) << dendl;
+      derr << "CStore::read " << fd << " pread error: " << cpp_strerror(got) << dendl;
       assert(0 == "eio on pread");
     }
     return got;
@@ -3032,10 +3265,70 @@ int CStore::read(
     ostringstream ss;
     int errors = backend->_crc_verify_read(**fd, offset, got, bl, &ss);
     if (errors != 0) {
-      dout(0) << "CStore::read " << cid << "/" << oid << " " << offset << "~"
+      dout(0) << "CStore::read " << fd << " " << offset << "~"
 	      << got << " ... BAD CRC:\n" << ss.str() << dendl;
       assert(0 == "bad crc on read");
     }
+  }
+  return got;
+}
+
+int CStore::read(
+  const coll_t& _cid,
+  const ghobject_t& oid,
+  uint64_t offset,
+  size_t len,
+  bufferlist& bl,
+  uint32_t op_flags,
+  bool allow_eio)
+{
+  tracepoint(objectstore, read_enter, _cid.c_str(), offset, len);
+  const coll_t& cid = !_need_temp_object_collection(_cid, oid) ? _cid : _cid.get_temp();
+
+  dout(15) << "read " << cid << "/" << oid << " " << offset << "~" << len << dendl;
+
+  set<string> keys;
+  map<string, bufferlist> values;
+  ObjnodeRef obj_node;
+  keys.insert(OBJ_DATA);
+  r = object_map->get_values(oid, keys, &values);
+  if (r < 0) {
+    return r;
+  } else {
+    bufferlist::iterator p = values[OBJ_DATA].begin();
+    objnode *n;
+    ::decode(n, p);
+    obj_node.reset(n);
+  }
+
+  FDRef fd;
+  int r = lfn_open(cid, oid, false, &fd);
+  if (r < 0) {
+    dout(10) << "CStore::read(" << cid << "/" << oid << ") open error: "
+	     << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  if (offset == 0 && len == 0) {
+    len = obj_node->size;
+  }
+
+  if (obj_node->is_compressed()) {
+    dout(10) << "CStore::read " << cid << "/" << oid << " " << offset << "~"
+             << len << " from compressed data" << dendl;
+    bufferlist abl;
+    got = _read_compressed_data(fd, obj_node, 0, obj_node->size, abl, op_flags, allow_eio);
+    assert(abl.length() == obj_node->size);
+    _write_uncompressed_data(fd, 0, obj_node->size, abl, op_flags);
+    obj_node->set_alg_type(0);
+    map<string, bufferlist> values;
+    bufferlist b = ::encode(*obj_node, b);
+    values[OBJDATA] = b;
+    object_map->set_keys(oid, values, NULL);
+  } else {
+    dout(10) << "CStore::read " << cid << "/" << oid << " " << offset << "~"
+             << len << " from uncompressed data" << dendl;
+    got = _read_uncompressed_data(fd, offset, len, bl, op_flags, allow_eio);
   }
 
   lfn_close(fd);
@@ -3051,108 +3344,41 @@ int CStore::read(
   }
 }
 
-int CStore::_do_fiemap(int fd, uint64_t offset, size_t len,
-                          map<uint64_t, uint64_t> *m)
-{
-  struct fiemap *fiemap = NULL;
-  uint64_t i;
-  struct fiemap_extent *extent = NULL;
-  int r = 0;
-
-  r = backend->do_fiemap(fd, offset, len, &fiemap);
-  if (r < 0)
-    return r;
-
-  if (fiemap->fm_mapped_extents == 0) {
-    free(fiemap);
+int CStore::_do_fiemap(const coll_t& _cid, const gobject_t& oid
+                        uint64_t offset, size_t len,
+			map<uint64_t, uint64_t>& exomap) {
+  set<string> keys;
+  map<string, bufferlist> values;
+  keys.insert(OBJDATA);
+  objnode node;
+  int r = object_map->get_values(oid, keys, &values);
+  if (r < 0) {
+    dout(0) << "cannot get object data" << dendl;
     return r;
   }
-
-  extent = &fiemap->fm_extents[0];
-
-  /* start where we were asked to start */
-  if (extent->fe_logical < offset) {
-    extent->fe_length -= offset - extent->fe_logical;
-    extent->fe_logical = offset;
-  }
-
-  i = 0;
-
-  while (i < fiemap->fm_mapped_extents) {
-    struct fiemap_extent *next = extent + 1;
-
-    dout(10) << "CStore::fiemap() fm_mapped_extents=" << fiemap->fm_mapped_extents
-             << " fe_logical=" << extent->fe_logical << " fe_length=" << extent->fe_length << dendl;
-
-    /* try to merge extents */
-    while ((i < fiemap->fm_mapped_extents - 1) &&
-           (extent->fe_logical + extent->fe_length == next->fe_logical)) {
-        next->fe_length += extent->fe_length;
-        next->fe_logical = extent->fe_logical;
-        extent = next;
-        next = extent + 1;
-        i++;
+  bufferlist::iterator p = values[OBJDATA].begin();
+  ::decode(node, p);
+  int s = offset / m_block_size;
+  int end = 0;
+  int e = (offset + len) / m_block_size + 1;
+  s = node.get_next_set_bit(s);
+  if (offset > s * m_block_size)
+    exomap[offset] = m_block_size * (s + 1) - offset;
+  else
+    exomap[s * m_block_size] = m_block_size;
+  ++s;
+  while((s = node.get_next_set_bit(s)) != -1 && s < e) {
+    if (end == s * m_block_size) {
+      exomap.rbegin()->second = m_block_size + exomap.rbegin()->second;
+      end += m_block_size;
+      ++s;
+    } else {
+      exomap[m * m_block_size] = m_block_size - (off);
+      end = (s+1) * m_block_size;
+      ++s;
     }
-
-    if (extent->fe_logical + extent->fe_length > offset + len)
-      extent->fe_length = offset + len - extent->fe_logical;
-    (*m)[extent->fe_logical] = extent->fe_length;
-    i++;
-    extent++;
   }
-  free(fiemap);
-
   return r;
-}
-
-int CStore::_do_seek_hole_data(int fd, uint64_t offset, size_t len,
-                                  map<uint64_t, uint64_t> *m)
-{
-#if defined(__linux__) && defined(SEEK_HOLE) && defined(SEEK_DATA)
-  off_t hole_pos, data_pos;
-  int r = 0;
-
-  // If lseek fails with errno setting to be ENXIO, this means the current
-  // file offset is beyond the end of the file.
-  off_t start = offset;
-  while(start < (off_t)(offset + len)) {
-    data_pos = lseek(fd, start, SEEK_DATA);
-    if (data_pos < 0) {
-      if (errno == ENXIO)
-        break;
-      else {
-        r = -errno;
-        dout(10) << "failed to lseek: " << cpp_strerror(r) << dendl;
-	return r;
-      }
-    } else if (data_pos > (off_t)(offset + len)) {
-      break;
-    }
-
-    hole_pos = lseek(fd, data_pos, SEEK_HOLE);
-    if (hole_pos < 0) {
-      if (errno == ENXIO) {
-        break;
-      } else {
-        r = -errno;
-        dout(10) << "failed to lseek: " << cpp_strerror(r) << dendl;
-	return r;
-      }
-    }
-
-    if (hole_pos >= (off_t)(offset + len)) {
-      (*m)[data_pos] = offset + len - data_pos;
-      break;
-    }
-    (*m)[data_pos] = hole_pos - data_pos;
-    start = hole_pos;
-  }
-
-  return r;
-#else
-  (*m)[offset] = len;
-  return 0;
-#endif
 }
 
 int CStore::fiemap(const coll_t& _cid, const ghobject_t& oid,
@@ -3161,39 +3387,10 @@ int CStore::fiemap(const coll_t& _cid, const ghobject_t& oid,
 {
   tracepoint(objectstore, fiemap_enter, _cid.c_str(), offset, len);
   const coll_t& cid = !_need_temp_object_collection(_cid, oid) ? _cid : _cid.get_temp();
+  map<uint64_t, uint64_t> exomap;
 
-  if ((!backend->has_seek_data_hole() && !backend->has_fiemap()) ||
-      len <= (size_t)m_filestore_fiemap_threshold) {
-    map<uint64_t, uint64_t> m;
-    m[offset] = len;
-    ::encode(m, bl);
-    return 0;
-  }
 
   dout(15) << "fiemap " << cid << "/" << oid << " " << offset << "~" << len << dendl;
-
-  map<uint64_t, uint64_t> exomap;
-  FDRef fd;
-
-  int r = lfn_open(cid, oid, false, &fd);
-  if (r < 0) {
-    dout(10) << "read couldn't open " << cid << "/" << oid << ": " << cpp_strerror(r) << dendl;
-    goto done;
-  }
-
-  if (backend->has_seek_data_hole()) {
-    dout(15) << "seek_data/seek_hole " << cid << "/" << oid << " " << offset << "~" << len << dendl;
-    r = _do_seek_hole_data(**fd, offset, len, &exomap);
-  } else if (backend->has_fiemap()) {
-    dout(15) << "fiemap ioctl" << cid << "/" << oid << " " << offset << "~" << len << dendl;
-    r = _do_fiemap(**fd, offset, len, &exomap);
-  }
-
-  lfn_close(fd);
-
-  if (r >= 0) {
-    ::encode(exomap, bl);
-  }
 
 done:
 
@@ -3208,7 +3405,13 @@ int CStore::_remove(const coll_t& cid, const ghobject_t& oid,
 		       const SequencerPosition &spos)
 {
   dout(15) << "remove " << cid << "/" << oid << dendl;
+
+  set<string> keys;
+  keys.insert(OBJ_DATA)
   int r = lfn_unlink(cid, oid, spos);
+
+  r = object_map->rm_keys(oid, keys, NULL);
+
   dout(10) << "remove " << cid << "/" << oid << " = " << r << dendl;
   return r;
 }
@@ -3226,14 +3429,62 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
 {
   dout(15) << "touch " << cid << "/" << oid << dendl;
 
+  set<string> keys;
+  map<string, bufferlist> values;
+  objnode meta;
+  keys.insert(OBJ_DATA);
+  int r = object_map->get_values(oid, keys, values);
+  if (r < 0) {
+    return r;
+  } else {
+    bufferlist::iterator p = values[OBJ_DATA].begin();
+    ::decode(meta, p);
+  }
   FDRef fd;
-  int r = lfn_open(cid, oid, true, &fd);
+  r = lfn_open(cid, oid, true, &fd);
   if (r < 0) {
     return r;
   } else {
     lfn_close(fd);
   }
+
+  r = object_map->set_keys(oid, values, NULL);
   dout(10) << "touch " << cid << "/" << oid << " = " << r << dendl;
+  return r;
+}
+
+int CStore::_write_compressed_data(FDRef fd, ObjnodeRef obj, uint64_t offset,
+                                     size_t len, const bufferlist& bl,
+				     uint32_t fadvise_flags) {
+  bufferlist cbuf;
+
+  int r = _read_compressed_data(fd, obj, 0, obj->size, cbuf, 0, 0);
+  if (r < 0) {
+    return r;
+  } else {
+    assert(cbuf.length() == obj->size);
+  }
+
+  r = cbuf.wirte_fd(**fd, 0);
+  if(r < 0) 
+    return r;
+
+  r = bl.write_fd(**fd, offset);
+  if (r == 0)
+    r = bl.length();
+
+  return r;
+}
+
+int CStore::_write_uncompressed_data(FDRef fd, uint64_t offset,
+                                       size_t len, const bufferlist& bl,
+				       uint32_t fadvise_flags) {
+  int r;
+  // write
+  r = bl.write_fd(**fd, offset);
+  if (r == 0)
+    r = bl.length();
+
   return r;
 }
 
@@ -3244,6 +3495,21 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
   dout(15) << "write " << cid << "/" << oid << " " << offset << "~" << len << dendl;
   int r;
 
+  set<string> keys;
+  map<string, bufferlist> values;
+  ObjnodeRef obj;
+  keys.insert(OBJ_DATA);
+  r = object_map->get_values(oid, keys, &values)
+  if (r < 0) {
+    if (r == -ENOENT) {
+      obj_node* t = new objnode(cid, oid, m_block_size, offset_len);
+      obj.reset(t);
+      obj->set_alg_type(0);
+    } else {
+      dout(0) << "cannot find object data " << dendl;
+      return r;
+    }
+  }
   FDRef fd;
   r = lfn_open(cid, oid, true, &fd);
   if (r < 0) {
@@ -3253,10 +3519,13 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
     goto out;
   }
 
-  // write
-  r = bl.write_fd(**fd, offset);
-  if (r == 0)
-    r = bl.length();
+  if (obj->is_compressed()) {
+    // write compressed data
+    r = _write_compressed_data(fd, obj, offset, len, bl, fadvise_flags);
+  } else {
+    // write uncompressed data
+    r = _write_uncompressed_data(fd, offset, len, bl, fadvise_flags);
+  }
 
   if (r >= 0 && m_filestore_sloppy_crc) {
     int rc = backend->_crc_update_write(**fd, offset, len, bl);
@@ -3271,8 +3540,15 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
     wbthrottle.queue_wb(fd, oid, offset, len,
         fadvise_flags & CEPH_OSD_OP_FLAG_FADVISE_DONTNEED);
   }
- 
   lfn_close(fd);
+
+  obj.update_blocks(offset, len);
+
+  bufferlist bt;
+  map<string, bufferlist> values;
+  ::encode(obj, bt);
+  values[OBJ_DATA] = bt;
+  r = object_map->set_keys(oid, values, NULL);
 
  out:
   dout(10) << "write " << cid << "/" << oid << " " << offset << "~" << len << " = " << r << dendl;

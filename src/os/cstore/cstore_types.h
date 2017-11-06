@@ -33,8 +33,9 @@ public:
   uint32_t get_size() {return size;}
   void set_alg_type(uint8_t ntype);
   uint8_t get_alg_type() {return c_type;}
+  string get_alg_str();
   void update_blocks(uint32_t off, uint32_t len);
-  int get_next_set_block(uint32_t off, uint32_t *biti);
+  int get_next_set_block(int start);
   bool is_compressed();
   void encode(bufferlist &bl) const;
   void decode(bufferlist::iterator &bl);
@@ -47,6 +48,7 @@ public:
   uint8_t c_type;
   bufferlist blocks;
 };
+typedef boost::intrusive<objnode> ObjnodeRef;
 WRITE_CLASS_ENCODER(objnode)
 
 #endif

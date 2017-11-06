@@ -59,23 +59,28 @@ void objnode::update_blocks(uint32_t off, uint32_t len) {
   }
 }
 
-int objnode::get_next_set_block(uint32_t off, uint32_t* biti) {
-  uint32_t next_off = P2ROUNDUP(off, block_size);
-  if ((off > size) || (next_off >= size)) return -1;
-  uint32_t s = next_off / block_size;
-  uint32_t e = P2ROUNDUP(size, block_size) / block_size;
+int objnode::get_next_set_block(int start) {
   char* p = blocks.c_str();
-  for(; s<e; s++) {
-    if (p[(s / 8)] & (1 << (s % 8))) {
-      *biti = s;
-      return 0;
+  int bits = data.length() << 3;
+  while(start < bits) {}
+    if (p[(start / 8)] & (1 << (start % 8))) {
+      return start;
     }
+    ++start;
   }
   return -1;
 }
 
 void objnode::set_alg_type(uint8_t ntype) {
   c_type = ntype;
+}
+
+string objnode::get_alg_str() {
+  switch(c_type) {
+    case 0: return "none";
+    case 1: return "snappy";
+    default: return "???";
+  }
 }
 
 bool objnode::is_compressed() {

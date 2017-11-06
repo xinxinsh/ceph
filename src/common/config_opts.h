@@ -994,6 +994,10 @@ OPTION(kstore_onode_map_size, OPT_U64, 1024)
 OPTION(kstore_cache_tails, OPT_BOOL, true)
 OPTION(kstore_default_stripe_size, OPT_INT, 65536)
 
+//CStore Configs
+OPTION(cstore_compression_type, OPT_STR, "snappy")
+OPTION(cstore_block_size, OPT_U64, 4*1024)
+
 OPTION(filestore_omap_backend, OPT_STR, "leveldb")
 
 OPTION(filestore_debug_disable_sharded_check, OPT_BOOL, false)

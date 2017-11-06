@@ -38,6 +38,7 @@ libos_a_SOURCES = \
 	os/cstore/JournalingObjectStore.cc \
 	os/cstore/LFNIndex.cc \
 	os/cstore/WBThrottle.cc \
+	os/cstore/kv.cc \
 	os/fs/FS.cc \
 	os/kstore/kv.cc \
 	os/kstore/KStore.cc \
@@ -123,6 +124,7 @@ noinst_HEADERS += \
 	os/cstore/WBThrottle.h \
 	os/cstore/XfsCStoreBackend.h \
 	os/cstore/ZFSCStoreBackend.h \
+	os/cstore/kv.h \
 	os/cstore/cstore_types.h \
 	os/fs/btrfs_ioctl.h \
 	os/fs/FS.h \

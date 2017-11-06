@@ -41,6 +41,7 @@ using namespace std;
 #include "SequencerPosition.h"
 #include "FDCache.h"
 #include "WBThrottle.h"
+#include "cstore_types.h"
 
 #include "include/uuid.h"
 
@@ -538,6 +539,22 @@ public:
     struct stat *st,
     bool allow_eio = false);
   using ObjectStore::read;
+  int _read_compressed_data(
+    FDRef fd,
+    objnode& obj,
+    uint64_t offset,
+    size_t len,
+    bufferlist& bl,
+    uint32_t op_flags = 0,
+    bool allow_eio = false);
+  int _read_uncompressed_data(
+    FDRef fd,
+    uint64_t offset,
+    size_t len,
+    size_t len,
+    bufferlist& bl,
+    uint32_t op_flags = 0,
+    bool allow_eio = false);
   int read(
     const coll_t& cid,
     const ghobject_t& oid,
@@ -546,14 +563,17 @@ public:
     bufferlist& bl,
     uint32_t op_flags = 0,
     bool allow_eio = false);
-  int _do_fiemap(int fd, uint64_t offset, size_t len,
-                 map<uint64_t, uint64_t> *m);
-  int _do_seek_hole_data(int fd, uint64_t offset, size_t len,
-                         map<uint64_t, uint64_t> *m);
   using ObjectStore::fiemap;
+  int _do_fiemap(const coll_t& _cid, const gobject_t& oid
+                        uint64_t offset, size_t len,
+			map<uint64_t, uint64_t>& exomap);
   int fiemap(const coll_t& cid, const ghobject_t& oid, uint64_t offset, size_t len, bufferlist& bl);
 
   int _touch(const coll_t& cid, const ghobject_t& oid);
+  int _write_compressed_data(FDRef fd, objnode& obj, uint64_t offset, size_t len,
+      const bufferlist& bl, uint32_t fadvise_flags);
+  int _write_uncompressed_data(FDRef fd, uint64_t offset, size len,
+      const bufferlist& bl, uint32_t fadvise_flags);
   int _write(const coll_t& cid, const ghobject_t& oid, uint64_t offset, size_t len,
 	      const bufferlist& bl, uint32_t fadvise_flags = 0);
   int _zero(const coll_t& cid, const ghobject_t& oid, uint64_t offset, size_t len);
@@ -740,6 +760,8 @@ private:
   uint32_t m_filestore_max_inline_xattr_size;
   uint32_t m_filestore_max_inline_xattrs;
   uint32_t m_filestore_max_xattr_value_size;
+  uint64_t m_block_size;
+  std::string m_compression_type;
 
   CFSSuperblock superblock;
 

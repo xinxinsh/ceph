@@ -50,27 +50,22 @@ TEST_F(cstore_types_objnode_test, objnode_set_alg_type) {
 }
 
 TEST_F(cstore_types_objnode_test, objnode_blocks) {
-  uint32_t first_set;
   int r;
   uint32_t size = 4 * 1024 * 1024;
   on->set_size(size);
   on->update_blocks(52210, 40977);
-  r = on->get_next_set_block(0, &first_set);
-  EXPECT_EQ(0, r);
-  EXPECT_EQ(12, first_set);
-  on->get_next_set_block(89091, &first_set);
-  EXPECT_EQ(0, r);
-  EXPECT_EQ(22, first_set);
-  r = on->get_next_set_block(100000, &first_set);
+  r = on->get_next_set_block(0);
+  EXPECT_EQ(12, r);
+  r = on->get_next_set_block(22);
+  EXPECT_EQ(22, r);
+  r = on->get_next_set_block(24);
   EXPECT_EQ(-1, r);
   on->update_blocks(52210, 42977);
-  r = on->get_next_set_block(0, &first_set);
-  EXPECT_EQ(0, r);
-  EXPECT_EQ(12, first_set);
-  r = on->get_next_set_block(91091, &first_set);
-  EXPECT_EQ(0, r);
-  EXPECT_EQ(23, first_set);
-  r = on->get_next_set_block(100000, &first_set);
+  r = on->get_next_set_block(0);
+  EXPECT_EQ(12, r);
+  r = on->get_next_set_block(23);
+  EXPECT_EQ(23, r);
+  r = on->get_next_set_block(25);
   EXPECT_EQ(-1, r);
 }
 
