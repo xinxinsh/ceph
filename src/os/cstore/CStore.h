@@ -41,6 +41,7 @@ using namespace std;
 #include "SequencerPosition.h"
 #include "FDCache.h"
 #include "WBThrottle.h"
+#include "cstore_types.h"
 
 #include "include/uuid.h"
 
@@ -538,6 +539,21 @@ public:
     struct stat *st,
     bool allow_eio = false);
   using ObjectStore::read;
+  int _read_compressed_data(
+    FDRef fd,
+    ObjnodeRef obj,
+    uint64_t offset,
+    size_t len,
+    bufferlist& bl,
+    uint32_t op_flags = 0,
+    bool allow_eio = false);
+  int _read_uncompressed_data(
+    FDRef fd,
+    uint64_t offset,
+    size_t len,
+    bufferlist& bl,
+    uint32_t op_flags = 0,
+    bool allow_eio = false);
   int read(
     const coll_t& cid,
     const ghobject_t& oid,
@@ -546,14 +562,19 @@ public:
     bufferlist& bl,
     uint32_t op_flags = 0,
     bool allow_eio = false);
-  int _do_fiemap(int fd, uint64_t offset, size_t len,
-                 map<uint64_t, uint64_t> *m);
-  int _do_seek_hole_data(int fd, uint64_t offset, size_t len,
-                         map<uint64_t, uint64_t> *m);
   using ObjectStore::fiemap;
+  int _do_fiemap(const coll_t& _cid, const ghobject_t& oid,
+                        uint64_t offset, size_t len,
+			map<uint64_t, uint64_t>& exomap);
+  int _do_fiemap_full(int fd, map<uint64_t, uint64_t>& m);
+  int _do_seek_hole_data_full(int fd, map<uint64_t, uint64_t>& m);
   int fiemap(const coll_t& cid, const ghobject_t& oid, uint64_t offset, size_t len, bufferlist& bl);
 
   int _touch(const coll_t& cid, const ghobject_t& oid);
+  int _write_compressed_data(FDRef fd, ObjnodeRef obj, uint64_t offset, size_t len,
+      const bufferlist& bl, uint32_t fadvise_flags);
+  int _write_uncompressed_data(FDRef fd, uint64_t offset, size_t len,
+      const bufferlist& bl, uint32_t fadvise_flags);
   int _write(const coll_t& cid, const ghobject_t& oid, uint64_t offset, size_t len,
 	      const bufferlist& bl, uint32_t fadvise_flags = 0);
   int _zero(const coll_t& cid, const ghobject_t& oid, uint64_t offset, size_t len);
@@ -563,9 +584,10 @@ public:
   int _clone_range(const coll_t& cid, const ghobject_t& oldoid, const ghobject_t& newoid,
 		   uint64_t srcoff, uint64_t len, uint64_t dstoff,
 		   const SequencerPosition& spos);
-  int _do_clone_range(int from, int to, uint64_t srcoff, uint64_t len, uint64_t dstoff);
-  int _do_sparse_copy_range(int from, int to, uint64_t srcoff, uint64_t len, uint64_t dstoff);
-  int _do_copy_range(int from, int to, uint64_t srcoff, uint64_t len, uint64_t dstoff, bool skip_sloppycrc=false);
+  int _do_clone_full(int from, int to);
+  int _do_sparse_copy_full(int from, int to);
+  int _do_copy_full(int from, int to, bool skip_sloppycrc=false);
+  int _do_copy_range(int from, int to, uint64_t srcoff, uint64_t len, uint64_t dstoff);
   int _remove(const coll_t& cid, const ghobject_t& oid, const SequencerPosition &spos);
 
   int _fgetattr(int fd, const char *name, bufferptr& bp);
@@ -740,6 +762,8 @@ private:
   uint32_t m_filestore_max_inline_xattr_size;
   uint32_t m_filestore_max_inline_xattrs;
   uint32_t m_filestore_max_xattr_value_size;
+  uint32_t m_block_size;
+  std::string m_compression_type;
 
   CFSSuperblock superblock;
 
@@ -791,11 +815,11 @@ protected:
   const string& get_current_path() {
     return cstore->current_fn;
   }
-  int _copy_range(int from, int to, uint64_t srcoff, uint64_t len, uint64_t dstoff) {
+  int _copy_full(int from, int to) {
     if (has_fiemap() || has_seek_data_hole()) {
-      return cstore->_do_sparse_copy_range(from, to, srcoff, len, dstoff);
+      return cstore->_do_sparse_copy_full(from, to);
     } else {
-      return cstore->_do_copy_range(from, to, srcoff, len, dstoff);
+      return cstore->_do_copy_full(from, to);
     }
   }
   int get_crc_block_size() {
@@ -821,7 +845,7 @@ public:
   virtual bool has_fiemap() = 0;
   virtual bool has_seek_data_hole() = 0;
   virtual int do_fiemap(int fd, off_t start, size_t len, struct fiemap **pfiemap) = 0;
-  virtual int clone_range(int from, int to, uint64_t srcoff, uint64_t len, uint64_t dstoff) = 0;
+  virtual int clone_full(int from, int to) = 0;
   virtual int set_alloc_hint(int fd, uint64_t hint) = 0;
   virtual bool has_splice() const = 0;
 

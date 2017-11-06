@@ -113,11 +113,11 @@ bool sorted(const vector<ghobject_t> &in, bool bitwise) {
 TEST_P(StoreTest, collect_metadata) {
   map<string,string> pm;
   store->collect_metadata(&pm);
-  if (GetParam() == string("filestore")) {
-    ASSERT_NE(pm.count("filestore_backend"), 0u);
-    ASSERT_NE(pm.count("filestore_f_type"), 0u);
-    ASSERT_NE(pm.count("backend_filestore_partition_path"), 0u);
-    ASSERT_NE(pm.count("backend_filestore_dev_node"), 0u);
+  if (GetParam() == string("cstore")) {
+    ASSERT_NE(pm.count("cstore_backend"), 0u);
+    ASSERT_NE(pm.count("cstore_f_type"), 0u);
+    ASSERT_NE(pm.count("backend_cstore_partition_path"), 0u);
+    ASSERT_NE(pm.count("backend_cstore_dev_node"), 0u);
   }
 }
 
@@ -1167,6 +1167,64 @@ TEST_P(StoreTest, MultipoolListTest) {
   }
 }
 
+TEST_P(StoreTest, CloneTruncateTest) {
+  ObjectStore::Sequencer osr("test");
+  int r;
+  coll_t cid;
+  {
+    ObjectStore::Transaction t;
+    t.create_collection(cid, 0);
+    cerr << "Creating collection " << cid << std::endl;
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+  ghobject_t hoid(hobject_t(sobject_t("Object 1", CEPH_NOSNAP),
+			    "key", 123, -1, ""));
+  {
+    bufferlist bl;
+    bl.append_zero(249856);
+    ObjectStore::Transaction t;
+    t.touch(cid, hoid);
+    t.write(cid, hoid, 12288, 249856, bl);
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+
+  {
+    ObjectStore::Transaction t;
+    t.truncate(cid, hoid, 267017);
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+
+  ghobject_t hoid2(hobject_t(sobject_t("Object 2", CEPH_NOSNAP),
+			     "key", 123, -1, ""));
+  {
+    ObjectStore::Transaction t;
+    t.clone(cid, hoid, hoid2);
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+  
+  {
+    bufferlist newdata;
+    r = store->read(cid, hoid, 0, 0, newdata);
+    ASSERT_EQ(r, 267017);
+    ASSERT_EQ(newdata.length(), 267017);
+    ASSERT_TRUE(newdata.is_zero());
+  }
+
+  {
+    ObjectStore::Transaction t;
+    t.remove(cid, hoid);
+    t.remove(cid, hoid2);
+    t.remove_collection(cid);
+    cerr << "Cleaning" << std::endl;
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+}
+
 TEST_P(StoreTest, SimpleCloneTest) {
   ObjectStore::Sequencer osr("test");
   int r;
@@ -1485,7 +1543,7 @@ TEST_P(StoreTest, OmapSimple) {
     map<string,bufferlist> r;
     store->omap_get(cid, hoid, &h, &r);
     ASSERT_TRUE(h.contents_equal(header));
-    ASSERT_EQ(r.size(), km.size());
+    ASSERT_EQ(r.size(), km.size() + 1);
     cout << "r: " << r << std::endl;
   }
   // test iterator with seek_to_first
@@ -1496,7 +1554,7 @@ TEST_P(StoreTest, OmapSimple) {
       r[iter->key()] = iter->value();
     }
     cout << "r: " << r << std::endl;
-    ASSERT_EQ(r.size(), km.size());
+    ASSERT_EQ(r.size(), km.size() + 1);
   }
   // test iterator with initial lower_bound
   {
@@ -1506,7 +1564,7 @@ TEST_P(StoreTest, OmapSimple) {
       r[iter->key()] = iter->value();
     }
     cout << "r: " << r << std::endl;
-    ASSERT_EQ(r.size(), km.size());
+    ASSERT_EQ(r.size(), km.size() + 1);
   }
   {
     ObjectStore::Transaction t;
@@ -1561,7 +1619,7 @@ TEST_P(StoreTest, OmapCloneTest) {
     bufferlist h;
     store->omap_get(cid, hoid2, &h, &r);
     ASSERT_TRUE(h.contents_equal(header));
-    ASSERT_EQ(r.size(), km.size());
+    ASSERT_EQ(r.size(), km.size() + 1);
   }
   {
     ObjectStore::Transaction t;
@@ -1881,6 +1939,11 @@ public:
 static void dump_bl_mismatch(bufferlist& expected, bufferlist& actual)
 {
   cout << __func__ << std::endl;
+  if(expected.length() != actual.length()) {
+    cout << "--- buffer lengths mismatch " << std::hex
+         << "expected 0x" << expected.length() << " != actual 0x"
+         << actual.length() << std::dec << std::endl;
+  }
   unsigned offset = 0;
   while (expected[offset] == actual[offset])
     ++offset;
@@ -1948,6 +2011,7 @@ public:
       state->cond.Signal();
 
       bufferlist r2;
+      std::cout << "read object from " << hoid << std::endl;
       r = state->store->read(state->cid, hoid, 0, state->contents[hoid].data.length(), r2);
       if (!state->contents[hoid].data.contents_equal(r2)) {
 	dump_bl_mismatch(state->contents[hoid].data, r2);
@@ -1979,6 +2043,7 @@ public:
         state->available_objects.insert(noid);
       --(state->in_flight);
       bufferlist r2;
+      std::cout << "stash object from " << oid << " to " << noid << std::endl;
       r = state->store->read(
 	state->cid, noid, 0,
 	state->contents[noid].data.length(), r2);
@@ -2014,6 +2079,14 @@ public:
       --(state->in_flight);
       bufferlist r2;
       r = state->store->read(state->cid, noid, 0, state->contents[noid].data.length(), r2);
+      ASSERT_EQ(state->contents[oid].data.length(), state->contents[noid].data.length());
+      ASSERT_EQ(state->contents[noid].data.length(), r2.length());
+      std::cout << "clone object from " << oid << " to " << noid << std::endl;
+      state->contents[oid].data.hexdump(cout);
+      std::cout << " new object data " << std::endl;
+      state->contents[noid].data.hexdump(cout);
+      std::cout << " read new object data " << std::endl;
+      r2.hexdump(cout);
       if (!state->contents[noid].data.contents_equal(r2)) {
 	dump_bl_mismatch(state->contents[noid].data, r2);
 	assert(0 == " mismatch after clone");
@@ -3030,7 +3103,7 @@ TEST_P(StoreTest, OMapTest) {
       ASSERT_TRUE(m.count("7"));
       ASSERT_TRUE(m.count("8"));
       //cout << m << std::endl;
-      ASSERT_EQ(6u, m.size());
+      ASSERT_EQ(7u, m.size());
     }
     {
       ObjectStore::Transaction t;
@@ -3651,11 +3724,7 @@ INSTANTIATE_TEST_CASE_P(
   ObjectStore,
   StoreTest,
   ::testing::Values(
-//   "memstore",
-    "filestore"
-    ));
-//    "bluestore",
-//    "kstore"));
+    "cstore"));
 
 #else
 
@@ -3682,11 +3751,6 @@ int main(int argc, char **argv) {
   g_ceph_context->_conf->set_val("filestore_op_thread_suicide_timeout", "10000");
   g_ceph_context->_conf->set_val("filestore_debug_disable_sharded_check", "true");
   g_ceph_context->_conf->set_val("filestore_fiemap", "true");
-  g_ceph_context->_conf->set_val("bluestore_fsck_on_mount", "true");
-  g_ceph_context->_conf->set_val("bluestore_fsck_on_umount", "true");
-  g_ceph_context->_conf->set_val("bluestore_debug_misc", "true");
-  g_ceph_context->_conf->set_val("bluestore_debug_small_allocations", "4");
-  g_ceph_context->_conf->set_val("bluestore_debug_freelist", "true");
   g_ceph_context->_conf->set_val(
     "enable_experimental_unrecoverable_data_corrupting_features", "*");
   g_ceph_context->_conf->apply_changes(NULL);

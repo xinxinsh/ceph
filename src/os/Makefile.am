@@ -38,6 +38,7 @@ libos_a_SOURCES = \
 	os/cstore/JournalingObjectStore.cc \
 	os/cstore/LFNIndex.cc \
 	os/cstore/WBThrottle.cc \
+	os/cstore/kv.cc \
 	os/fs/FS.cc \
 	os/kstore/kv.cc \
 	os/kstore/KStore.cc \
@@ -63,7 +64,6 @@ endif
 
 if LINUX
 libos_a_SOURCES += os/filestore/BtrfsFileStoreBackend.cc
-libos_a_SOURCES += os/cstore/BtrfsCStoreBackend.cc
 endif
 
 if WITH_LIBXFS
@@ -75,7 +75,6 @@ endif
 
 if WITH_LIBZFS
 libos_a_SOURCES += os/filestore/ZFSFileStoreBackend.cc
-libos_a_SOURCES += os/cstore/ZFSCStoreBackend.cc
 endif
 
 libos_a_CXXFLAGS = ${AM_CXXFLAGS} -I rocksdb/include -fPIC
@@ -106,7 +105,6 @@ noinst_HEADERS += \
 	os/filestore/XfsFileStoreBackend.h \
 	os/filestore/ZFSFileStoreBackend.h \
 	os/cstore/chain_xattr.h \
-	os/cstore/BtrfsCStoreBackend.h \
 	os/cstore/CollectionIndex.h \
 	os/cstore/DBObjectMap.h \
 	os/cstore/FileJournal.h \
@@ -122,7 +120,7 @@ noinst_HEADERS += \
 	os/cstore/SequencerPosition.h \
 	os/cstore/WBThrottle.h \
 	os/cstore/XfsCStoreBackend.h \
-	os/cstore/ZFSCStoreBackend.h \
+	os/cstore/kv.h \
 	os/cstore/cstore_types.h \
 	os/fs/btrfs_ioctl.h \
 	os/fs/FS.h \

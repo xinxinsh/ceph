@@ -24,58 +24,75 @@
 
 ostream& operator<<(ostream& os, objnode& o) {
   os << "block size " << o.block_size << "  ";
-  os << "compression type " << o.c_type << "  ";
-  os << o.blocks << "\n";
+  os << "compression type " << o.c_type << "\n";
+  o.blocks.hexdump(os);
   return os;
 }
 
-objnode::objnode(coll_t &c, ghobject_t &o, uint32_t block_size, uint32_t size) 
+void intrusive_ptr_add_ref(objnode* o) {
+  o->get();
+}
+
+void intrusive_ptr_release(objnode* o) {
+  o->put();
+}
+
+objnode::objnode(const coll_t &c, const ghobject_t &o, uint64_t block_size, uint64_t size) 
 : c(c), o(o), block_size(block_size), size(size), c_type(0) {
-  uint32_t bits = P2ROUNDUP(size, block_size) / block_size;
-  uint32_t len = P2ROUNDUP(bits, 8) / 8;
+  uint64_t bits = P2ROUNDUP(size, block_size) / block_size;
+  uint64_t len = P2ROUNDUP(bits, 8) / 8;
   blocks.append_zero(len);
 }
 
-void objnode::set_size(uint32_t nsize) {
-  if (nsize > size) {
-    size = nsize;
-    uint32_t bits = P2ROUNDUP(size, block_size) / block_size;
-    uint32_t len = P2ROUNDUP(bits, 8) / 8;
-    if (len > blocks.length())
-      blocks.append_zero(len - blocks.length());
+void objnode::set_size(uint64_t nsize) {
+  uint64_t bits = P2ROUNDUP(nsize, block_size) / block_size;
+  uint64_t len = P2ROUNDUP(bits, 8) / 8;
+  if ((nsize > size) && (len > blocks.length())) {
+    blocks.append_zero(len - blocks.length());
+  } else if ((nsize < size) && (len < blocks.length())) {
+    bufferlist bp;
+    bp.substr_of(blocks, 0, len);
+    blocks.clear();
+    blocks.append(bp);
   }
+  size = nsize;
 }
 
-void objnode::update_blocks(uint32_t off, uint32_t len) {
+void objnode::update_blocks(uint64_t off, uint64_t len) {
   if (off + len > size)
     set_size(off+len);
-  uint32_t s = P2ALIGHN(off, block_size) / block_size;
-  uint32_t e = P2ROUNDUP(off+len, block_size) / block_size;
+  uint64_t s = P2ALIGHN(off, block_size) / block_size;
+  uint64_t e = P2ROUNDUP(off+len, block_size) / block_size;
   char * p = blocks.c_str();
   for(; s<e; s++) {
-    uint32_t which_byte = s / 8;
-    uint32_t which_bit = s % 8;
+    uint64_t which_byte = s / 8;
+    uint64_t which_bit = s % 8;
     p[which_byte] |= (1 << which_bit);
   }
 }
 
-int objnode::get_next_set_block(uint32_t off, uint32_t* biti) {
-  uint32_t next_off = P2ROUNDUP(off, block_size);
-  if ((off > size) || (next_off >= size)) return -1;
-  uint32_t s = next_off / block_size;
-  uint32_t e = P2ROUNDUP(size, block_size) / block_size;
+int objnode::get_next_set_block(int start) {
   char* p = blocks.c_str();
-  for(; s<e; s++) {
-    if (p[(s / 8)] & (1 << (s % 8))) {
-      *biti = s;
-      return 0;
+  int bits = blocks.length() << 3;
+  while(start < bits) {
+    if (p[(start / 8)] & (1 << (start % 8))) {
+      return start;
     }
+    ++start;
   }
   return -1;
 }
 
 void objnode::set_alg_type(uint8_t ntype) {
   c_type = ntype;
+}
+
+string objnode::get_alg_str() {
+  switch(c_type) {
+    case 0: return "none";
+    case 1: return "snappy";
+    default: return "???";
+  }
 }
 
 bool objnode::is_compressed() {
@@ -85,7 +102,7 @@ bool objnode::is_compressed() {
 }
 
 void objnode::encode(bufferlist &bl) const {
-  ENCODE_START(2, 2, bl);
+  ENCODE_START(1, 1, bl);
   ::encode(size, bl);
   ::encode(block_size, bl);
   ::encode(c_type, bl);
@@ -94,7 +111,7 @@ void objnode::encode(bufferlist &bl) const {
 }
 
 void objnode::decode(bufferlist::iterator &bl) {
-  DECODE_START(2, bl);
+  DECODE_START(1, bl);
   ::decode(size, bl);
   ::decode(block_size, bl);
   ::decode(c_type, bl);

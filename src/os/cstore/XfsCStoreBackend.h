@@ -31,6 +31,7 @@ public:
   }
   int detect_features();
   int set_alloc_hint(int fd, uint64_t hint);
+  int clone_range(int from, int to, uint64_t srcoff, uint64_t len, uint64_t dstoff);
 };
 
 #endif /* CEPH_XFSFILESTOREBACKEND_H */
