@@ -106,4 +106,3 @@ void objnode::decode(bufferlist::iterator &bl) {
   ::decode(blocks, bl);
   DECODE_FINISH(bl);
 }
-
