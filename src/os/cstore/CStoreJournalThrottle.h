@@ -1,8 +1,8 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#ifndef CEPH_JOURNAL_THROTTLE_H
-#define CEPH_JOURNAL_THROTTLE_H
+#ifndef CEPH_CSTORE_JOURNAL_THROTTLE_H
+#define CEPH_CSTORE_JOURNAL_THROTTLE_H
 
 #include "common/Throttle.h"
 
@@ -15,7 +15,7 @@
 #include <iostream>
 
 /**
- * JournalThrottle
+ * CStoreJournalThrottle
  *
  * Throttle designed to implement dynamic throttling as the journal fills
  * up.  The goal is to not delay ops at all when the journal is relatively
@@ -31,7 +31,7 @@
  * 1) Call get(seq, bytes) before taking the op_queue_throttle
  * 2) Once the journal is flushed, flush(max_op_id_flushed)
  */
-class JournalThrottle {
+class CStoreJournalThrottle {
   BackoffThrottle throttle;
 
   std::mutex lock;
@@ -93,7 +93,7 @@ public:
   uint64_t get_current();
   uint64_t get_max();
 
-  JournalThrottle(
+  CStoreJournalThrottle(
     unsigned expected_concurrency ///< [in] determines size of conds
     ) : throttle(expected_concurrency) {}
 };

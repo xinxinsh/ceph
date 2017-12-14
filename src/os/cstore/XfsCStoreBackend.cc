@@ -146,3 +146,4 @@ int XfsCStoreBackend::set_alloc_hint(int fd, uint64_t hint)
   assert(hint < UINT_MAX);
   return set_extsize(fd, hint);
 }
+

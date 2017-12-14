@@ -10,9 +10,9 @@
 #include "include/memory.h"
 #include <vector>
 
-#include "os/ObjectMap.h"
+#include "CStoreObjectMap.h"
 #include "kv/KeyValueDB.h"
-#include "DBObjectMap.h"
+#include "DBCStoreObjectMap.h"
 #include <errno.h>
 
 #include "common/debug.h"
@@ -23,18 +23,18 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "cstore "
 
-const string DBObjectMap::USER_PREFIX = "_USER_";
-const string DBObjectMap::XATTR_PREFIX = "_AXATTR_";
-const string DBObjectMap::SYS_PREFIX = "_SYS_";
-const string DBObjectMap::COMPLETE_PREFIX = "_COMPLETE_";
-const string DBObjectMap::HEADER_KEY = "HEADER";
-const string DBObjectMap::USER_HEADER_KEY = "USER_HEADER";
-const string DBObjectMap::GLOBAL_STATE_KEY = "HEADER";
-const string DBObjectMap::HOBJECT_TO_SEQ = "_HOBJTOSEQ_";
+const string DBCStoreObjectMap::USER_PREFIX = "_USER_";
+const string DBCStoreObjectMap::XATTR_PREFIX = "_AXATTR_";
+const string DBCStoreObjectMap::SYS_PREFIX = "_SYS_";
+const string DBCStoreObjectMap::COMPLETE_PREFIX = "_COMPLETE_";
+const string DBCStoreObjectMap::HEADER_KEY = "HEADER";
+const string DBCStoreObjectMap::USER_HEADER_KEY = "USER_HEADER";
+const string DBCStoreObjectMap::GLOBAL_STATE_KEY = "HEADER";
+const string DBCStoreObjectMap::HOBJECT_TO_SEQ = "_HOBJTOSEQ_";
 
 // Legacy
-const string DBObjectMap::LEAF_PREFIX = "_LEAF_";
-const string DBObjectMap::REVERSE_LEAF_PREFIX = "_REVLEAF_";
+const string DBCStoreObjectMap::LEAF_PREFIX = "_LEAF_";
+const string DBCStoreObjectMap::REVERSE_LEAF_PREFIX = "_REVLEAF_";
 
 static void append_escaped(const string &in, string *out)
 {
@@ -54,7 +54,7 @@ static void append_escaped(const string &in, string *out)
   }
 }
 
-bool DBObjectMap::check(std::ostream &out)
+bool DBCStoreObjectMap::check(std::ostream &out)
 {
   bool retval = true;
   map<uint64_t, uint64_t> parent_to_num_children;
@@ -109,7 +109,7 @@ bool DBObjectMap::check(std::ostream &out)
   return retval;
 }
 
-string DBObjectMap::ghobject_key(const ghobject_t &oid)
+string DBCStoreObjectMap::ghobject_key(const ghobject_t &oid)
 {
   string out;
   append_escaped(oid.hobj.oid.name, &out);
@@ -148,7 +148,7 @@ string DBObjectMap::ghobject_key(const ghobject_t &oid)
 //   bad: plana8923501-10...4c.3.ffffffffffffffff.2
 // fixed: plana8923501-10...4c.3.CB767F2D.ffffffffffffffff.2
 // returns 0 for false, 1 for true, negative for error
-int DBObjectMap::is_buggy_ghobject_key_v1(const string &in)
+int DBCStoreObjectMap::is_buggy_ghobject_key_v1(const string &in)
 {
   int dots = 5;  // skip 5 .'s
   const char *s = in.c_str();
@@ -187,44 +187,44 @@ int DBObjectMap::is_buggy_ghobject_key_v1(const string &in)
 }
 
 
-string DBObjectMap::map_header_key(const ghobject_t &oid)
+string DBCStoreObjectMap::map_header_key(const ghobject_t &oid)
 {
   return ghobject_key(oid);
 }
 
-string DBObjectMap::header_key(uint64_t seq)
+string DBCStoreObjectMap::header_key(uint64_t seq)
 {
   char buf[100];
   snprintf(buf, sizeof(buf), "%.*" PRId64, (int)(2*sizeof(seq)), seq);
   return string(buf);
 }
 
-string DBObjectMap::complete_prefix(Header header)
+string DBCStoreObjectMap::complete_prefix(Header header)
 {
   return USER_PREFIX + header_key(header->seq) + COMPLETE_PREFIX;
 }
 
-string DBObjectMap::user_prefix(Header header)
+string DBCStoreObjectMap::user_prefix(Header header)
 {
   return USER_PREFIX + header_key(header->seq) + USER_PREFIX;
 }
 
-string DBObjectMap::sys_prefix(Header header)
+string DBCStoreObjectMap::sys_prefix(Header header)
 {
   return USER_PREFIX + header_key(header->seq) + SYS_PREFIX;
 }
 
-string DBObjectMap::xattr_prefix(Header header)
+string DBCStoreObjectMap::xattr_prefix(Header header)
 {
   return USER_PREFIX + header_key(header->seq) + XATTR_PREFIX;
 }
 
-string DBObjectMap::sys_parent_prefix(_Header header)
+string DBCStoreObjectMap::sys_parent_prefix(_Header header)
 {
   return USER_PREFIX + header_key(header.parent) + SYS_PREFIX;
 }
 
-int DBObjectMap::DBObjectMapIteratorImpl::init()
+int DBCStoreObjectMap::DBCStoreObjectMapIteratorImpl::init()
 {
   invalid = false;
   if (ready) {
@@ -237,7 +237,7 @@ int DBObjectMap::DBObjectMapIteratorImpl::init()
       assert(0);
       return -EINVAL;
     }
-    parent_iter = std::make_shared<DBObjectMapIteratorImpl>(map, parent);
+    parent_iter = std::make_shared<DBCStoreObjectMapIteratorImpl>(map, parent);
   }
   key_iter = map->db->get_iterator(map->user_prefix(header));
   assert(key_iter);
@@ -249,19 +249,19 @@ int DBObjectMap::DBObjectMapIteratorImpl::init()
   return 0;
 }
 
-ObjectMap::ObjectMapIterator DBObjectMap::get_iterator(
+CStoreObjectMap::CStoreObjectMapIterator DBCStoreObjectMap::get_iterator(
   const ghobject_t &oid)
 {
   MapHeaderLock hl(this, oid);
   Header header = lookup_map_header(hl, oid);
   if (!header)
-    return ObjectMapIterator(new EmptyIteratorImpl());
-  DBObjectMapIterator iter = _get_iterator(header);
+    return CStoreObjectMapIterator(new EmptyCStoreIteratorImpl());
+  DBCStoreObjectMapIterator iter = _get_iterator(header);
   iter->hlock.swap(hl);
   return iter;
 }
 
-int DBObjectMap::DBObjectMapIteratorImpl::seek_to_first()
+int DBCStoreObjectMap::DBCStoreObjectMapIteratorImpl::seek_to_first()
 {
   init();
   r = 0;
@@ -276,7 +276,7 @@ int DBObjectMap::DBObjectMapIteratorImpl::seek_to_first()
   return adjust();
 }
 
-int DBObjectMap::DBObjectMapIteratorImpl::seek_to_last()
+int DBCStoreObjectMap::DBCStoreObjectMapIteratorImpl::seek_to_last()
 {
   init();
   r = 0;
@@ -299,7 +299,7 @@ int DBObjectMap::DBObjectMapIteratorImpl::seek_to_last()
   return adjust();
 }
 
-int DBObjectMap::DBObjectMapIteratorImpl::lower_bound(const string &to)
+int DBCStoreObjectMap::DBCStoreObjectMapIteratorImpl::lower_bound(const string &to)
 {
   init();
   r = 0;
@@ -314,7 +314,7 @@ int DBObjectMap::DBObjectMapIteratorImpl::lower_bound(const string &to)
   return adjust();
 }
 
-int DBObjectMap::DBObjectMapIteratorImpl::upper_bound(const string &after)
+int DBCStoreObjectMap::DBCStoreObjectMapIteratorImpl::upper_bound(const string &after)
 {
   init();
   r = 0;
@@ -329,14 +329,14 @@ int DBObjectMap::DBObjectMapIteratorImpl::upper_bound(const string &after)
   return adjust();
 }
 
-bool DBObjectMap::DBObjectMapIteratorImpl::valid()
+bool DBCStoreObjectMap::DBCStoreObjectMapIteratorImpl::valid()
 {
   bool valid = !invalid && ready;
   assert(!valid || cur_iter->valid());
   return valid;
 }
 
-bool DBObjectMap::DBObjectMapIteratorImpl::valid_parent()
+bool DBCStoreObjectMap::DBCStoreObjectMapIteratorImpl::valid_parent()
 {
   if (parent_iter && parent_iter->valid() &&
       (!key_iter->valid() || key_iter->key() > parent_iter->key()))
@@ -344,7 +344,7 @@ bool DBObjectMap::DBObjectMapIteratorImpl::valid_parent()
   return false;
 }
 
-int DBObjectMap::DBObjectMapIteratorImpl::next(bool validate)
+int DBCStoreObjectMap::DBCStoreObjectMapIteratorImpl::next(bool validate)
 {
   assert(cur_iter->valid());
   assert(valid());
@@ -352,7 +352,7 @@ int DBObjectMap::DBObjectMapIteratorImpl::next(bool validate)
   return adjust();
 }
 
-int DBObjectMap::DBObjectMapIteratorImpl::next_parent()
+int DBCStoreObjectMap::DBCStoreObjectMapIteratorImpl::next_parent()
 {
   if (!parent_iter || !parent_iter->valid()) {
     invalid = true;
@@ -367,7 +367,7 @@ int DBObjectMap::DBObjectMapIteratorImpl::next_parent()
   return lower_bound(parent_iter->key());
 }
 
-int DBObjectMap::DBObjectMapIteratorImpl::in_complete_region(const string &to_test,
+int DBCStoreObjectMap::DBCStoreObjectMapIteratorImpl::in_complete_region(const string &to_test,
 							     string *begin,
 							     string *end)
 {
@@ -394,7 +394,7 @@ int DBObjectMap::DBObjectMapIteratorImpl::in_complete_region(const string &to_te
  * not equal to key_iter.  Then, we set cur_iter to parent_iter if valid and
  * less than key_iter and key_iter otherwise.
  */
-int DBObjectMap::DBObjectMapIteratorImpl::adjust()
+int DBCStoreObjectMap::DBCStoreObjectMapIteratorImpl::adjust()
 {
   string begin, end;
   while (parent_iter && parent_iter->valid()) {
@@ -423,24 +423,64 @@ int DBObjectMap::DBObjectMapIteratorImpl::adjust()
 }
 
 
-string DBObjectMap::DBObjectMapIteratorImpl::key()
+string DBCStoreObjectMap::DBCStoreObjectMapIteratorImpl::key()
 {
   return cur_iter->key();
 }
 
-bufferlist DBObjectMap::DBObjectMapIteratorImpl::value()
+bufferlist DBCStoreObjectMap::DBCStoreObjectMapIteratorImpl::value()
 {
   return cur_iter->value();
 }
 
-int DBObjectMap::DBObjectMapIteratorImpl::status()
+int DBCStoreObjectMap::DBCStoreObjectMapIteratorImpl::status()
 {
   return r;
 }
 
-int DBObjectMap::set_keys(const ghobject_t &oid,
+DBCStoreObjectMap::DBWholeCStoreObjectMapIteratorImpl::DBWholeCStoreObjectMapIteratorImpl(DBCStoreObjectMap *map, const string &prefix) : map(map) {
+  iter = map->db->get_iterator(prefix);
+}
+
+CStoreObjectMap::CStoreObjectMapIterator DBCStoreObjectMap::get_whole_iterator(const string &prefix) {
+  return std::make_shared<DBWholeCStoreObjectMapIteratorImpl>(this, prefix);
+}
+
+int DBCStoreObjectMap::DBWholeCStoreObjectMapIteratorImpl::seek_to_first() {
+  return iter->seek_to_first();
+}
+
+int DBCStoreObjectMap::DBWholeCStoreObjectMapIteratorImpl::upper_bound(const string &after) {
+  return iter->upper_bound(after);
+}
+
+int DBCStoreObjectMap::DBWholeCStoreObjectMapIteratorImpl::lower_bound(const string &to) {
+  return iter->lower_bound(to);
+}
+
+bool DBCStoreObjectMap::DBWholeCStoreObjectMapIteratorImpl::valid() {
+  return iter->valid();
+}
+
+int DBCStoreObjectMap::DBWholeCStoreObjectMapIteratorImpl::next(bool validate) {
+  return iter->next();
+}
+
+int DBCStoreObjectMap::DBWholeCStoreObjectMapIteratorImpl::status() {
+  return iter->status();
+}
+
+string DBCStoreObjectMap::DBWholeCStoreObjectMapIteratorImpl::key() {
+  return iter->key();
+}
+
+bufferlist DBCStoreObjectMap::DBWholeCStoreObjectMapIteratorImpl::value() {
+  return iter->value();
+}
+
+int DBCStoreObjectMap::set_keys(const ghobject_t &oid,
 			  const map<string, bufferlist> &set,
-			  const SequencerPosition *spos)
+			  const CStoreSequencerPosition *spos)
 {
   KeyValueDB::Transaction t = db->get_transaction();
   MapHeaderLock hl(this, oid);
@@ -455,9 +495,9 @@ int DBObjectMap::set_keys(const ghobject_t &oid,
   return db->submit_transaction(t);
 }
 
-int DBObjectMap::set_header(const ghobject_t &oid,
+int DBCStoreObjectMap::set_header(const ghobject_t &oid,
 			    const bufferlist &bl,
-			    const SequencerPosition *spos)
+			    const CStoreSequencerPosition *spos)
 {
   KeyValueDB::Transaction t = db->get_transaction();
   MapHeaderLock hl(this, oid);
@@ -470,7 +510,7 @@ int DBObjectMap::set_header(const ghobject_t &oid,
   return db->submit_transaction(t);
 }
 
-void DBObjectMap::_set_header(Header header, const bufferlist &bl,
+void DBCStoreObjectMap::_set_header(Header header, const bufferlist &bl,
 			      KeyValueDB::Transaction t)
 {
   map<string, bufferlist> to_set;
@@ -478,7 +518,7 @@ void DBObjectMap::_set_header(Header header, const bufferlist &bl,
   t->set(sys_prefix(header), to_set);
 }
 
-int DBObjectMap::get_header(const ghobject_t &oid,
+int DBCStoreObjectMap::get_header(const ghobject_t &oid,
 			    bufferlist *bl)
 {
   MapHeaderLock hl(this, oid);
@@ -489,7 +529,7 @@ int DBObjectMap::get_header(const ghobject_t &oid,
   return _get_header(header, bl);
 }
 
-int DBObjectMap::_get_header(Header header,
+int DBCStoreObjectMap::_get_header(Header header,
 			     bufferlist *bl)
 {
   map<string, bufferlist> out;
@@ -513,8 +553,8 @@ int DBObjectMap::_get_header(Header header,
   return 0;
 }
 
-int DBObjectMap::clear(const ghobject_t &oid,
-		       const SequencerPosition *spos)
+int DBCStoreObjectMap::clear(const ghobject_t &oid,
+		       const CStoreSequencerPosition *spos)
 {
   KeyValueDB::Transaction t = db->get_transaction();
   MapHeaderLock hl(this, oid);
@@ -532,7 +572,7 @@ int DBObjectMap::clear(const ghobject_t &oid,
   return db->submit_transaction(t);
 }
 
-int DBObjectMap::_clear(Header header,
+int DBCStoreObjectMap::_clear(Header header,
 			KeyValueDB::Transaction t)
 {
   while (1) {
@@ -554,9 +594,9 @@ int DBObjectMap::_clear(Header header,
   return 0;
 }
 
-int DBObjectMap::merge_new_complete(Header header,
+int DBCStoreObjectMap::merge_new_complete(Header header,
 				    const map<string, string> &new_complete,
-				    DBObjectMapIterator iter,
+				    DBCStoreObjectMapIterator iter,
 				    KeyValueDB::Transaction t)
 {
   KeyValueDB::Iterator complete_iter = db->get_iterator(
@@ -606,7 +646,7 @@ int DBObjectMap::merge_new_complete(Header header,
   return 0;
 }
 
-int DBObjectMap::copy_up_header(Header header,
+int DBCStoreObjectMap::copy_up_header(Header header,
 				KeyValueDB::Transaction t)
 {
   bufferlist bl;
@@ -618,7 +658,7 @@ int DBObjectMap::copy_up_header(Header header,
   return 0;
 }
 
-int DBObjectMap::need_parent(DBObjectMapIterator iter)
+int DBCStoreObjectMap::need_parent(DBCStoreObjectMapIterator iter)
 {
   int r = iter->seek_to_first();
   if (r < 0)
@@ -634,9 +674,27 @@ int DBObjectMap::need_parent(DBObjectMapIterator iter)
   return 1;
 }
 
-int DBObjectMap::rm_keys(const ghobject_t &oid,
+int DBCStoreObjectMap::rm_keys_by_prefix(const string& prefix,
+				   const set<string> &to_rm,
+				   const CStoreSequencerPosition* spos)
+{
+  KeyValueDB::Transaction t = db->get_transaction();
+  t->rmkeys(prefix, to_rm);
+  return db->submit_transaction(t);
+}
+
+int DBCStoreObjectMap::set_keys_by_prefix(const string& prefix,
+				    const map<string, bufferlist> &sets,
+				    const CStoreSequencerPosition* spos)
+{
+  KeyValueDB::Transaction t = db->get_transaction();
+  t->set(prefix, sets);
+  return db->submit_transaction(t);
+}
+
+int DBCStoreObjectMap::rm_keys(const ghobject_t &oid,
 			 const set<string> &to_clear,
-			 const SequencerPosition *spos)
+			 const CStoreSequencerPosition *spos)
 {
   MapHeaderLock hl(this, oid);
   Header header = lookup_map_header(hl, oid);
@@ -653,7 +711,7 @@ int DBObjectMap::rm_keys(const ghobject_t &oid,
   // Copy up keys from parent around to_clear
   int keep_parent;
   {
-    DBObjectMapIterator iter = _get_iterator(header);
+    DBCStoreObjectMapIterator iter = _get_iterator(header);
     iter->seek_to_first();
     map<string, string> new_complete;
     map<string, bufferlist> to_write;
@@ -709,8 +767,8 @@ int DBObjectMap::rm_keys(const ghobject_t &oid,
   return db->submit_transaction(t);
 }
 
-int DBObjectMap::clear_keys_header(const ghobject_t &oid,
-				   const SequencerPosition *spos)
+int DBCStoreObjectMap::clear_keys_header(const ghobject_t &oid,
+				   const CStoreSequencerPosition *spos)
 {
   KeyValueDB::Transaction t = db->get_transaction();
   MapHeaderLock hl(this, oid);
@@ -746,7 +804,7 @@ int DBObjectMap::clear_keys_header(const ghobject_t &oid,
   return db->submit_transaction(t);
 }
 
-int DBObjectMap::get(const ghobject_t &oid,
+int DBCStoreObjectMap::get(const ghobject_t &oid,
 		     bufferlist *_header,
 		     map<string, bufferlist> *out)
 {
@@ -755,7 +813,7 @@ int DBObjectMap::get(const ghobject_t &oid,
   if (!header)
     return -ENOENT;
   _get_header(header, _header);
-  ObjectMapIterator iter = _get_iterator(header);
+  CStoreObjectMapIterator iter = _get_iterator(header);
   for (iter->seek_to_first(); iter->valid(); iter->next()) {
     if (iter->status())
       return iter->status();
@@ -764,14 +822,14 @@ int DBObjectMap::get(const ghobject_t &oid,
   return 0;
 }
 
-int DBObjectMap::get_keys(const ghobject_t &oid,
+int DBCStoreObjectMap::get_keys(const ghobject_t &oid,
 			  set<string> *keys)
 {
   MapHeaderLock hl(this, oid);
   Header header = lookup_map_header(hl, oid);
   if (!header)
     return -ENOENT;
-  ObjectMapIterator iter = _get_iterator(header);
+  CStoreObjectMapIterator iter = _get_iterator(header);
   for (iter->seek_to_first(); iter->valid(); iter->next()) {
     if (iter->status())
       return iter->status();
@@ -780,12 +838,12 @@ int DBObjectMap::get_keys(const ghobject_t &oid,
   return 0;
 }
 
-int DBObjectMap::scan(Header header,
+int DBCStoreObjectMap::scan(Header header,
 		      const set<string> &in_keys,
 		      set<string> *out_keys,
 		      map<string, bufferlist> *out_values)
 {
-  ObjectMapIterator db_iter = _get_iterator(header);
+  CStoreObjectMapIterator db_iter = _get_iterator(header);
   for (set<string>::const_iterator key_iter = in_keys.begin();
        key_iter != in_keys.end();
        ++key_iter) {
@@ -802,7 +860,7 @@ int DBObjectMap::scan(Header header,
   return 0;
 }
 
-int DBObjectMap::get_values(const ghobject_t &oid,
+int DBCStoreObjectMap::get_values(const ghobject_t &oid,
 			    const set<string> &keys,
 			    map<string, bufferlist> *out)
 {
@@ -813,7 +871,7 @@ int DBObjectMap::get_values(const ghobject_t &oid,
   return scan(header, keys, 0, out);
 }
 
-int DBObjectMap::check_keys(const ghobject_t &oid,
+int DBCStoreObjectMap::check_keys(const ghobject_t &oid,
 			    const set<string> &keys,
 			    set<string> *out)
 {
@@ -824,7 +882,7 @@ int DBObjectMap::check_keys(const ghobject_t &oid,
   return scan(header, keys, out, 0);
 }
 
-int DBObjectMap::get_xattrs(const ghobject_t &oid,
+int DBCStoreObjectMap::get_xattrs(const ghobject_t &oid,
 			    const set<string> &to_get,
 			    map<string, bufferlist> *out)
 {
@@ -835,7 +893,7 @@ int DBObjectMap::get_xattrs(const ghobject_t &oid,
   return db->get(xattr_prefix(header), to_get, out);
 }
 
-int DBObjectMap::get_all_xattrs(const ghobject_t &oid,
+int DBCStoreObjectMap::get_all_xattrs(const ghobject_t &oid,
 				set<string> *out)
 {
   MapHeaderLock hl(this, oid);
@@ -850,9 +908,9 @@ int DBObjectMap::get_all_xattrs(const ghobject_t &oid,
   return iter->status();
 }
 
-int DBObjectMap::set_xattrs(const ghobject_t &oid,
+int DBCStoreObjectMap::set_xattrs(const ghobject_t &oid,
 			    const map<string, bufferlist> &to_set,
-			    const SequencerPosition *spos)
+			    const CStoreSequencerPosition *spos)
 {
   KeyValueDB::Transaction t = db->get_transaction();
   MapHeaderLock hl(this, oid);
@@ -865,9 +923,9 @@ int DBObjectMap::set_xattrs(const ghobject_t &oid,
   return db->submit_transaction(t);
 }
 
-int DBObjectMap::remove_xattrs(const ghobject_t &oid,
+int DBCStoreObjectMap::remove_xattrs(const ghobject_t &oid,
 			       const set<string> &to_remove,
-			       const SequencerPosition *spos)
+			       const CStoreSequencerPosition *spos)
 {
   KeyValueDB::Transaction t = db->get_transaction();
   MapHeaderLock hl(this, oid);
@@ -880,9 +938,9 @@ int DBObjectMap::remove_xattrs(const ghobject_t &oid,
   return db->submit_transaction(t);
 }
 
-int DBObjectMap::clone(const ghobject_t &oid,
+int DBCStoreObjectMap::clone(const ghobject_t &oid,
 		       const ghobject_t &target,
-		       const SequencerPosition *spos)
+		       const CStoreSequencerPosition *spos)
 {
   if (oid == target)
     return 0;
@@ -936,7 +994,7 @@ int DBObjectMap::clone(const ghobject_t &oid,
   return db->submit_transaction(t);
 }
 
-int DBObjectMap::upgrade_to_v2()
+int DBCStoreObjectMap::upgrade_to_v2()
 {
   dout(1) << __func__ << " start" << dendl;
   KeyValueDB::Iterator iter = db->get_iterator(HOBJECT_TO_SEQ);
@@ -993,7 +1051,7 @@ int DBObjectMap::upgrade_to_v2()
   return 0;
 }
 
-int DBObjectMap::init(bool do_upgrade)
+int DBCStoreObjectMap::init(bool do_upgrade)
 {
   map<string, bufferlist> result;
   set<string> to_get;
@@ -1005,7 +1063,7 @@ int DBObjectMap::init(bool do_upgrade)
     bufferlist::iterator bliter = result.begin()->second.begin();
     state.decode(bliter);
     if (state.v < 1) {
-      dout(1) << "DBObjectMap is *very* old; upgrade to an older version first"
+      dout(1) << "DBCStoreObjectMap is *very* old; upgrade to an older version first"
 	      << dendl;
       return -ENOTSUP;
     }
@@ -1030,8 +1088,8 @@ int DBObjectMap::init(bool do_upgrade)
   return 0;
 }
 
-int DBObjectMap::sync(const ghobject_t *oid,
-		      const SequencerPosition *spos) {
+int DBCStoreObjectMap::sync(const ghobject_t *oid,
+		      const CStoreSequencerPosition *spos) {
   KeyValueDB::Transaction t = db->get_transaction();
   if (oid) {
     assert(spos);
@@ -1060,7 +1118,7 @@ int DBObjectMap::sync(const ghobject_t *oid,
   }
 }
 
-int DBObjectMap::write_state(KeyValueDB::Transaction _t) {
+int DBCStoreObjectMap::write_state(KeyValueDB::Transaction _t) {
   assert(header_lock.is_locked_by_me());
   dout(20) << "dbobjectmap: seq is " << state.seq << dendl;
   KeyValueDB::Transaction t = _t ? _t : db->get_transaction();
@@ -1073,7 +1131,7 @@ int DBObjectMap::write_state(KeyValueDB::Transaction _t) {
 }
 
 
-DBObjectMap::Header DBObjectMap::_lookup_map_header(
+DBCStoreObjectMap::Header DBCStoreObjectMap::_lookup_map_header(
   const MapHeaderLock &l,
   const ghobject_t &oid)
 {
@@ -1110,7 +1168,7 @@ DBObjectMap::Header DBObjectMap::_lookup_map_header(
   return ret;
 }
 
-DBObjectMap::Header DBObjectMap::_generate_new_header(const ghobject_t &oid,
+DBCStoreObjectMap::Header DBCStoreObjectMap::_generate_new_header(const ghobject_t &oid,
 						      Header parent)
 {
   Header header = Header(new _Header(), RemoveOnDelete(this));
@@ -1128,7 +1186,7 @@ DBObjectMap::Header DBObjectMap::_generate_new_header(const ghobject_t &oid,
   return header;
 }
 
-DBObjectMap::Header DBObjectMap::lookup_parent(Header input)
+DBCStoreObjectMap::Header DBCStoreObjectMap::lookup_parent(Header input)
 {
   Mutex::Locker l(header_lock);
   while (in_use.count(input->parent))
@@ -1159,7 +1217,7 @@ DBObjectMap::Header DBObjectMap::lookup_parent(Header input)
   return header;
 }
 
-DBObjectMap::Header DBObjectMap::lookup_create_map_header(
+DBCStoreObjectMap::Header DBCStoreObjectMap::lookup_create_map_header(
   const MapHeaderLock &hl,
   const ghobject_t &oid,
   KeyValueDB::Transaction t)
@@ -1173,7 +1231,7 @@ DBObjectMap::Header DBObjectMap::lookup_create_map_header(
   return header;
 }
 
-void DBObjectMap::clear_header(Header header, KeyValueDB::Transaction t)
+void DBCStoreObjectMap::clear_header(Header header, KeyValueDB::Transaction t)
 {
   dout(20) << "clear_header: clearing seq " << header->seq << dendl;
   t->rmkeys_by_prefix(user_prefix(header));
@@ -1185,7 +1243,7 @@ void DBObjectMap::clear_header(Header header, KeyValueDB::Transaction t)
   t->rmkeys(USER_PREFIX, keys);
 }
 
-void DBObjectMap::set_header(Header header, KeyValueDB::Transaction t)
+void DBCStoreObjectMap::set_header(Header header, KeyValueDB::Transaction t)
 {
   dout(20) << "set_header: setting seq " << header->seq << dendl;
   map<string, bufferlist> to_write;
@@ -1193,7 +1251,7 @@ void DBObjectMap::set_header(Header header, KeyValueDB::Transaction t)
   t->set(sys_prefix(header), to_write);
 }
 
-void DBObjectMap::remove_map_header(
+void DBCStoreObjectMap::remove_map_header(
   const MapHeaderLock &l,
   const ghobject_t &oid,
   Header header,
@@ -1211,7 +1269,7 @@ void DBObjectMap::remove_map_header(
   }
 }
 
-void DBObjectMap::set_map_header(
+void DBCStoreObjectMap::set_map_header(
   const MapHeaderLock &l,
   const ghobject_t &oid, _Header header,
   KeyValueDB::Transaction t)
@@ -1229,9 +1287,9 @@ void DBObjectMap::set_map_header(
   }
 }
 
-bool DBObjectMap::check_spos(const ghobject_t &oid,
+bool DBCStoreObjectMap::check_spos(const ghobject_t &oid,
 			     Header header,
-			     const SequencerPosition *spos)
+			     const CStoreSequencerPosition *spos)
 {
   if (!spos || *spos > header->spos) {
     stringstream out;
@@ -1250,7 +1308,7 @@ bool DBObjectMap::check_spos(const ghobject_t &oid,
   }
 }
 
-int DBObjectMap::list_objects(vector<ghobject_t> *out)
+int DBCStoreObjectMap::list_objects(vector<ghobject_t> *out)
 {
   KeyValueDB::Iterator iter = db->get_iterator(HOBJECT_TO_SEQ);
   for (iter->seek_to_first(); iter->valid(); iter->next()) {

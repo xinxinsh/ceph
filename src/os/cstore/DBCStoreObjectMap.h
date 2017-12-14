@@ -1,6 +1,6 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
-#ifndef DBOBJECTMAP_DB_H
-#define DBOBJECTMAP_DB_H
+#ifndef DBCSTOREOBJECTMAP_DB_H
+#define DBCSTOREOBJECTMAP_DB_H
 
 #include "include/buffer_fwd.h"
 #include <set>
@@ -11,7 +11,7 @@
 #include "include/memory.h"
 #include <boost/scoped_ptr.hpp>
 
-#include "os/ObjectMap.h"
+#include "CStoreObjectMap.h"
 #include "kv/KeyValueDB.h"
 #include "osd/osd_types.h"
 #include "common/Mutex.h"
@@ -19,10 +19,10 @@
 #include "common/simple_cache.hpp"
 #include <boost/optional/optional_io.hpp>
 
-#include "SequencerPosition.h"
+#include "CStoreSequencerPosition.h"
 
 /**
- * DBObjectMap: Implements ObjectMap in terms of KeyValueDB
+ * DBCStoreObjectMap: Implements CStoreObjectMap in terms of KeyValueDB
  *
  * Prefix space structure:
  *
@@ -55,7 +55,7 @@
  * key set.  During rm_keys, we copy keys from the parent and update the
  * complete set to reflect the change @see rm_keys.
  */
-class DBObjectMap : public ObjectMap {
+class DBCStoreObjectMap : public CStoreObjectMap {
 public:
   boost::scoped_ptr<KeyValueDB> db;
 
@@ -77,14 +77,14 @@ public:
    * destructor
    */
   class MapHeaderLock {
-    DBObjectMap *db;
+    DBCStoreObjectMap *db;
     boost::optional<ghobject_t> locked;
 
     MapHeaderLock(const MapHeaderLock &);
     MapHeaderLock &operator=(const MapHeaderLock &);
   public:
-    explicit MapHeaderLock(DBObjectMap *db) : db(db) {}
-    MapHeaderLock(DBObjectMap *db, const ghobject_t &oid) : db(db), locked(oid) {
+    explicit MapHeaderLock(DBCStoreObjectMap *db) : db(db) {}
+    MapHeaderLock(DBCStoreObjectMap *db, const ghobject_t &oid) : db(db), locked(oid) {
       Mutex::Locker l(db->header_lock);
       while (db->map_header_in_use.count(*locked))
 	db->map_header_cond.Wait(db->header_lock);
@@ -115,21 +115,21 @@ public:
     }
   };
 
-  explicit DBObjectMap(KeyValueDB *db) : db(db), header_lock("DBOBjectMap"),
-           	                         cache_lock("DBObjectMap::CacheLock"),
+  explicit DBCStoreObjectMap(KeyValueDB *db) : db(db), header_lock("DBOBjectMap"),
+           	                         cache_lock("DBCStoreObjectMap::CacheLock"),
       	                                 caches(g_conf->filestore_omap_header_cache_size)
     {}
 
   int set_keys(
     const ghobject_t &oid,
     const map<string, bufferlist> &set,
-    const SequencerPosition *spos=0
+    const CStoreSequencerPosition *spos=0
     );
 
   int set_header(
     const ghobject_t &oid,
     const bufferlist &bl,
-    const SequencerPosition *spos=0
+    const CStoreSequencerPosition *spos=0
     );
 
   int get_header(
@@ -139,18 +139,30 @@ public:
 
   int clear(
     const ghobject_t &oid,
-    const SequencerPosition *spos=0
+    const CStoreSequencerPosition *spos=0
     );
 
   int clear_keys_header(
     const ghobject_t &oid,
-    const SequencerPosition *spos=0
+    const CStoreSequencerPosition *spos=0
     );
 
   int rm_keys(
     const ghobject_t &oid,
     const set<string> &to_clear,
-    const SequencerPosition *spos=0
+    const CStoreSequencerPosition *spos=0
+    );
+
+  int rm_keys_by_prefix(
+    const string& prefix,
+    const set<string> &to_rm,
+    const CStoreSequencerPosition *spos=0
+    );
+
+  int set_keys_by_prefix(
+    const string &prefix,
+    const map<string, bufferlist> &sets,
+    const CStoreSequencerPosition *spos=0
     );
 
   int get(
@@ -190,19 +202,19 @@ public:
   int set_xattrs(
     const ghobject_t &oid,
     const map<string, bufferlist> &to_set,
-    const SequencerPosition *spos=0
+    const CStoreSequencerPosition *spos=0
     );
 
   int remove_xattrs(
     const ghobject_t &oid,
     const set<string> &to_remove,
-    const SequencerPosition *spos=0
+    const CStoreSequencerPosition *spos=0
     );
 
   int clone(
     const ghobject_t &oid,
     const ghobject_t &target,
-    const SequencerPosition *spos=0
+    const CStoreSequencerPosition *spos=0
     );
 
   /// Read initial state from backing store
@@ -215,13 +227,14 @@ public:
   bool check(std::ostream &out);
 
   /// Ensure that all previous operations are durable
-  int sync(const ghobject_t *oid=0, const SequencerPosition *spos=0);
+  int sync(const ghobject_t *oid=0, const CStoreSequencerPosition *spos=0);
 
   /// Util, list all objects, there must be no other concurrent access
   int list_objects(vector<ghobject_t> *objs ///< [out] objects
     );
 
-  ObjectMapIterator get_iterator(const ghobject_t &oid);
+  CStoreObjectMapIterator get_iterator(const ghobject_t &oid);
+  CStoreObjectMapIterator get_whole_iterator(const string &prefix);
 
   static const string USER_PREFIX;
   static const string XATTR_PREFIX;
@@ -278,7 +291,7 @@ public:
     coll_t c;
     ghobject_t oid;
 
-    SequencerPosition spos;
+    CStoreSequencerPosition spos;
 
     void encode(bufferlist &bl) const {
       ENCODE_START(2, 1, bl);
@@ -342,24 +355,39 @@ private:
     return sys_parent_prefix(*header);
   }
 
-  class EmptyIteratorImpl : public ObjectMapIteratorImpl {
+  class EmptyCStoreIteratorImpl : public CStoreObjectMapIteratorImpl {
   public:
-    int seek_to_first() { return 0; }
+    int seek_to_first() override { return 0; }
     int seek_to_last() { return 0; }
-    int upper_bound(const string &after) { return 0; }
-    int lower_bound(const string &to) { return 0; }
-    bool valid() { return false; }
-    int next(bool validate=true) { assert(0); return 0; }
-    string key() { assert(0); return ""; }
-    bufferlist value() { assert(0); return bufferlist(); }
-    int status() { return 0; }
+    int upper_bound(const string &after) override { return 0; }
+    int lower_bound(const string &to) override { return 0; }
+    bool valid() override { return false; }
+    int next(bool validate=true) override { assert(0); return 0; }
+    string key() override { assert(0); return ""; }
+    bufferlist value() override { assert(0); return bufferlist(); }
+    int status() override { return 0; }
   };
 
+  class DBWholeCStoreObjectMapIteratorImpl : public CStoreObjectMapIteratorImpl {
+  public:
+    DBCStoreObjectMap *map;
+    KeyValueDB::Iterator iter;
+
+    DBWholeCStoreObjectMapIteratorImpl(DBCStoreObjectMap *map, const string &prefix);
+    int seek_to_first() override;
+    int upper_bound(const string &after) override;
+    int lower_bound(const string &to) override;
+    bool valid() override;
+    int next(bool validate=true) override;
+    string key() override;
+    bufferlist value() override;
+    int status() override;
+  };
 
   /// Iterator
-  class DBObjectMapIteratorImpl : public ObjectMapIteratorImpl {
+  class DBCStoreObjectMapIteratorImpl : public CStoreObjectMapIteratorImpl {
   public:
-    DBObjectMap *map;
+    DBCStoreObjectMap *map;
 
     /// NOTE: implicit lock hlock->get_locked() when returned out of the class
     MapHeaderLock hlock;
@@ -367,12 +395,12 @@ private:
     Header header;
 
     /// parent_iter == NULL iff no parent
-    ceph::shared_ptr<DBObjectMapIteratorImpl> parent_iter;
+    ceph::shared_ptr<DBCStoreObjectMapIteratorImpl> parent_iter;
     KeyValueDB::Iterator key_iter;
     KeyValueDB::Iterator complete_iter;
 
     /// cur_iter points to currently valid iterator
-    ceph::shared_ptr<ObjectMapIteratorImpl> cur_iter;
+    ceph::shared_ptr<ObjectMap::ObjectMapIteratorImpl> cur_iter;
     int r;
 
     /// init() called, key_iter, complete_iter, parent_iter filled in
@@ -380,17 +408,17 @@ private:
     /// past end
     bool invalid;
 
-    DBObjectMapIteratorImpl(DBObjectMap *map, Header header) :
+    DBCStoreObjectMapIteratorImpl(DBCStoreObjectMap *map, Header header) :
       map(map), hlock(map), header(header), r(0), ready(false), invalid(true) {}
-    int seek_to_first();
+    int seek_to_first() override;
     int seek_to_last();
-    int upper_bound(const string &after);
-    int lower_bound(const string &to);
-    bool valid();
-    int next(bool validate=true);
-    string key();
-    bufferlist value();
-    int status();
+    int upper_bound(const string &after) override;
+    int lower_bound(const string &to) override;
+    bool valid() override;
+    int next(bool validate=true) override;
+    string key() override;
+    bufferlist value() override;
+    int status() override;
 
     bool on_parent() {
       return cur_iter == parent_iter;
@@ -411,9 +439,9 @@ private:
     int adjust();
   };
 
-  typedef ceph::shared_ptr<DBObjectMapIteratorImpl> DBObjectMapIterator;
-  DBObjectMapIterator _get_iterator(Header header) {
-    return std::make_shared<DBObjectMapIteratorImpl>(this, header);
+  typedef ceph::shared_ptr<DBCStoreObjectMapIteratorImpl> DBCStoreObjectMapIterator;
+  DBCStoreObjectMapIterator _get_iterator(Header header) {
+    return std::make_shared<DBCStoreObjectMapIteratorImpl>(this, header);
   }
 
   /// sys
@@ -440,7 +468,7 @@ private:
   /// Set leaf node for c and oid to the value of header
   bool check_spos(const ghobject_t &oid,
 		  Header header,
-		  const SequencerPosition *spos);
+		  const CStoreSequencerPosition *spos);
 
   /// Lookup or create header for c oid
   Header lookup_create_map_header(
@@ -451,7 +479,7 @@ private:
   /**
    * Generate new header for c oid with new seq number
    *
-   * Has the side effect of syncronously saving the new DBObjectMap state
+   * Has the side effect of syncronously saving the new DBCStoreObjectMap state
    */
   Header _generate_new_header(const ghobject_t &oid, Header parent);
   Header generate_new_header(const ghobject_t &oid, Header parent) {
@@ -489,7 +517,7 @@ private:
   /// Adds to t operations necessary to add new_complete to the complete set
   int merge_new_complete(Header header,
 			 const map<string, string> &new_complete,
-			 DBObjectMapIterator iter,
+			 DBCStoreObjectMapIterator iter,
 			 KeyValueDB::Transaction t);
 
   /// Writes out State (mainly next_seq)
@@ -497,7 +525,7 @@ private:
 		  KeyValueDB::Transaction());
 
   /// 0 if the complete set now contains all of key space, < 0 on error, 1 else
-  int need_parent(DBObjectMapIterator iter);
+  int need_parent(DBCStoreObjectMapIterator iter);
 
   /// Copies header entry from parent @see rm_keys
   int copy_up_header(Header header,
@@ -515,8 +543,8 @@ private:
    */
   class RemoveOnDelete {
   public:
-    DBObjectMap *db;
-    explicit RemoveOnDelete(DBObjectMap *db) :
+    DBCStoreObjectMap *db;
+    explicit RemoveOnDelete(DBCStoreObjectMap *db) :
       db(db) {}
     void operator() (_Header *header) {
       Mutex::Locker l(db->header_lock);
@@ -528,7 +556,7 @@ private:
   };
   friend class RemoveOnDelete;
 };
-WRITE_CLASS_ENCODER(DBObjectMap::_Header)
-WRITE_CLASS_ENCODER(DBObjectMap::State)
+WRITE_CLASS_ENCODER(DBCStoreObjectMap::_Header)
+WRITE_CLASS_ENCODER(DBCStoreObjectMap::State)
 
 #endif

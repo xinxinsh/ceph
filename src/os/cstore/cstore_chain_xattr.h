@@ -1,8 +1,8 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#ifndef __CEPH_OSD_CHAIN_XATTR_H
-#define __CEPH_OSD_CHAIN_XATTR_H
+#ifndef __CEPH_OSD_CSTORE_CHAIN_XATTR_H
+#define __CEPH_OSD_CSTORE_CHAIN_XATTR_H
 
 #include "common/xattr.h"
 #include "include/assert.h"

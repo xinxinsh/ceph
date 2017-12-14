@@ -1,10 +1,10 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#include "JournalThrottle.h"
+#include "CStoreJournalThrottle.h"
 #include "include/assert.h"
 
-bool JournalThrottle::set_params(
+bool CStoreJournalThrottle::set_params(
   double _low_threshhold,
   double _high_threshhold,
   double _expected_throughput,
@@ -23,23 +23,23 @@ bool JournalThrottle::set_params(
     errstream);
 }
 
-std::chrono::duration<double> JournalThrottle::get(uint64_t c)
+std::chrono::duration<double> CStoreJournalThrottle::get(uint64_t c)
 {
   return throttle.get(c);
 }
 
-uint64_t JournalThrottle::take(uint64_t c)
+uint64_t CStoreJournalThrottle::take(uint64_t c)
 {
   return throttle.take(c);
 }
 
-void JournalThrottle::register_throttle_seq(uint64_t seq, uint64_t c)
+void CStoreJournalThrottle::register_throttle_seq(uint64_t seq, uint64_t c)
 {
   locker l(lock);
   journaled_ops.push_back(std::make_pair(seq, c));
 }
 
-std::pair<uint64_t, uint64_t> JournalThrottle::flush(uint64_t mono_id)
+std::pair<uint64_t, uint64_t> CStoreJournalThrottle::flush(uint64_t mono_id)
 {
   uint64_t to_put_bytes = 0;
   uint64_t to_put_ops = 0;
@@ -56,12 +56,12 @@ std::pair<uint64_t, uint64_t> JournalThrottle::flush(uint64_t mono_id)
   return make_pair(to_put_ops, to_put_bytes);
 }
 
-uint64_t JournalThrottle::get_current()
+uint64_t CStoreJournalThrottle::get_current()
 {
   return throttle.get_current();
 }
 
-uint64_t JournalThrottle::get_max()
+uint64_t CStoreJournalThrottle::get_max()
 {
   return throttle.get_max();
 }

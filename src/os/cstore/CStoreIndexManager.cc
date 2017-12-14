@@ -27,11 +27,11 @@
 #include "common/debug.h"
 #include "include/buffer.h"
 
-#include "IndexManager.h"
-#include "HashIndex.h"
-#include "CollectionIndex.h"
+#include "CStoreIndexManager.h"
+#include "CStoreHashIndex.h"
+#include "CStoreCollectionIndex.h"
 
-#include "chain_xattr.h"
+#include "cstore_chain_xattr.h"
 
 static int set_version(const char *path, uint32_t version) {
   bufferlist bl;
@@ -61,9 +61,9 @@ static int get_version(const char *path, uint32_t *version) {
   return 0;
 }
 
-IndexManager::~IndexManager() {
+CStoreIndexManager::~CStoreIndexManager() {
 
-  for (ceph::unordered_map<coll_t, CollectionIndex* > ::iterator it = col_indices.begin();
+  for (ceph::unordered_map<coll_t, CStoreCollectionIndex* > ::iterator it = col_indices.begin();
        it != col_indices.end(); ++it) {
 
     delete it->second;
@@ -73,19 +73,19 @@ IndexManager::~IndexManager() {
 }
 
 
-int IndexManager::init_index(coll_t c, const char *path, uint32_t version) {
+int CStoreIndexManager::init_index(coll_t c, const char *path, uint32_t version) {
   Mutex::Locker l(lock);
   int r = set_version(path, version);
   if (r < 0)
     return r;
-  HashIndex index(c, path, g_conf->filestore_merge_threshold,
+  CStoreHashIndex index(c, path, g_conf->filestore_merge_threshold,
 		  g_conf->filestore_split_multiple,
 		  version,
 		  g_conf->filestore_index_retry_probability);
   return index.init();
 }
 
-int IndexManager::build_index(coll_t c, const char *path, CollectionIndex **index) {
+int CStoreIndexManager::build_index(coll_t c, const char *path, CStoreCollectionIndex **index) {
   if (upgrade) {
     // Need to check the collection generation
     int r;
@@ -95,12 +95,12 @@ int IndexManager::build_index(coll_t c, const char *path, CollectionIndex **inde
       return r;
 
     switch (version) {
-    case CollectionIndex::FLAT_INDEX_TAG:
-    case CollectionIndex::HASH_INDEX_TAG: // fall through
-    case CollectionIndex::HASH_INDEX_TAG_2: // fall through
-    case CollectionIndex::HOBJECT_WITH_POOL: {
-      // Must be a HashIndex
-      *index = new HashIndex(c, path, g_conf->filestore_merge_threshold,
+    case CStoreCollectionIndex::FLAT_INDEX_TAG:
+    case CStoreCollectionIndex::HASH_INDEX_TAG: // fall through
+    case CStoreCollectionIndex::HASH_INDEX_TAG_2: // fall through
+    case CStoreCollectionIndex::HOBJECT_WITH_POOL: {
+      // Must be a CStoreHashIndex
+      *index = new CStoreHashIndex(c, path, g_conf->filestore_merge_threshold,
 				   g_conf->filestore_split_multiple, version);
       return 0;
     }
@@ -109,22 +109,22 @@ int IndexManager::build_index(coll_t c, const char *path, CollectionIndex **inde
 
   } else {
     // No need to check
-    *index = new HashIndex(c, path, g_conf->filestore_merge_threshold,
+    *index = new CStoreHashIndex(c, path, g_conf->filestore_merge_threshold,
 				 g_conf->filestore_split_multiple,
-				 CollectionIndex::HOBJECT_WITH_POOL,
+				 CStoreCollectionIndex::HOBJECT_WITH_POOL,
 				 g_conf->filestore_index_retry_probability);
     return 0;
   }
 }
 
-int IndexManager::get_index(coll_t c, const string& baseDir, Index *index) {
+int CStoreIndexManager::get_index(coll_t c, const string& baseDir, CStoreIndex *index) {
 
   Mutex::Locker l(lock);
-  ceph::unordered_map<coll_t, CollectionIndex* > ::iterator it = col_indices.find(c);
+  ceph::unordered_map<coll_t, CStoreCollectionIndex* > ::iterator it = col_indices.find(c);
   if (it == col_indices.end()) {
     char path[PATH_MAX];
     snprintf(path, sizeof(path), "%s/current/%s", baseDir.c_str(), c.to_str().c_str());
-    CollectionIndex* colIndex = NULL;
+    CStoreCollectionIndex* colIndex = NULL;
     int r = build_index(c, path, &colIndex);
     if (r < 0)
       return r;

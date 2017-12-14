@@ -17,16 +17,16 @@
 #include "osd/osd_types.h"
 #include <errno.h>
 
-#include "HashIndex.h"
+#include "CStoreHashIndex.h"
 
 #include "common/debug.h"
 #define dout_subsys ceph_subsys_cstore
 
-const string HashIndex::SUBDIR_ATTR = "contents";
-const string HashIndex::IN_PROGRESS_OP_TAG = "in_progress_op";
+const string CStoreHashIndex::SUBDIR_ATTR = "contents";
+const string CStoreHashIndex::IN_PROGRESS_OP_TAG = "in_progress_op";
 
 /// hex digit to integer value
-int hex_to_int(char c)
+int cstore_hex_to_int(char c)
 {
   if (c >= '0' && c <= '9')
     return c - '0';
@@ -36,7 +36,7 @@ int hex_to_int(char c)
 }
 
 /// int value to hex digit
-char int_to_hex(int v)
+char cstore_int_to_hex(int v)
 {
   assert(v < 16);
   if (v < 10)
@@ -45,7 +45,7 @@ char int_to_hex(int v)
 }
 
 /// reverse bits in a nibble (0..15)
-int reverse_nibble_bits(int in)
+int cstore_reverse_nibble_bits(int in)
 {
   assert(in < 16);
   return
@@ -56,39 +56,39 @@ int reverse_nibble_bits(int in)
 }
 
 /// reverse nibble bits in a hex digit
-char reverse_hexdigit_bits(char c)
+char cstore_reverse_hexdigit_bits(char c)
 {
-  return int_to_hex(reverse_nibble_bits(hex_to_int(c)));
+  return cstore_int_to_hex(cstore_reverse_nibble_bits(cstore_hex_to_int(c)));
 }
 
 /// reverse nibble bits in a hex string
-string reverse_hexdigit_bits_string(string s)
+string cstore_reverse_hexdigit_bits_string(string s)
 {
   for (unsigned i=0; i<s.size(); ++i)
-    s[i] = reverse_hexdigit_bits(s[i]);
+    s[i] = cstore_reverse_hexdigit_bits(s[i]);
   return s;
 }
 
 /// compare hex digit (as length 1 string) bitwise
-bool cmp_hexdigit_bitwise(const string& l, const string& r)
+bool cstore_cmp_hexdigit_bitwise(const string& l, const string& r)
 {
   assert(l.length() == 1 && r.length() == 1);
-  int lv = hex_to_int(l[0]);
-  int rv = hex_to_int(r[0]);
+  int lv = cstore_hex_to_int(l[0]);
+  int rv = cstore_hex_to_int(r[0]);
   assert(lv < 16);
   assert(rv < 16);
-  return reverse_nibble_bits(lv) < reverse_nibble_bits(rv);
+  return cstore_reverse_nibble_bits(lv) < cstore_reverse_nibble_bits(rv);
 }
 
 /// compare hex digit string bitwise
-bool cmp_hexdigit_string_bitwise(const string& l, const string& r)
+bool cstore_cmp_hexdigit_string_bitwise(const string& l, const string& r)
 {
-  string ll = reverse_hexdigit_bits_string(l);
-  string rr = reverse_hexdigit_bits_string(r);
+  string ll = cstore_reverse_hexdigit_bits_string(l);
+  string rr = cstore_reverse_hexdigit_bits_string(r);
   return ll < rr;
 }
 
-int HashIndex::cleanup() {
+int CStoreHashIndex::cleanup() {
   bufferlist bl;
   int r = get_attr_path(vector<string>(), IN_PROGRESS_OP_TAG, bl);
   if (r < 0) {
@@ -124,7 +124,7 @@ int HashIndex::cleanup() {
     return -EINVAL;
 }
 
-int HashIndex::reset_attr(
+int CStoreHashIndex::reset_attr(
   const vector<string> &path)
 {
   int exists = 0;
@@ -149,9 +149,9 @@ int HashIndex::reset_attr(
   return set_info(path, info);
 }
 
-int HashIndex::col_split_level(
-  HashIndex &from,
-  HashIndex &to,
+int CStoreHashIndex::col_split_level(
+  CStoreHashIndex &from,
+  CStoreHashIndex &to,
   const vector<string> &path,
   uint32_t inbits,
   uint32_t match,
@@ -288,29 +288,29 @@ int HashIndex::col_split_level(
   return 0;
 }
 
-int HashIndex::_split(
+int CStoreHashIndex::_split(
   uint32_t match,
   uint32_t bits,
-  CollectionIndex* dest) {
+  CStoreCollectionIndex* dest) {
   assert(collection_version() == dest->collection_version());
   unsigned mkdirred = 0;
   return col_split_level(
     *this,
-    *static_cast<HashIndex*>(dest),
+    *static_cast<CStoreHashIndex*>(dest),
     vector<string>(),
     bits,
     match,
     &mkdirred);
 }
 
-int HashIndex::_init() {
+int CStoreHashIndex::_init() {
   subdir_info_s info;
   vector<string> path;
   return set_info(path, info);
 }
 
 /* LFNIndex virtual method implementations */
-int HashIndex::_created(const vector<string> &path,
+int CStoreHashIndex::_created(const vector<string> &path,
 			const ghobject_t &oid,
 			const string &mangled_name) {
   subdir_info_s info;
@@ -333,7 +333,7 @@ int HashIndex::_created(const vector<string> &path,
   }
 }
 
-int HashIndex::_remove(const vector<string> &path,
+int CStoreHashIndex::_remove(const vector<string> &path,
 		       const ghobject_t &oid,
 		       const string &mangled_name) {
   int r;
@@ -358,7 +358,7 @@ int HashIndex::_remove(const vector<string> &path,
   }
 }
 
-int HashIndex::_lookup(const ghobject_t &oid,
+int CStoreHashIndex::_lookup(const ghobject_t &oid,
 		       vector<string> *path,
 		       string *mangled_name,
 		       int *hardlink) {
@@ -383,7 +383,7 @@ int HashIndex::_lookup(const ghobject_t &oid,
   return get_mangled_name(*path, oid, mangled_name, hardlink);
 }
 
-int HashIndex::_collection_list_partial(const ghobject_t &start,
+int CStoreHashIndex::_collection_list_partial(const ghobject_t &start,
 					const ghobject_t &end,
 					bool sort_bitwise,
 					int max_count,
@@ -398,11 +398,11 @@ int HashIndex::_collection_list_partial(const ghobject_t &start,
   return list_by_hash(path, end, sort_bitwise, max_count, next, ls);
 }
 
-int HashIndex::prep_delete() {
+int CStoreHashIndex::prep_delete() {
   return recursive_remove(vector<string>());
 }
 
-int HashIndex::_pre_hash_collection(uint32_t pg_num, uint64_t expected_num_objs) {
+int CStoreHashIndex::_pre_hash_collection(uint32_t pg_num, uint64_t expected_num_objs) {
   int ret;
   vector<string> path;
   subdir_info_s root_info;
@@ -420,7 +420,7 @@ int HashIndex::_pre_hash_collection(uint32_t pg_num, uint64_t expected_num_objs)
   return init_split_folder(path, 0);
 }
 
-int HashIndex::pre_split_folder(uint32_t pg_num, uint64_t expected_num_objs)
+int CStoreHashIndex::pre_split_folder(uint32_t pg_num, uint64_t expected_num_objs)
 {
   // If folder merging is enabled (by setting the threshold positive),
   // no need to split
@@ -503,7 +503,7 @@ int HashIndex::pre_split_folder(uint32_t pg_num, uint64_t expected_num_objs)
   return 0;
 }
 
-int HashIndex::init_split_folder(vector<string> &path, uint32_t hash_level)
+int CStoreHashIndex::init_split_folder(vector<string> &path, uint32_t hash_level)
 {
   // Get the number of sub directories for the current path
   vector<string> subdirs;
@@ -532,7 +532,7 @@ int HashIndex::init_split_folder(vector<string> &path, uint32_t hash_level)
   return 0;
 }
 
-int HashIndex::recursive_create_path(vector<string>& path, int level)
+int CStoreHashIndex::recursive_create_path(vector<string>& path, int level)
 {
   if (level == 0)
     return 0;
@@ -549,11 +549,11 @@ int HashIndex::recursive_create_path(vector<string>& path, int level)
   return 0;
 }
 
-int HashIndex::recursive_remove(const vector<string> &path) {
+int CStoreHashIndex::recursive_remove(const vector<string> &path) {
   return _recursive_remove(path, true);
 }
 
-int HashIndex::_recursive_remove(const vector<string> &path, bool top) {
+int CStoreHashIndex::_recursive_remove(const vector<string> &path, bool top) {
   vector<string> subdirs;
   dout(20) << __func__ << " path=" << path << dendl;
   int r = list_subdirs(path, &subdirs);
@@ -581,7 +581,7 @@ int HashIndex::_recursive_remove(const vector<string> &path, bool top) {
     return remove_path(path);
 }
 
-int HashIndex::start_col_split(const vector<string> &path) {
+int CStoreHashIndex::start_col_split(const vector<string> &path) {
   bufferlist bl;
   InProgressOp op_tag(InProgressOp::COL_SPLIT, path);
   op_tag.encode(bl);
@@ -591,7 +591,7 @@ int HashIndex::start_col_split(const vector<string> &path) {
   return fsync_dir(vector<string>());
 }
 
-int HashIndex::start_split(const vector<string> &path) {
+int CStoreHashIndex::start_split(const vector<string> &path) {
   bufferlist bl;
   InProgressOp op_tag(InProgressOp::SPLIT, path);
   op_tag.encode(bl);
@@ -601,7 +601,7 @@ int HashIndex::start_split(const vector<string> &path) {
   return fsync_dir(vector<string>());
 }
 
-int HashIndex::start_merge(const vector<string> &path) {
+int CStoreHashIndex::start_merge(const vector<string> &path) {
   bufferlist bl;
   InProgressOp op_tag(InProgressOp::MERGE, path);
   op_tag.encode(bl);
@@ -611,11 +611,11 @@ int HashIndex::start_merge(const vector<string> &path) {
   return fsync_dir(vector<string>());
 }
 
-int HashIndex::end_split_or_merge(const vector<string> &path) {
+int CStoreHashIndex::end_split_or_merge(const vector<string> &path) {
   return remove_attr_path(vector<string>(), IN_PROGRESS_OP_TAG);
 }
 
-int HashIndex::get_info(const vector<string> &path, subdir_info_s *info) {
+int CStoreHashIndex::get_info(const vector<string> &path, subdir_info_s *info) {
   bufferlist buf;
   int r = get_attr_path(path, SUBDIR_ATTR, buf);
   if (r < 0)
@@ -626,31 +626,31 @@ int HashIndex::get_info(const vector<string> &path, subdir_info_s *info) {
   return 0;
 }
 
-int HashIndex::set_info(const vector<string> &path, const subdir_info_s &info) {
+int CStoreHashIndex::set_info(const vector<string> &path, const subdir_info_s &info) {
   bufferlist buf;
   assert(path.size() == (unsigned)info.hash_level);
   info.encode(buf);
   return add_attr_path(path, SUBDIR_ATTR, buf);
 }
 
-bool HashIndex::must_merge(const subdir_info_s &info) {
+bool CStoreHashIndex::must_merge(const subdir_info_s &info) {
   return (info.hash_level > 0 &&
           merge_threshold > 0 &&
 	  info.objs < (unsigned)merge_threshold &&
 	  info.subdirs == 0);
 }
 
-bool HashIndex::must_split(const subdir_info_s &info) {
+bool CStoreHashIndex::must_split(const subdir_info_s &info) {
   return (info.hash_level < (unsigned)MAX_HASH_LEVEL &&
 	  info.objs > ((unsigned)(abs(merge_threshold)) * 16 * split_multiplier));
 
 }
 
-int HashIndex::initiate_merge(const vector<string> &path, subdir_info_s info) {
+int CStoreHashIndex::initiate_merge(const vector<string> &path, subdir_info_s info) {
   return start_merge(path);
 }
 
-int HashIndex::complete_merge(const vector<string> &path, subdir_info_s info) {
+int CStoreHashIndex::complete_merge(const vector<string> &path, subdir_info_s info) {
   vector<string> dst = path;
   dst.pop_back();
   subdir_info_s dstinfo;
@@ -687,11 +687,11 @@ int HashIndex::complete_merge(const vector<string> &path, subdir_info_s info) {
   return end_split_or_merge(path);
 }
 
-int HashIndex::initiate_split(const vector<string> &path, subdir_info_s info) {
+int CStoreHashIndex::initiate_split(const vector<string> &path, subdir_info_s info) {
   return start_split(path);
 }
 
-int HashIndex::complete_split(const vector<string> &path, subdir_info_s info) {
+int CStoreHashIndex::complete_split(const vector<string> &path, subdir_info_s info) {
   int level = info.hash_level;
   map<string, ghobject_t> objects;
   vector<string> dst = path;
@@ -794,7 +794,7 @@ int HashIndex::complete_split(const vector<string> &path, subdir_info_s info) {
   return end_split_or_merge(path);
 }
 
-void HashIndex::get_path_components(const ghobject_t &oid,
+void CStoreHashIndex::get_path_components(const ghobject_t &oid,
 				    vector<string> *path) {
   char buf[MAX_HASH_LEVEL + 1];
   snprintf(buf, sizeof(buf), "%.*X", MAX_HASH_LEVEL, (uint32_t)oid.hobj.get_nibblewise_key());
@@ -806,7 +806,7 @@ void HashIndex::get_path_components(const ghobject_t &oid,
   }
 }
 
-string HashIndex::get_hash_str(uint32_t hash) {
+string CStoreHashIndex::get_hash_str(uint32_t hash) {
   char buf[MAX_HASH_LEVEL + 1];
   snprintf(buf, sizeof(buf), "%.*X", MAX_HASH_LEVEL, hash);
   string retval;
@@ -816,12 +816,12 @@ string HashIndex::get_hash_str(uint32_t hash) {
   return retval;
 }
 
-string HashIndex::get_path_str(const ghobject_t &oid) {
+string CStoreHashIndex::get_path_str(const ghobject_t &oid) {
   assert(!oid.is_max());
   return get_hash_str(oid.hobj.get_hash());
 }
 
-uint32_t HashIndex::hash_prefix_to_hash(string prefix) {
+uint32_t CStoreHashIndex::hash_prefix_to_hash(string prefix) {
   while (prefix.size() < sizeof(uint32_t) * 2) {
     prefix.push_back('0');
   }
@@ -834,7 +834,7 @@ uint32_t HashIndex::hash_prefix_to_hash(string prefix) {
   return hash;
 }
 
-int HashIndex::get_path_contents_by_hash_bitwise(
+int CStoreHashIndex::get_path_contents_by_hash_bitwise(
   const vector<string> &path,
   const ghobject_t *next_object,
   set<string, CmpHexdigitStringBitwise> *hash_prefixes,
@@ -861,7 +861,7 @@ int HashIndex::get_path_contents_by_hash_bitwise(
     return r;
 
   // sort subdirs bitwise (by reversing hex digit nibbles)
-  std::sort(subdirs.begin(), subdirs.end(), cmp_hexdigit_bitwise);
+  std::sort(subdirs.begin(), subdirs.end(), cstore_cmp_hexdigit_bitwise);
 
   // Local to this function, we will convert the prefix strings
   // (previously simply the reversed hex digits) to also have each
@@ -871,15 +871,15 @@ int HashIndex::get_path_contents_by_hash_bitwise(
   for (vector<string>::const_iterator i = path.begin();
        i != path.end();
        ++i) {
-    cur_prefix.append(reverse_hexdigit_bits_string(*i));
+    cur_prefix.append(cstore_reverse_hexdigit_bits_string(*i));
   }
   string next_object_string;
   if (next_object)
-    next_object_string = reverse_hexdigit_bits_string(get_path_str(*next_object));
+    next_object_string = cstore_reverse_hexdigit_bits_string(get_path_str(*next_object));
   for (vector<string>::iterator i = subdirs.begin();
        i != subdirs.end();
        ++i) {
-    string candidate = cur_prefix + reverse_hexdigit_bits_string(*i);
+    string candidate = cur_prefix + cstore_reverse_hexdigit_bits_string(*i);
     if (next_object) {
       if (next_object->is_max())
 	continue;
@@ -887,12 +887,12 @@ int HashIndex::get_path_contents_by_hash_bitwise(
 	continue;
     }
     // re-reverse the hex digit nibbles for the caller
-    hash_prefixes->insert(reverse_hexdigit_bits_string(candidate));
+    hash_prefixes->insert(cstore_reverse_hexdigit_bits_string(candidate));
   }
   return 0;
 }
 
-int HashIndex::get_path_contents_by_hash_nibblewise(
+int CStoreHashIndex::get_path_contents_by_hash_nibblewise(
   const vector<string> &path,
   const ghobject_t *next_object,
   set<string> *hash_prefixes,
@@ -947,7 +947,7 @@ int HashIndex::get_path_contents_by_hash_nibblewise(
   return 0;
 }
 
-int HashIndex::list_by_hash(const vector<string> &path,
+int CStoreHashIndex::list_by_hash(const vector<string> &path,
 			    const ghobject_t &end,
 			    bool sort_bitwise,
 			    int max_count,
@@ -961,7 +961,7 @@ int HashIndex::list_by_hash(const vector<string> &path,
     return list_by_hash_nibblewise(path, end, max_count, next, out);
 }
 
-int HashIndex::list_by_hash_bitwise(
+int CStoreHashIndex::list_by_hash_bitwise(
   const vector<string> &path,
   const ghobject_t& end,
   int max_count,
@@ -1027,7 +1027,7 @@ int HashIndex::list_by_hash_bitwise(
   return 0;
 }
 
-int HashIndex::list_by_hash_nibblewise(
+int CStoreHashIndex::list_by_hash_nibblewise(
   const vector<string> &path,
   const ghobject_t& end,
   int max_count,

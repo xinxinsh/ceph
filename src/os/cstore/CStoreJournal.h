@@ -13,8 +13,8 @@
  */
 
 
-#ifndef CEPH_JOURNAL_H
-#define CEPH_JOURNAL_H
+#ifndef CEPH_CSTORE_JOURNAL_H
+#define CEPH_CSTORE_JOURNAL_H
 
 #include <errno.h>
 
@@ -26,7 +26,7 @@
 
 class PerfCounters;
 
-class Journal {
+class CStoreJournal {
 protected:
   uuid_d fsid;
   Finisher *finisher;
@@ -37,11 +37,11 @@ protected:
   bool wait_on_full;
 
 public:
-  Journal(uuid_d f, Finisher *fin, Cond *c=0) :
+  CStoreJournal(uuid_d f, Finisher *fin, Cond *c=0) :
     fsid(f), finisher(fin), logger(NULL),
     do_sync_cond(c),
     wait_on_full(false) { }
-  virtual ~Journal() { }
+  virtual ~CStoreJournal() { }
 
   virtual int check() = 0;   ///< check if journal appears valid
   virtual int create() = 0;  ///< create a fresh journal

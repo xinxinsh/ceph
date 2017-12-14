@@ -12,8 +12,8 @@
  *
  */
 
-#ifndef OS_COLLECTIONINDEX_H
-#define OS_COLLECTIONINDEX_H
+#ifndef OS_CSTORE_COLLECTIONINDEX_H
+#define OS_CSTORE_COLLECTIONINDEX_H
 
 #include <string>
 #include <vector>
@@ -24,18 +24,18 @@
 #include "common/RWLock.h"
 
 /**
- * CollectionIndex provides an interface for manipulating indexed collections
+ * CStoreCollectionIndex provides an interface for manipulating indexed collections
  */
-class CollectionIndex {
+class CStoreCollectionIndex {
 protected:
   /**
    * Object encapsulating a returned path.
    *
    * A path to an object (existent or non-existent) becomes invalid
    * when a different object is created in the index.  Path stores
-   * a shared_ptr to the CollectionIndex to keep the index alive
+   * a shared_ptr to the CStoreCollectionIndex to keep the index alive
    * during its lifetime.
-   * @see IndexManager
+   * @see CStoreIndexManager
    * @see self_ref
    * @see set_ref
    */
@@ -44,14 +44,14 @@ protected:
     /// Returned path
     string full_path;
     /// Ref to parent Index
-    CollectionIndex* parent_ref;
+    CStoreCollectionIndex* parent_ref;
     /// coll_t for parent Index
     coll_t parent_coll;
 
     /// Normal Constructor
     Path(
       string path,                              ///< [in] Path to return.
-      CollectionIndex* ref)
+      CStoreCollectionIndex* ref)
       : full_path(path), parent_ref(ref), parent_coll(parent_ref->coll()) {}
 
     /// Debugging Constructor
@@ -67,7 +67,7 @@ protected:
     const coll_t& coll() const { return parent_coll; }
 
     /// Getter for parent
-    CollectionIndex* get_index() const {
+    CStoreCollectionIndex* get_index() const {
       return parent_ref;
     }
   };
@@ -75,9 +75,9 @@ protected:
 
   RWLock access_lock;
   /// Type of returned paths
-  typedef ceph::shared_ptr<Path> IndexedPath;
+  typedef ceph::shared_ptr<Path> CIndexedPath;
 
-  static IndexedPath get_testing_path(string path, coll_t collection) {
+  static CIndexedPath get_testing_path(string path, coll_t collection) {
     return std::make_shared<Path>(path, collection);
   }
 
@@ -93,7 +93,7 @@ protected:
   virtual uint32_t collection_version() = 0;
 
   /**
-   * Returns the collection managed by this CollectionIndex
+   * Returns the collection managed by this CStoreCollectionIndex
    */
   virtual coll_t coll() const = 0;
 
@@ -110,10 +110,10 @@ protected:
    *
    * Index implemenations may need to perform compound operations
    * which may leave the collection unstable if interupted.  cleanup
-   * is called on mount to allow the CollectionIndex implementation
+   * is called on mount to allow the CStoreCollectionIndex implementation
    * to stabilize.
    *
-   * @see HashIndex
+   * @see CStoreHashIndex
    * @return Error Code, 0 for success
    */
   virtual int cleanup() = 0;
@@ -138,13 +138,13 @@ protected:
     ) = 0;
 
   /**
-   * Gets the IndexedPath for oid.
+   * Gets the CIndexedPath for oid.
    *
    * @return Error Code, 0 for success
    */
   virtual int lookup(
     const ghobject_t &oid, ///< [in] Object to lookup
-    IndexedPath *path,	   ///< [out] Path to object
+    CIndexedPath *path,	   ///< [out] Path to object
     int *hardlink          ///< [out] number of hard links of this object. *hardlink=0 mean object no-exist.
     ) = 0;
 
@@ -158,7 +158,7 @@ protected:
   virtual int split(
     uint32_t match,                             //< [in] value to match
     uint32_t bits,                              //< [in] bits to check
-    CollectionIndex* dest  //< [in] destination index
+    CStoreCollectionIndex* dest  //< [in] destination index
     ) { assert(0); return 0; }
 
 
@@ -175,8 +175,8 @@ protected:
   /// Call prior to removing directory
   virtual int prep_delete() { return 0; }
 
-  explicit CollectionIndex(const coll_t& collection):
-    access_lock("CollectionIndex::access_lock", true, false) {}
+  explicit CStoreCollectionIndex(const coll_t& collection):
+    access_lock("CStoreCollectionIndex::access_lock", true, false) {}
 
   /*
    * Pre-hash the collection, this collection should map to a PG folder.
@@ -191,7 +191,7 @@ protected:
       ) { assert(0); return 0; }
 
   /// Virtual destructor
-  virtual ~CollectionIndex() {}
+  virtual ~CStoreCollectionIndex() {}
 };
 
 #endif

@@ -16,7 +16,7 @@
 #include "common/debug.h"
 #include "common/errno.h"
 #include "common/safe_io.h"
-#include "FileJournal.h"
+#include "CStoreFileJournal.h"
 #include "include/color.h"
 #include "common/perf_counters.h"
 #include "CStore.h"
@@ -43,13 +43,13 @@
 
 #define dout_subsys ceph_subsys_journal
 #undef dout_prefix
-#define dout_prefix *_dout << "journal "
+#define dout_prefix *_dout << "cstore journal "
 
 const static int64_t ONE_MEG(1 << 20);
 const static int CEPH_DIRECTIO_ALIGNMENT(4096);
 
 
-int FileJournal::_open(bool forwrite, bool create)
+int CStoreFileJournal::_open(bool forwrite, bool create)
 {
   int flags, ret;
 
@@ -66,14 +66,14 @@ int FileJournal::_open(bool forwrite, bool create)
   if (fd >= 0) {
     if (TEMP_FAILURE_RETRY(::close(fd))) {
       int err = errno;
-      derr << "FileJournal::_open: error closing old fd: "
+      derr << "CStoreFileJournal::_open: error closing old fd: "
 	   << cpp_strerror(err) << dendl;
     }
   }
   fd = TEMP_FAILURE_RETRY(::open(fn.c_str(), flags, 0644));
   if (fd < 0) {
     int err = errno;
-    dout(2) << "FileJournal::_open unable to open journal "
+    dout(2) << "CStoreFileJournal::_open unable to open journal "
 	    << fn << ": " << cpp_strerror(err) << dendl;
     return -err;
   }
@@ -82,7 +82,7 @@ int FileJournal::_open(bool forwrite, bool create)
   ret = ::fstat(fd, &st);
   if (ret) {
     ret = errno;
-    derr << "FileJournal::_open: unable to fstat journal: " << cpp_strerror(ret) << dendl;
+    derr << "CStoreFileJournal::_open: unable to fstat journal: " << cpp_strerror(ret) << dendl;
     ret = -ret;
     goto out_fd;
   }
@@ -91,7 +91,7 @@ int FileJournal::_open(bool forwrite, bool create)
     ret = _open_block_device();
   } else {
     if (aio && !force_aio) {
-      derr << "FileJournal::_open: disabling aio for non-block journal.  Use "
+      derr << "CStoreFileJournal::_open: disabling aio for non-block journal.  Use "
 	   << "journal_force_aio to force use of aio anyway" << dendl;
       aio = false;
     }
@@ -107,7 +107,7 @@ int FileJournal::_open(bool forwrite, bool create)
     ret = io_setup(128, &aio_ctx);
     if (ret < 0) {
       ret = errno;
-      derr << "FileJournal::_open: unable to setup io_context " << cpp_strerror(ret) << dendl;
+      derr << "CStoreFileJournal::_open: unable to setup io_context " << cpp_strerror(ret) << dendl;
       ret = -ret;
       goto out_fd;
     }
@@ -130,7 +130,7 @@ int FileJournal::_open(bool forwrite, bool create)
   return ret;
 }
 
-int FileJournal::_open_block_device()
+int CStoreFileJournal::_open_block_device()
 {
   int64_t bdev_sz = 0;
   int ret = get_block_device_size(fd, &bdev_sz);
@@ -161,7 +161,7 @@ int FileJournal::_open_block_device()
   return 0;
 }
 
-void FileJournal::_check_disk_write_cache() const
+void CStoreFileJournal::_check_disk_write_cache() const
 {
 #if !defined(__linux__)
     dout(10) << "_check_disk_write_cache: not linux, NOT checking disk write "
@@ -242,7 +242,7 @@ done:
 #endif // __linux__
 }
 
-int FileJournal::_open_file(int64_t oldsize, blksize_t blksize,
+int CStoreFileJournal::_open_file(int64_t oldsize, blksize_t blksize,
 			    bool create)
 {
   int ret;
@@ -263,14 +263,14 @@ int FileJournal::_open_file(int64_t oldsize, blksize_t blksize,
     ret = ::ftruncate(fd, newsize);
     if (ret < 0) {
       int err = errno;
-      derr << "FileJournal::_open_file : unable to extend journal to "
+      derr << "CStoreFileJournal::_open_file : unable to extend journal to "
 	   << newsize << " bytes: " << cpp_strerror(err) << dendl;
       return -err;
     }
 #ifdef HAVE_POSIX_FALLOCATE
     ret = ::posix_fallocate(fd, 0, newsize);
     if (ret) {
-      derr << "FileJournal::_open_file : unable to preallocation journal to "
+      derr << "CStoreFileJournal::_open_file : unable to preallocation journal to "
 	   << newsize << " bytes: " << cpp_strerror(ret) << dendl;
       return -ret;
     }
@@ -285,7 +285,7 @@ int FileJournal::_open_file(int64_t oldsize, blksize_t blksize,
     ret = ::fcntl(fd, F_PREALLOCATE, &store);
     if (ret == -1) {
       ret = -errno;
-      derr << "FileJournal::_open_file : unable to preallocation journal to "
+      derr << "CStoreFileJournal::_open_file : unable to preallocation journal to "
 	   << newsize << " bytes: " << cpp_strerror(ret) << dendl;
       return ret;
     }
@@ -300,7 +300,7 @@ int FileJournal::_open_file(int64_t oldsize, blksize_t blksize,
   block_size = g_conf->journal_block_size;
 
   if (create && g_conf->journal_zero_on_create) {
-    derr << "FileJournal::_open_file : zeroing journal" << dendl;
+    derr << "CStoreFileJournal::_open_file : zeroing journal" << dendl;
     uint64_t write_size = 1 << 20;
     char *buf;
     ret = ::posix_memalign((void **)&buf, block_size, write_size);
@@ -334,7 +334,7 @@ int FileJournal::_open_file(int64_t oldsize, blksize_t blksize,
 }
 
 // This can not be used on an active journal
-int FileJournal::check()
+int CStoreFileJournal::check()
 {
   int ret;
 
@@ -363,7 +363,7 @@ int FileJournal::check()
 }
 
 
-int FileJournal::create()
+int CStoreFileJournal::create()
 {
   void *buf = 0;
   int64_t needed_space;
@@ -399,7 +399,7 @@ int FileJournal::create()
   bp = prepare_header();
   if (TEMP_FAILURE_RETRY(::pwrite(fd, bp.c_str(), bp.length(), 0)) < 0) {
     ret = -errno;
-    derr << "FileJournal::create : create write header error "
+    derr << "CStoreFileJournal::create : create write header error "
          << cpp_strerror(ret) << dendl;
     goto close_fd;
   }
@@ -408,14 +408,14 @@ int FileJournal::create()
   ret = posix_memalign(&buf, block_size, block_size);
   if (ret) {
     ret = -ret;
-    derr << "FileJournal::create: failed to allocate " << block_size
+    derr << "CStoreFileJournal::create: failed to allocate " << block_size
 	 << " bytes of memory: " << cpp_strerror(ret) << dendl;
     goto close_fd;
   }
   memset(buf, 0, block_size);
   if (TEMP_FAILURE_RETRY(::pwrite(fd, buf, block_size, get_top())) < 0) {
     ret = -errno;
-    derr << "FileJournal::create: error zeroing first " << block_size
+    derr << "CStoreFileJournal::create: error zeroing first " << block_size
 	 << " bytes " << cpp_strerror(ret) << dendl;
     goto free_buf;
   }
@@ -423,7 +423,7 @@ int FileJournal::create()
   needed_space = ((int64_t)g_conf->osd_max_write_size) << 20;
   needed_space += (2 * sizeof(entry_header_t)) + get_top();
   if (header.max_size - header.start < needed_space) {
-    derr << "FileJournal::create: OSD journal is not large enough to hold "
+    derr << "CStoreFileJournal::create: OSD journal is not large enough to hold "
 	 << "osd_max_write_size bytes!" << dendl;
     ret = -ENOSPC;
     goto free_buf;
@@ -438,7 +438,7 @@ free_buf:
 close_fd:
   if (TEMP_FAILURE_RETRY(::close(fd)) < 0) {
     ret = -errno;
-    derr << "FileJournal::create: error closing fd: " << cpp_strerror(ret)
+    derr << "CStoreFileJournal::create: error closing fd: " << cpp_strerror(ret)
 	 << dendl;
   }
 done:
@@ -447,7 +447,7 @@ done:
 }
 
 // This can not be used on an active journal
-int FileJournal::peek_fsid(uuid_d& fsid)
+int CStoreFileJournal::peek_fsid(uuid_d& fsid)
 {
   assert(fd == -1);
   int r = _open(false, false);
@@ -462,7 +462,7 @@ out:
   return r;
 }
 
-int FileJournal::open(uint64_t fs_op_seq)
+int CStoreFileJournal::open(uint64_t fs_op_seq)
 {
   dout(2) << "open " << fn << " fsid " << fsid << " fs_op_seq " << fs_op_seq << dendl;
 
@@ -490,7 +490,7 @@ int FileJournal::open(uint64_t fs_op_seq)
     //<< " vs expected fsid = " << fsid
 	   << dendl;
   if (header.fsid != fsid) {
-    derr << "FileJournal::open: ondisk fsid " << header.fsid << " doesn't match expected " << fsid
+    derr << "CStoreFileJournal::open: ondisk fsid " << header.fsid << " doesn't match expected " << fsid
          << ", invalid (someone else's?) journal" << dendl;
     return -EINVAL;
   }
@@ -564,12 +564,12 @@ int FileJournal::open(uint64_t fs_op_seq)
   return 0;
 }
 
-void FileJournal::_close(int fd) const
+void CStoreFileJournal::_close(int fd) const
 {
   VOID_TEMP_FAILURE_RETRY(::close(fd));
 }
 
-void FileJournal::close()
+void CStoreFileJournal::close()
 {
   dout(1) << "close " << fn << dendl;
 
@@ -585,17 +585,17 @@ void FileJournal::close()
 }
 
 
-int FileJournal::dump(ostream& out)
+int CStoreFileJournal::dump(ostream& out)
 {
   return _dump(out, false);
 }
 
-int FileJournal::simple_dump(ostream& out)
+int CStoreFileJournal::simple_dump(ostream& out)
 {
   return _dump(out, true);
 }
 
-int FileJournal::_dump(ostream& out, bool simple)
+int CStoreFileJournal::_dump(ostream& out, bool simple)
 {
   JSONFormatter f(true);
   int ret = _fdump(f, simple);
@@ -603,7 +603,7 @@ int FileJournal::_dump(ostream& out, bool simple)
   return ret;
 }
 
-int FileJournal::_fdump(Formatter &f, bool simple)
+int CStoreFileJournal::_fdump(Formatter &f, bool simple)
 {
   dout(10) << "_fdump" << dendl;
 
@@ -697,7 +697,7 @@ int FileJournal::_fdump(Formatter &f, bool simple)
 }
 
 
-void FileJournal::start_writer()
+void CStoreFileJournal::start_writer()
 {
   write_stop = false;
   aio_stop = false;
@@ -708,7 +708,7 @@ void FileJournal::start_writer()
 #endif
 }
 
-void FileJournal::stop_writer()
+void CStoreFileJournal::stop_writer()
 {
   // Do nothing if writer already stopped or never started
   if (!write_stop)
@@ -744,7 +744,7 @@ void FileJournal::stop_writer()
 
 
 
-void FileJournal::print_header(const header_t &header) const
+void CStoreFileJournal::print_header(const header_t &header) const
 {
   dout(10) << "header: block_size " << header.block_size
 	   << " alignment " << header.alignment
@@ -754,7 +754,7 @@ void FileJournal::print_header(const header_t &header) const
   dout(10) << " write_pos " << write_pos << dendl;
 }
 
-int FileJournal::read_header(header_t *hdr) const
+int CStoreFileJournal::read_header(header_t *hdr) const
 {
   dout(10) << "read_header" << dendl;
   bufferlist bl;
@@ -806,7 +806,7 @@ int FileJournal::read_header(header_t *hdr) const
   return 0;
 }
 
-bufferptr FileJournal::prepare_header()
+bufferptr CStoreFileJournal::prepare_header()
 {
   bufferlist bl;
   {
@@ -824,7 +824,7 @@ bufferptr FileJournal::prepare_header()
   return bp;
 }
 
-void FileJournal::write_header_sync()
+void CStoreFileJournal::write_header_sync()
 {
   Mutex::Locker locker(write_lock);
   must_write_header = true;
@@ -833,7 +833,7 @@ void FileJournal::write_header_sync()
   dout(20) << __func__ << " finish" << dendl;
 }
 
-int FileJournal::check_for_full(uint64_t seq, off64_t pos, off64_t size)
+int CStoreFileJournal::check_for_full(uint64_t seq, off64_t pos, off64_t size)
 {
   // already full?
   if (full_state != FULL_NOTFULL)
@@ -876,7 +876,7 @@ int FileJournal::check_for_full(uint64_t seq, off64_t pos, off64_t size)
   return -ENOSPC;
 }
 
-int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_t& orig_bytes)
+int CStoreFileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_t& orig_bytes)
 {
   // gather queued writes
   off64_t queue_pos = write_pos;
@@ -956,7 +956,7 @@ out:
 }
 
 /*
-void FileJournal::queue_write_fin(uint64_t seq, Context *fin)
+void CStoreFileJournal::queue_write_fin(uint64_t seq, Context *fin)
 {
   writing_seq.push_back(seq);
   if (!waiting_for_notfull.empty()) {
@@ -974,7 +974,7 @@ void FileJournal::queue_write_fin(uint64_t seq, Context *fin)
 }
 */
 
-void FileJournal::queue_completions_thru(uint64_t seq)
+void CStoreFileJournal::queue_completions_thru(uint64_t seq)
 {
   assert(finisher_lock.is_locked());
   utime_t now = ceph_clock_now(g_ceph_context);
@@ -1005,7 +1005,7 @@ void FileJournal::queue_completions_thru(uint64_t seq)
 }
 
 
-int FileJournal::prepare_single_write(write_item &next_write, bufferlist& bl, off64_t& queue_pos, uint64_t& orig_ops, uint64_t& orig_bytes)
+int CStoreFileJournal::prepare_single_write(write_item &next_write, bufferlist& bl, off64_t& queue_pos, uint64_t& orig_ops, uint64_t& orig_bytes)
 {
   logger->tinc(l_os_j_wlat, ceph_clock_now(g_ceph_context) - next_write.start);
   uint64_t seq = next_write.seq;
@@ -1056,7 +1056,7 @@ int FileJournal::prepare_single_write(write_item &next_write, bufferlist& bl, of
   return 0;
 }
 
-void FileJournal::align_bl(off64_t pos, bufferlist& bl)
+void CStoreFileJournal::align_bl(off64_t pos, bufferlist& bl)
 {
   // make sure list segments are page aligned
   if (directio && (!bl.is_aligned(block_size) ||
@@ -1067,19 +1067,19 @@ void FileJournal::align_bl(off64_t pos, bufferlist& bl)
   }
 }
 
-int FileJournal::write_bl(off64_t& pos, bufferlist& bl)
+int CStoreFileJournal::write_bl(off64_t& pos, bufferlist& bl)
 {
   int ret;
 
   off64_t spos = ::lseek64(fd, pos, SEEK_SET);
   if (spos < 0) {
     ret = -errno;
-    derr << "FileJournal::write_bl : lseek64 failed " << cpp_strerror(ret) << dendl;
+    derr << "CStoreFileJournal::write_bl : lseek64 failed " << cpp_strerror(ret) << dendl;
     return ret;
   }
   ret = bl.write_fd(fd);
   if (ret) {
-    derr << "FileJournal::write_bl : write_fd failed: " << cpp_strerror(ret) << dendl;
+    derr << "CStoreFileJournal::write_bl : write_fd failed: " << cpp_strerror(ret) << dendl;
     return ret;
   }
   pos += bl.length();
@@ -1088,7 +1088,7 @@ int FileJournal::write_bl(off64_t& pos, bufferlist& bl)
   return 0;
 }
 
-void FileJournal::do_write(bufferlist& bl)
+void CStoreFileJournal::do_write(bufferlist& bl)
 {
   // nothing to do?
   if (bl.length() == 0 && !must_write_header)
@@ -1149,13 +1149,13 @@ void FileJournal::do_write(bufferlist& bl)
     // is a crash between the two writes.
     orig_pos = pos;
     if (write_bl(pos, second)) {
-      derr << "FileJournal::do_write: write_bl(pos=" << orig_pos
+      derr << "CStoreFileJournal::do_write: write_bl(pos=" << orig_pos
 	   << ") failed" << dendl;
       ceph_abort();
     }
     orig_pos = first_pos;
     if (write_bl(first_pos, first)) {
-      derr << "FileJournal::do_write: write_bl(pos=" << orig_pos
+      derr << "CStoreFileJournal::do_write: write_bl(pos=" << orig_pos
 	   << ") failed" << dendl;
       ceph_abort();
     }
@@ -1165,7 +1165,7 @@ void FileJournal::do_write(bufferlist& bl)
     if (hbp.length()) {
       if (TEMP_FAILURE_RETRY(::pwrite(fd, hbp.c_str(), hbp.length(), 0)) < 0) {
 	int err = errno;
-	derr << "FileJournal::do_write: pwrite(fd=" << fd
+	derr << "CStoreFileJournal::do_write: pwrite(fd=" << fd
 	     << ", hbp.length=" << hbp.length() << ") failed :"
 	     << cpp_strerror(err) << dendl;
 	ceph_abort();
@@ -1173,7 +1173,7 @@ void FileJournal::do_write(bufferlist& bl)
     }
 
     if (write_bl(pos, bl)) {
-      derr << "FileJournal::do_write: write_bl(pos=" << pos
+      derr << "CStoreFileJournal::do_write: write_bl(pos=" << pos
 	   << ") failed" << dendl;
       ceph_abort();
     }
@@ -1242,7 +1242,7 @@ void FileJournal::do_write(bufferlist& bl)
   }
 }
 
-void FileJournal::flush()
+void CStoreFileJournal::flush()
 {
   dout(10) << "waiting for completions to empty" << dendl;
   {
@@ -1256,7 +1256,7 @@ void FileJournal::flush()
 }
 
 
-void FileJournal::write_thread_entry()
+void CStoreFileJournal::write_thread_entry()
 {
   dout(10) << "write_thread_entry start" << dendl;
   while (1) {
@@ -1350,7 +1350,7 @@ void FileJournal::write_thread_entry()
 }
 
 #ifdef HAVE_LIBAIO
-void FileJournal::do_aio_write(bufferlist& bl)
+void CStoreFileJournal::do_aio_write(bufferlist& bl)
 {
 
   if (g_conf->journal_write_header_frequency &&
@@ -1387,7 +1387,7 @@ void FileJournal::do_aio_write(bufferlist& bl)
     dout(10) << "do_aio_write wrapping, first bit at " << pos << "~" << first.length() << dendl;
 
     if (write_aio_bl(pos, first, 0)) {
-      derr << "FileJournal::do_aio_write: write_aio_bl(pos=" << pos
+      derr << "CStoreFileJournal::do_aio_write: write_aio_bl(pos=" << pos
 	   << ") failed" << dendl;
       ceph_abort();
     }
@@ -1399,7 +1399,7 @@ void FileJournal::do_aio_write(bufferlist& bl)
     } else
       pos = get_top();  // no header, start after that
     if (write_aio_bl(pos, second, writing_seq)) {
-      derr << "FileJournal::do_aio_write: write_aio_bl(pos=" << pos
+      derr << "CStoreFileJournal::do_aio_write: write_aio_bl(pos=" << pos
 	   << ") failed" << dendl;
       ceph_abort();
     }
@@ -1410,13 +1410,13 @@ void FileJournal::do_aio_write(bufferlist& bl)
       hbl.push_back(hbp);
       loff_t pos = 0;
       if (write_aio_bl(pos, hbl, 0)) {
-	derr << "FileJournal::do_aio_write: write_aio_bl(header) failed" << dendl;
+	derr << "CStoreFileJournal::do_aio_write: write_aio_bl(header) failed" << dendl;
 	ceph_abort();
       }
     }
 
     if (write_aio_bl(pos, bl, writing_seq)) {
-      derr << "FileJournal::do_aio_write: write_aio_bl(pos=" << pos
+      derr << "CStoreFileJournal::do_aio_write: write_aio_bl(pos=" << pos
 	   << ") failed" << dendl;
       ceph_abort();
     }
@@ -1434,7 +1434,7 @@ void FileJournal::do_aio_write(bufferlist& bl)
  * @param seq seq to trigger when this aio completes.  if 0, do not update any state
  * on completion.
  */
-int FileJournal::write_aio_bl(off64_t& pos, bufferlist& bl, uint64_t seq)
+int CStoreFileJournal::write_aio_bl(off64_t& pos, bufferlist& bl, uint64_t seq)
 {
   align_bl(pos, bl);
 
@@ -1504,7 +1504,7 @@ int FileJournal::write_aio_bl(off64_t& pos, bufferlist& bl, uint64_t seq)
 }
 #endif
 
-void FileJournal::write_finish_thread_entry()
+void CStoreFileJournal::write_finish_thread_entry()
 {
 #ifdef HAVE_LIBAIO
   dout(10) << "write_finish_thread_entry enter" << dendl;
@@ -1556,7 +1556,7 @@ void FileJournal::write_finish_thread_entry()
 /**
  * check aio_wait for completed aio, and update state appropriately.
  */
-void FileJournal::check_aio_completion()
+void CStoreFileJournal::check_aio_completion()
 {
   assert(aio_lock.is_locked());
   dout(20) << "check_aio_completion" << dendl;
@@ -1603,7 +1603,7 @@ void FileJournal::check_aio_completion()
 }
 #endif
 
-int FileJournal::prepare_entry(vector<ObjectStore::Transaction>& tls, bufferlist* tbl) {
+int CStoreFileJournal::prepare_entry(vector<ObjectStore::Transaction>& tls, bufferlist* tbl) {
   dout(10) << "prepare_entry " << tls << dendl;
   unsigned data_len = 0;
   int data_align = -1; // -1 indicates that we don't care about the alignment
@@ -1655,7 +1655,7 @@ int FileJournal::prepare_entry(vector<ObjectStore::Transaction>& tls, bufferlist
   return h.len;
 }
 
-void FileJournal::submit_entry(uint64_t seq, bufferlist& e, uint32_t orig_len,
+void CStoreFileJournal::submit_entry(uint64_t seq, bufferlist& e, uint32_t orig_len,
 			       Context *oncommit, TrackedOpRef osd_op)
 {
   // dump on queue
@@ -1699,20 +1699,20 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, uint32_t orig_len,
   }
 }
 
-bool FileJournal::writeq_empty()
+bool CStoreFileJournal::writeq_empty()
 {
   Mutex::Locker locker(writeq_lock);
   return writeq.empty();
 }
 
-FileJournal::write_item &FileJournal::peek_write()
+CStoreFileJournal::write_item &CStoreFileJournal::peek_write()
 {
   assert(write_lock.is_locked());
   Mutex::Locker locker(writeq_lock);
   return writeq.front();
 }
 
-void FileJournal::pop_write()
+void CStoreFileJournal::pop_write()
 {
   assert(write_lock.is_locked());
   Mutex::Locker locker(writeq_lock);
@@ -1723,7 +1723,7 @@ void FileJournal::pop_write()
   writeq.pop_front();
 }
 
-void FileJournal::batch_pop_write(list<write_item> &items)
+void CStoreFileJournal::batch_pop_write(list<write_item> &items)
 {
   assert(write_lock.is_locked());
   {
@@ -1738,7 +1738,7 @@ void FileJournal::batch_pop_write(list<write_item> &items)
   }
 }
 
-void FileJournal::batch_unpop_write(list<write_item> &items)
+void CStoreFileJournal::batch_unpop_write(list<write_item> &items)
 {
   assert(write_lock.is_locked());
   for (auto &&i : items) {
@@ -1751,7 +1751,7 @@ void FileJournal::batch_unpop_write(list<write_item> &items)
   writeq.splice(writeq.begin(), items);
 }
 
-void FileJournal::commit_start(uint64_t seq)
+void CStoreFileJournal::commit_start(uint64_t seq)
 {
   dout(10) << "commit_start" << dendl;
 
@@ -1786,7 +1786,7 @@ void FileJournal::commit_start(uint64_t seq)
 /*
  *send discard command to joural block deivce
  */
-void FileJournal::do_discard(int64_t offset, int64_t end)
+void CStoreFileJournal::do_discard(int64_t offset, int64_t end)
 {
   dout(10) << __func__ << "trim(" << offset << ", " << end << dendl;
 
@@ -1800,7 +1800,7 @@ void FileJournal::do_discard(int64_t offset, int64_t end)
 	dout(1) << __func__ << "ioctl(BLKDISCARD) error:" << cpp_strerror(errno) << dendl;
 }
 
-void FileJournal::committed_thru(uint64_t seq)
+void CStoreFileJournal::committed_thru(uint64_t seq)
 {
   Mutex::Locker locker(write_lock);
 
@@ -1876,13 +1876,13 @@ void FileJournal::committed_thru(uint64_t seq)
 }
 
 
-void FileJournal::complete_write(uint64_t ops, uint64_t bytes)
+void CStoreFileJournal::complete_write(uint64_t ops, uint64_t bytes)
 {
   dout(5) << __func__ << " finished " << ops << " ops and "
 	  << bytes << " bytes" << dendl;
 }
 
-int FileJournal::make_writeable()
+int CStoreFileJournal::make_writeable()
 {
   dout(10) << __func__ << dendl;
   int r = set_throttle_params();
@@ -1905,7 +1905,7 @@ int FileJournal::make_writeable()
   return 0;
 }
 
-int FileJournal::set_throttle_params()
+int CStoreFileJournal::set_throttle_params()
 {
   stringstream ss;
   bool valid = throttle.set_params(
@@ -1925,7 +1925,7 @@ int FileJournal::set_throttle_params()
   return valid ? 0 : -EINVAL;
 }
 
-const char** FileJournal::get_tracked_conf_keys() const
+const char** CStoreFileJournal::get_tracked_conf_keys() const
 {
   static const char *KEYS[] = {
     "journal_throttle_low_threshhold",
@@ -1937,7 +1937,7 @@ const char** FileJournal::get_tracked_conf_keys() const
   return KEYS;
 }
 
-void FileJournal::wrap_read_bl(
+void CStoreFileJournal::wrap_read_bl(
   off64_t pos,
   int64_t olen,
   bufferlist* bl,
@@ -1960,7 +1960,7 @@ void FileJournal::wrap_read_bl(
     bufferptr bp = buffer::create(len);
     int r = safe_read_exact(fd, bp.c_str(), len);
     if (r) {
-      derr << "FileJournal::wrap_read_bl: safe_read_exact " << pos << "~" << len << " returned "
+      derr << "CStoreFileJournal::wrap_read_bl: safe_read_exact " << pos << "~" << len << " returned "
 	   << r << dendl;
       ceph_abort();
     }
@@ -1974,7 +1974,7 @@ void FileJournal::wrap_read_bl(
     *out_pos = pos;
 }
 
-bool FileJournal::read_entry(
+bool CStoreFileJournal::read_entry(
   bufferlist &bl,
   uint64_t &next_seq,
   bool *corrupt)
@@ -2039,7 +2039,7 @@ bool FileJournal::read_entry(
   return false;
 }
 
-FileJournal::read_entry_result FileJournal::do_read_entry(
+CStoreFileJournal::read_entry_result CStoreFileJournal::do_read_entry(
   off64_t init_pos,
   off64_t *next_pos,
   bufferlist *bl,
@@ -2126,12 +2126,12 @@ FileJournal::read_entry_result FileJournal::do_read_entry(
   return SUCCESS;
 }
 
-void FileJournal::reserve_throttle_and_backoff(uint64_t count)
+void CStoreFileJournal::reserve_throttle_and_backoff(uint64_t count)
 {
   throttle.get(count);
 }
 
-void FileJournal::get_header(
+void CStoreFileJournal::get_header(
   uint64_t wanted_seq,
   off64_t *_pos,
   entry_header_t *h)
@@ -2162,7 +2162,7 @@ void FileJournal::get_header(
   assert(0); // not reachable
 }
 
-void FileJournal::corrupt(
+void CStoreFileJournal::corrupt(
   int wfd,
   off64_t corrupt_at)
 {
@@ -2185,7 +2185,7 @@ void FileJournal::corrupt(
   assert(r == 0);
 }
 
-void FileJournal::corrupt_payload(
+void CStoreFileJournal::corrupt_payload(
   int wfd,
   uint64_t seq)
 {
@@ -2199,7 +2199,7 @@ void FileJournal::corrupt_payload(
 }
 
 
-void FileJournal::corrupt_footer_magic(
+void CStoreFileJournal::corrupt_footer_magic(
   int wfd,
   uint64_t seq)
 {
@@ -2215,7 +2215,7 @@ void FileJournal::corrupt_footer_magic(
 }
 
 
-void FileJournal::corrupt_header_magic(
+void CStoreFileJournal::corrupt_header_magic(
   int wfd,
   uint64_t seq)
 {
