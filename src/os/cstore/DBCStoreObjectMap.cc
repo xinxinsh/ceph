@@ -553,6 +553,31 @@ int DBCStoreObjectMap::_get_header(Header header,
   return 0;
 }
 
+int DBCStoreObjectMap::set_map_header(const ghobject_t &oid,
+		const bufferlist &bl) {
+  KeyValueDB::Transaction t = db->get_transaction();
+  MapHeaderLock hl(this, oid);
+
+	map<string, bufferlist> to_set;
+	to_set[map_header_key(oid)] = bl;
+	t->set(HOBJECT_TO_SEQ, to_set);
+  return db->submit_transaction(t);
+}
+
+int DBCStoreObjectMap::get_map_header(const ghobject_t &oid,
+		bufferlist &bl) {
+	MapHeaderLock hl(this, oid);
+	{
+		Mutex::Locker l(header_lock);
+
+		int r = db->get(HOBJECT_TO_SEQ, map_header_key(oid), &bl);
+		if (r < 0 || bl.length() == 0)
+			return -1;
+	}
+
+	return 0;
+}
+
 int DBCStoreObjectMap::clear(const ghobject_t &oid,
 		       const CStoreSequencerPosition *spos)
 {
@@ -1135,6 +1160,8 @@ DBCStoreObjectMap::Header DBCStoreObjectMap::_lookup_map_header(
   const MapHeaderLock &l,
   const ghobject_t &oid)
 {
+	dout(20) << __func__ << " locked " << l.get_locked() << " pass " << oid << dendl;
+	dout(20) << __func__ << (l.get_locked() == oid) << dendl;
   assert(l.get_locked() == oid);
 
   _Header *header = new _Header();

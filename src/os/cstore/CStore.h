@@ -416,7 +416,7 @@ private:
     }
 
     void _process(objnode *p, ThreadPool::TPHandle &handle) override {
-      fs->_compress(p->c, p->o, handle);
+      fs->_compress(p->o, handle);
     }
 
     void _process_finish(objnode *p) {}
@@ -590,13 +590,12 @@ public:
     bool compression);
   int _wal_replay();
   void _filter_comp(
-    const coll_t &cid,
-    const ghobject_t &oid);
+    coll_t &cid,
+    ghobject_t &oid);
   bool _need_compress(
     const coll_t &cid,
     const ghobject_t &oid);
   int _compress(
-    const coll_t& cid, 
     const ghobject_t& oid,
     ThreadPool::TPHandle &handle);
   int _decompress(

@@ -33,8 +33,8 @@ void intrusive_ptr_release(objnode* o) {
   o->put();
 }
 
-objnode::objnode(const coll_t &c, const ghobject_t &o, uint64_t block_size, uint64_t size) 
-: c(c), o(o), ref(0), block_size(block_size), size(size), c_type(0) {
+objnode::objnode(const ghobject_t &o, uint64_t block_size, uint64_t size) 
+: o(o), ref(0), block_size(block_size), size(size), c_type(0) {
   uint64_t bits = P2ROUNDUP(size, block_size) / block_size;
   uint64_t len = P2ROUNDUP(bits, 8) / 8;
   blocks.append_zero(len);

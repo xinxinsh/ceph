@@ -51,6 +51,18 @@ public:
     bufferlist *bl                      ///< [out] header to set
     ) = 0;
 
+	/// set map header
+	virtual int set_map_header(
+		const ghobject_t &oid,
+		const bufferlist &bl
+		) = 0;
+
+	/// get map header
+	virtual int get_map_header(
+		const ghobject_t &oid,
+		bufferlist &bl
+		) = 0;
+
   /// Clear all map keys and values from oid
   virtual int clear(
     const ghobject_t &oid,             ///< [in] object containing map
