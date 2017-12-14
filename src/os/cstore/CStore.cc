@@ -6893,7 +6893,7 @@ int CStore::_split_collection(const coll_t& cid,
 				 const CStoreSequencerPosition &spos)
 {
 	// stop compress while pg splits
-	comp_op.pause();
+	comp_tp.pause();
   int r = 0;
   {
     dout(15) << __func__ << " " << cid << " bits: " << bits << dendl;
@@ -6985,7 +6985,7 @@ int CStore::_split_collection(const coll_t& cid,
   }
 
 out:
-	comp_op.unpause();
+	comp_tp.unpause();
   return r;
 }
 
