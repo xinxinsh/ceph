@@ -382,6 +382,7 @@ private:
       store->_finish_op(osr);
     }
     void _clear() {
+			store->op_queue.clear();
       assert(store->op_queue.empty());
     }
   } op_wq;
@@ -422,6 +423,7 @@ private:
     void _process_finish(objnode *p) {}
 
     void _clear() {
+			fs->comp_queue.clear();
       assert(fs->comp_queue.empty());
     }
   } comp_wq;

@@ -31,6 +31,7 @@ const string DBCStoreObjectMap::HEADER_KEY = "HEADER";
 const string DBCStoreObjectMap::USER_HEADER_KEY = "USER_HEADER";
 const string DBCStoreObjectMap::GLOBAL_STATE_KEY = "HEADER";
 const string DBCStoreObjectMap::HOBJECT_TO_SEQ = "_HOBJTOSEQ_";
+const string DBCStoreObjectMap::HOBJECT_TO_COLL = "_HOBJTOCOLL_";
 
 // Legacy
 const string DBCStoreObjectMap::LEAF_PREFIX = "_LEAF_";
@@ -555,12 +556,13 @@ int DBCStoreObjectMap::_get_header(Header header,
 
 int DBCStoreObjectMap::set_map_header(const ghobject_t &oid,
 		const bufferlist &bl) {
+  dout(20) << __func__ << "  " << oid << " len " << bl.length() << dendl;
   KeyValueDB::Transaction t = db->get_transaction();
   MapHeaderLock hl(this, oid);
 
 	map<string, bufferlist> to_set;
 	to_set[map_header_key(oid)] = bl;
-	t->set(HOBJECT_TO_SEQ, to_set);
+	t->set(HOBJECT_TO_COLL, to_set);
   return db->submit_transaction(t);
 }
 
@@ -570,7 +572,10 @@ int DBCStoreObjectMap::get_map_header(const ghobject_t &oid,
 	{
 		Mutex::Locker l(header_lock);
 
-		int r = db->get(HOBJECT_TO_SEQ, map_header_key(oid), &bl);
+		int r = db->get(HOBJECT_TO_COLL, map_header_key(oid), &bl);
+    dout(20) << __func__ << "  " << oid << " len " << bl.length() << " r=" << r << dendl;
+		if (r == -ENOENT)
+			return r;
 		if (r < 0 || bl.length() == 0)
 			return -1;
 	}
@@ -1160,8 +1165,6 @@ DBCStoreObjectMap::Header DBCStoreObjectMap::_lookup_map_header(
   const MapHeaderLock &l,
   const ghobject_t &oid)
 {
-	dout(20) << __func__ << " locked " << l.get_locked() << " pass " << oid << dendl;
-	dout(20) << __func__ << (l.get_locked() == oid) << dendl;
   assert(l.get_locked() == oid);
 
   _Header *header = new _Header();
@@ -1290,6 +1293,7 @@ void DBCStoreObjectMap::remove_map_header(
   set<string> to_remove;
   to_remove.insert(map_header_key(oid));
   t->rmkeys(HOBJECT_TO_SEQ, to_remove);
+  t->rmkeys(HOBJECT_TO_COLL, to_remove);
   {
     Mutex::Locker l(cache_lock);
     caches.clear(oid);
