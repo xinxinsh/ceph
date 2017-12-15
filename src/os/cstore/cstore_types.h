@@ -36,8 +36,8 @@ public:
     COMP_ALG_SNAPPY,
   };
 
-  objnode() : c(coll_t()), o(ghobject_t()), ref(0), block_size(0), size(0), c_type(COMP_ALG_NONE) {}
-  objnode(const coll_t &c, const ghobject_t &o, uint64_t block_size, uint64_t size);
+  objnode() : o(ghobject_t()), ref(0), block_size(0), size(0), c_type(COMP_ALG_NONE) {}
+  objnode(const ghobject_t &o, uint64_t block_size, uint64_t size);
   virtual ~objnode(){}
   void set_size(uint64_t nsize);
   uint32_t get_size() {return size;}
@@ -59,7 +59,6 @@ public:
       delete this;
   }
 
-  coll_t c;
   ghobject_t o;
   std::atomic_int ref;
   uint64_t block_size;

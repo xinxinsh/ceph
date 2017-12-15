@@ -1937,9 +1937,11 @@ int CStore::mount()
     bufferlist::iterator p = bl.begin();
     DBCStoreObjectMap::_Header *h = new DBCStoreObjectMap::_Header();
     try {
-      ::decode(*h, p);
+      h->decode(p);
     } catch (buffer::error& e) {
       derr << __func__ << " failed to decode header " << dendl;
+			umount();
+			return -EIO;
     }
 
     dout(20) << __func__ << " init periodical event " << dendl;
@@ -3256,7 +3258,7 @@ int CStore::stat(
   set<string> keys;
   map<string, bufferlist> values;
   ObjnodeRef obj;
-  objnode *node = new objnode(_cid, oid, m_block_size, 0);;
+  objnode *node = new objnode(oid, m_block_size, 0);;
   keys.insert(OBJ_DATA);
   r = object_map->get_values(oid, keys, &values);
   if (r < 0) {
@@ -3341,7 +3343,7 @@ int CStore::_replay_event(const coll_t &cid, const ghobject_t &oid, uint8_t stat
 
   assert(r == 0);
 
-  node = new objnode(cid, oid, m_block_size, 0);
+  node = new objnode(oid, m_block_size, 0);
   bufferlist::iterator p = vals[OBJ_DATA].begin();
   ::decode(*node, p);
   keys.clear();
@@ -3553,10 +3555,10 @@ bool CStore::_need_compress(const coll_t &cid, const ghobject_t &oid) {
   //return false;
 }
 
-void CStore::_filter_comp(const coll_t &cid, const ghobject_t &oid) {
+void CStore::_filter_comp(coll_t &cid, ghobject_t &oid) {
   set<string> keys;
   map<string, bufferlist> values;
-  objnode *obj = new objnode(cid, oid, m_block_size, 0);
+  objnode *obj = new objnode(oid, m_block_size, 0);
 
   keys.insert(OBJ_DATA);
   int r = object_map->get_values(oid, keys, &values);
@@ -3587,8 +3589,7 @@ void CStore::_filter_comp(const coll_t &cid, const ghobject_t &oid) {
   }
 }
 
-int CStore::_compress(const coll_t &cid, const ghobject_t &oid, ThreadPool::TPHandle &handle) {
-  dout(20) << __func__ << " " << cid << "/" << oid << dendl;
+int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
   comp_lock.Lock();
   while(in_progress_op.count(oid)) {
     dout(20) << "object " << oid << " is in progress op, wait ..." << dendl;
@@ -3599,6 +3600,7 @@ int CStore::_compress(const coll_t &cid, const ghobject_t &oid, ThreadPool::TPHa
   comp_lock.Unlock();
 
   int r;
+	coll_t cid;
   CFDRef fd, cfd;
   bufferlist bl, cbl;
 	bufferlist::iterator bp;
@@ -3616,6 +3618,27 @@ int CStore::_compress(const coll_t &cid, const ghobject_t &oid, ThreadPool::TPHa
 
   handle.reset_tp_timeout();
 
+  // get object header to get collection
+	r = object_map->get_map_header(oid, bl);
+	if (r < 0) {
+    derr << "cannot get object header" << cpp_strerror(r) << dendl;
+		goto out;
+	} else {
+    DBCStoreObjectMap::_Header *header = new DBCStoreObjectMap::_Header();
+    try {
+		  bp = bl.begin();
+      header->decode(bp);
+    } catch (buffer::error& e) {
+      derr << __func__ << " failed to decode header " << dendl;
+			r = -EIO;
+			goto out;
+    }
+		cid = header->c;
+	}
+	bl.clear();
+
+  dout(20) << __func__ << " " << cid << "/" << oid << dendl;
+
   keys.insert(OBJ_DATA);
   r = object_map->get_values(oid, keys, &vals);
   if (r < 0) {
@@ -3623,7 +3646,7 @@ int CStore::_compress(const coll_t &cid, const ghobject_t &oid, ThreadPool::TPHa
     goto out;
   }
   assert(r==0);
-  node = new objnode(cid, oid, m_block_size, 0);
+  node = new objnode(oid, m_block_size, 0);
   bp = vals[OBJ_DATA].begin();
   ::decode(*node, bp);
   if (node->is_compressed())
@@ -4091,7 +4114,7 @@ int CStore::read(
   set<string> keys;
   map<string, bufferlist> values;
   ObjnodeRef obj_node;
-  objnode *node = new objnode(_cid, oid, m_block_size, 0);
+  objnode *node = new objnode(oid, m_block_size, 0);
   keys.insert(OBJ_DATA);
   int r = object_map->get_values(oid, keys, &values);
   if (r < 0) {
@@ -4146,7 +4169,7 @@ int CStore::_do_fiemap(const coll_t& _cid, const ghobject_t& oid,
 
   set<string> keys;
   map<string, bufferlist> values;
-  objnode *node = new objnode(_cid, oid, m_block_size, 0);
+  objnode *node = new objnode(oid, m_block_size, 0);
 
   keys.insert(OBJ_DATA);
   int r = object_map->get_values(oid, keys, &values);
@@ -4263,7 +4286,7 @@ int CStore::_truncate(const coll_t& cid, const ghobject_t& oid, uint64_t size)
   set<string> keys;
   map<string, bufferlist> values;
   ObjnodeRef obj;
-  objnode *node = new objnode(cid, oid, m_block_size, 0);
+  objnode *node = new objnode(oid, m_block_size, 0);
   keys.insert(OBJ_DATA);
   int r = object_map->get_values(oid, keys, &values);
   if (r < 0) {
@@ -4341,7 +4364,7 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
   int r = object_map->get_values(oid, keys, &values);
   if (r < 0) {
     if (r == -ENOENT) {
-      node = new objnode(cid, oid, m_block_size, 0);
+      node = new objnode(oid, m_block_size, 0);
 			CompContext *c = new CompContext(this, cid, oid);
 			{
         Mutex::Locker l(timer_lock);
@@ -4351,7 +4374,7 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
       goto out;
     }
   } else {
-    node = new objnode(cid, oid, m_block_size, 0);
+    node = new objnode(oid, m_block_size, 0);
     bufferlist::iterator p = values[OBJ_DATA].begin();
     ::decode(*node, p);
   }
@@ -4412,7 +4435,7 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
   set<string> keys;
   map<string, bufferlist> values;
   ObjnodeRef obj;
-  objnode *node = new objnode(cid, oid, m_block_size, offset+len);;
+  objnode *node = new objnode(oid, m_block_size, offset+len);;
   keys.insert(OBJ_DATA);
   r = object_map->get_values(oid, keys, &values);
   if (r < 0) {
@@ -6893,7 +6916,7 @@ int CStore::_split_collection(const coll_t& cid,
 				 const CStoreSequencerPosition &spos)
 {
 	// stop compress while pg splits
-	comp_op.pause();
+	comp_tp.pause();
   int r = 0;
   {
     dout(15) << __func__ << " " << cid << " bits: " << bits << dendl;
@@ -6985,7 +7008,7 @@ int CStore::_split_collection(const coll_t& cid,
   }
 
 out:
-	comp_op.unpause();
+	comp_tp.unpause();
   return r;
 }
 

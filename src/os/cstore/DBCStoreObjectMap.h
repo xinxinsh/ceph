@@ -137,6 +137,16 @@ public:
     bufferlist *bl
     );
 
+	int set_map_header(
+		const ghobject_t &oid,
+		const bufferlist &bl
+		);
+
+	int get_map_header(
+		const ghobject_t &oid,
+		bufferlist &bl
+		);
+
   int clear(
     const ghobject_t &oid,
     const CStoreSequencerPosition *spos=0
