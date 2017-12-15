@@ -6917,7 +6917,13 @@ int CStore::_split_collection(const coll_t& cid,
 {
 	// stop compress while pg splits
 	comp_tp.pause();
+
+	vector<ghobject_t> updated;
+	ghobject_t n;
   int r = 0;
+	bufferlist bl;
+	bufferlist::iterator p;
+
   {
     dout(15) << __func__ << " " << cid << " bits: " << bits << dendl;
     if (!collection_exists(cid)) {
@@ -6963,6 +6969,38 @@ int CStore::_split_collection(const coll_t& cid,
     _close_replay_guard(cid, spos);
     _close_replay_guard(dest, spos);
   }
+	// update object header
+	while(1) {
+		collection_list(dest, n, ghobject_t::get_max(), true, get_ideal_list_max(), &updated, &n);
+		if (updated.empty())
+			break;
+		for(vector<ghobject_t>::iterator it = updated.begin(); it != updated.end(); ++it) {
+			dout(20) << __func__ << ": " << *it << " now in dest " << dest << dendl;
+			assert(it->match(bits, rem));
+			r = object_map->get_map_header(*it, bl);
+			if (r < 0) {
+				derr << "cannot get header " << *it << dendl;
+				continue;
+			}
+      p = bl.begin();
+      DBCStoreObjectMap::_Header *h = new DBCStoreObjectMap::_Header();
+      try {
+        h->decode(p);
+      } catch (buffer::error& e) {
+        derr << __func__ << " failed to decode header " << dendl;
+				goto out;
+      }
+      bl.clear();
+			h->c = dest;
+			h->encode(bl);
+			r = object_map->set_map_header(*it, bl);
+			if (r < 0) {
+				derr << __func__ << " update header error " << dendl;
+				goto out;
+			}
+			bl.clear();
+		}
+	}
   if (g_conf->filestore_debug_verify_split) {
     vector<ghobject_t> objects;
     ghobject_t next;
