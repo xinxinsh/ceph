@@ -554,7 +554,7 @@ int DBCStoreObjectMap::_get_header(Header header,
   return 0;
 }
 
-int DBCStoreObjectMap::set_map_header(const ghobject_t &oid,
+int DBCStoreObjectMap::set_map(const ghobject_t &oid,
 		const bufferlist &bl) {
   dout(20) << __func__ << "  " << oid << " len " << bl.length() << dendl;
   KeyValueDB::Transaction t = db->get_transaction();
@@ -566,7 +566,7 @@ int DBCStoreObjectMap::set_map_header(const ghobject_t &oid,
   return db->submit_transaction(t);
 }
 
-int DBCStoreObjectMap::get_map_header(const ghobject_t &oid,
+int DBCStoreObjectMap::get_map(const ghobject_t &oid,
 		bufferlist &bl) {
 	MapHeaderLock hl(this, oid);
 	{
@@ -581,6 +581,20 @@ int DBCStoreObjectMap::get_map_header(const ghobject_t &oid,
 	}
 
 	return 0;
+}
+
+int DBCStoreObjectMap::remove_map(const ghobject_t &oid) {
+  dout(20) << __func__ << "  " << oid << dendl;
+  KeyValueDB::Transaction t = db->get_transaction();
+	MapHeaderLock h1(this, oid);
+	{
+		Mutex::Locker l(header_lock);
+
+    set<string> to_remove;
+    to_remove.insert(map_header_key(oid));
+    t->rmkeys(HOBJECT_TO_COLL, to_remove);
+	}
+  return db->submit_transaction(t);
 }
 
 int DBCStoreObjectMap::clear(const ghobject_t &oid,

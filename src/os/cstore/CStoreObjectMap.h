@@ -52,15 +52,20 @@ public:
     ) = 0;
 
 	/// set map header
-	virtual int set_map_header(
+	virtual int set_map(
 		const ghobject_t &oid,
 		const bufferlist &bl
 		) = 0;
 
 	/// get map header
-	virtual int get_map_header(
+	virtual int get_map(
 		const ghobject_t &oid,
 		bufferlist &bl
+		) = 0;
+
+	/// remove map header
+	virtual int remove_map(
+		const ghobject_t &oid
 		) = 0;
 
   /// Clear all map keys and values from oid
