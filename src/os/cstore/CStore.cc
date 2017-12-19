@@ -1931,11 +1931,11 @@ int CStore::mount()
 
   timer.init();
 
-  omap_it = object_map->get_whole_iterator(DBCStoreObjectMap::HOBJECT_TO_SEQ);
+  omap_it = object_map->get_whole_iterator(DBCStoreObjectMap::HOBJECT_TO_COLL);
   for(omap_it->lower_bound(string()); omap_it->valid(); omap_it->next()) {
     bufferlist bl = omap_it->value();
     bufferlist::iterator p = bl.begin();
-    DBCStoreObjectMap::_Header *h = new DBCStoreObjectMap::_Header();
+    map_header *h = new map_header();
     try {
       h->decode(p);
     } catch (buffer::error& e) {
@@ -1945,7 +1945,7 @@ int CStore::mount()
     }
 
     dout(20) << __func__ << " init periodical event " << dendl;
-    CompContext *c = new CompContext(this, h->c, h->oid);
+    CompContext *c = new CompContext(this, h->cid, h->oid);
     {
       Mutex::Locker l(timer_lock);
       timer.add_event_after(g_conf->cstore_compress_interval, c);
@@ -2044,9 +2044,14 @@ int CStore::umount()
     wbthrottle.stop();
   }
 
-  comp_tp.stop();
+	{
+		Mutex::Locker l(timer_lock);
+	  timer.cancel_all_events();
+	}
 
   op_tp.stop();
+
+  comp_tp.stop();
 
   journal_stop();
   if (!(generic_flags & SKIP_JOURNAL_REPLAY))
@@ -3620,20 +3625,20 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
 
   // get object header to get collection
 	r = object_map->get_map_header(oid, bl);
+	if (r == -ENOENT)
+		return 0;
 	if (r < 0) {
     derr << "cannot get object header" << cpp_strerror(r) << dendl;
 		goto out;
 	} else {
-    DBCStoreObjectMap::_Header *header = new DBCStoreObjectMap::_Header();
+    map_header *h = new map_header();
     try {
 		  bp = bl.begin();
-      header->decode(bp);
+      h->decode(bp);
     } catch (buffer::error& e) {
-      derr << __func__ << " failed to decode header " << dendl;
-			r = -EIO;
-			goto out;
+      assert(0 == "failed to decode header");
     }
-		cid = header->c;
+		cid = h->cid;
 	}
 	bl.clear();
 
@@ -4359,7 +4364,11 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
   CFDRef fd;
   set<string> keys;
   map<string, bufferlist> values;
+	bufferlist bl;
   objnode *node;
+	map_header *mh = NULL;
+	bool exist = false;
+
   keys.insert(OBJ_DATA);
   int r = object_map->get_values(oid, keys, &values);
   if (r < 0) {
@@ -4374,6 +4383,7 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
       goto out;
     }
   } else {
+		exist = true;
     node = new objnode(oid, m_block_size, 0);
     bufferlist::iterator p = values[OBJ_DATA].begin();
     ::decode(*node, p);
@@ -4388,6 +4398,11 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
   values[OBJ_DATA].clear();
   ::encode(*node, values[OBJ_DATA]);
   r = object_map->set_keys(oid, values, NULL);
+	if (!exist) {
+	  mh = new map_header(cid, oid);
+	  ::encode(*mh, bl);
+	  r = object_map->set_map_header(oid, bl);
+	}
 
 out:
   {
@@ -4435,6 +4450,11 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
   set<string> keys;
   map<string, bufferlist> values;
   ObjnodeRef obj;
+	bufferlist mbl;
+	map_header *mh = NULL;
+	bool exist = false;
+
+
   objnode *node = new objnode(oid, m_block_size, offset+len);;
   keys.insert(OBJ_DATA);
   r = object_map->get_values(oid, keys, &values);
@@ -4452,6 +4472,7 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
       goto out;
     }
   } else {
+		exist = true;
     bufferlist::iterator p = values[OBJ_DATA].begin();
     ::decode(*node, p);
     obj.reset(node);
@@ -4498,6 +4519,12 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
   if (r < 0 ) {
 		derr << __func__ << " update metadata error " << cpp_strerror(r) << dendl;
 		goto out1;
+	}
+
+	if (!exist) {
+    mh = new map_header(cid, oid);
+		::encode(*mh, mbl);
+	  r = object_map->set_map_header(oid, mbl);
 	}
 
 out1:
@@ -5042,8 +5069,8 @@ void CStore::sync_entry()
     fin.swap(sync_waiters);
     lock.Unlock();
 
-    comp_tp.pause();
     op_tp.pause();
+    comp_tp.pause();
     if (apply_manager.commit_start()) {
       utime_t start = ceph_clock_now(g_ceph_context);
       uint64_t cp = apply_manager.get_committing_seq();
@@ -5082,8 +5109,8 @@ void CStore::sync_entry()
 
 	snaps.push_back(cp);
 	apply_manager.commit_started();
-	comp_tp.unpause();
 	op_tp.unpause();
+	comp_tp.unpause();
 
 	if (cid > 0) {
 	  dout(20) << " waiting for checkpoint " << cid << " to complete" << dendl;
@@ -5097,8 +5124,8 @@ void CStore::sync_entry()
       } else
       {
 	apply_manager.commit_started();
-	comp_tp.unpause();
 	op_tp.unpause();
+	comp_tp.unpause();
 
 	int err = object_map->sync();
 	if (err < 0) {
@@ -5159,10 +5186,11 @@ void CStore::sync_entry()
 
       timer_lock.Lock();
       timer.cancel_event(sync_entry_timeo);
+			// cancel event of compress
       timer_lock.Unlock();
     } else {
-      comp_tp.unpause();
       op_tp.unpause();
+      comp_tp.unpause();
     }
 
     lock.Lock();
@@ -6917,7 +6945,14 @@ int CStore::_split_collection(const coll_t& cid,
 {
 	// stop compress while pg splits
 	comp_tp.pause();
+
+	vector<ghobject_t> updated;
+	ghobject_t n;
   int r = 0;
+	bufferlist bl;
+	bufferlist::iterator p;
+	map_header *mh = NULL;
+
   {
     dout(15) << __func__ << " " << cid << " bits: " << bits << dendl;
     if (!collection_exists(cid)) {
@@ -6963,6 +6998,26 @@ int CStore::_split_collection(const coll_t& cid,
     _close_replay_guard(cid, spos);
     _close_replay_guard(dest, spos);
   }
+	// update object header
+	while(1) {
+		collection_list(dest, n, ghobject_t::get_max(), true, get_ideal_list_max(), &updated, &n);
+		dout(20) << __func__ << " updated size " << updated.size() << dendl;
+		if (updated.empty())
+			break;
+		for(vector<ghobject_t>::iterator it = updated.begin(); it != updated.end(); ++it) {
+			dout(20) << __func__ << ": " << *it << " now in dest " << dest << dendl;
+			assert(it->match(bits, rem));
+			mh = new map_header(dest, *it);
+			::encode(*mh, bl);
+			r = object_map->set_map_header(*it, bl);
+			if (r < 0) {
+				derr << __func__ << " update header error " << dendl;
+				goto out;
+			}
+			bl.clear();
+		}
+		updated.clear();
+	}
   if (g_conf->filestore_debug_verify_split) {
     vector<ghobject_t> objects;
     ghobject_t next;

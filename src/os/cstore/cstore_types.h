@@ -89,4 +89,26 @@ public:
 };
 WRITE_CLASS_ENCODER(compression_header)
 
+class map_header {
+public:
+	map_header(const coll_t cid, const ghobject_t& oid) : cid(cid), oid(oid) {}
+	map_header() : cid(), oid() {}
+	void encode(bufferlist &bl) const {
+		ENCODE_START(1, 1, bl);
+		::encode(cid, bl);
+		::encode(oid, bl);
+		ENCODE_FINISH(bl);
+	}
+	void decode(bufferlist::iterator &bl) {
+		DECODE_START(1, bl);
+		::decode(cid, bl);
+		::decode(oid, bl);
+		DECODE_FINISH(bl);
+	}
+
+	coll_t cid;
+	ghobject_t oid;
+};
+WRITE_CLASS_ENCODER(map_header)
+
 #endif

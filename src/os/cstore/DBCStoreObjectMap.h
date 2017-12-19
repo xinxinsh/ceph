@@ -254,6 +254,7 @@ public:
   static const string USER_HEADER_KEY;
   static const string GLOBAL_STATE_KEY;
   static const string HOBJECT_TO_SEQ;
+  static const string HOBJECT_TO_COLL;
 
   /// Legacy
   static const string LEAF_PREFIX;

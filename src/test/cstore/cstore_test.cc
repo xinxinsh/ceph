@@ -3341,6 +3341,10 @@ void colsplittest(
   ObjectStore::Sequencer osr("test");
   coll_t cid(spg_t(pg_t(0,52),shard_id_t::NO_SHARD));
   coll_t tid(spg_t(pg_t(1<<common_suffix_size,52),shard_id_t::NO_SHARD));
+  bufferlist bl;
+  bufferptr bp(4096);
+  bp.zero();
+  bl.append(bp);
   int r = 0;
   {
     ObjectStore::Transaction t;
@@ -3349,19 +3353,16 @@ void colsplittest(
     ASSERT_EQ(r, 0);
   }
   {
-    ObjectStore::Transaction t;
     for (uint32_t i = 0; i < 2*num_objects; ++i) {
+      ObjectStore::Transaction t;
       stringstream objname;
       objname << "obj" << i;
-      t.touch(cid, ghobject_t(hobject_t(
-	  objname.str(),
-	  "",
-	  CEPH_NOSNAP,
-	  i<<common_suffix_size,
-	  52, "")));
+			ghobject_t oid(hobject_t(objname.str(), "", CEPH_NOSNAP, i<<common_suffix_size, 52, ""));
+      t.touch(cid, oid);
+			t.write(cid, oid, (rand() % 1024)*4096, 4096, bl, 0);
+      r = apply_transaction(store, &osr, std::move(t));
+      ASSERT_EQ(r, 0);
     }
-    r = apply_transaction(store, &osr, std::move(t));
-    ASSERT_EQ(r, 0);
   }
   {
     ObjectStore::Transaction t;
