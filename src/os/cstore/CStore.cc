@@ -3624,11 +3624,13 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
   handle.reset_tp_timeout();
 
   // get object header to get collection
-	r = object_map->get_map_header(oid, bl);
-	if (r == -ENOENT)
-		return 0;
+	r = object_map->get_map(oid, bl);
+	if (r == -ENOENT) {
+		dout(20) << __func__ << " object "  << oid << " maybe delete or move" << dendl;
+		goto out;
+	}
 	if (r < 0) {
-    derr << "cannot get object header" << cpp_strerror(r) << dendl;
+    derr << __func__ << " cannot get object header" << cpp_strerror(r) << dendl;
 		goto out;
 	} else {
     map_header *h = new map_header();
@@ -3636,7 +3638,9 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
 		  bp = bl.begin();
       h->decode(bp);
     } catch (buffer::error& e) {
-      assert(0 == "failed to decode header");
+			derr << __func__ << " failed decode map header" << dendl;
+      r = -EIO;
+			goto out;
     }
 		cid = h->cid;
 	}
@@ -4401,7 +4405,7 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
 	if (!exist) {
 	  mh = new map_header(cid, oid);
 	  ::encode(*mh, bl);
-	  r = object_map->set_map_header(oid, bl);
+	  r = object_map->set_map(oid, bl);
 	}
 
 out:
@@ -4524,7 +4528,7 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
 	if (!exist) {
     mh = new map_header(cid, oid);
 		::encode(*mh, mbl);
-	  r = object_map->set_map_header(oid, mbl);
+	  r = object_map->set_map(oid, mbl);
 	}
 
 out1:
@@ -4574,6 +4578,8 @@ int CStore::_clone(const coll_t& cid, const ghobject_t& oldoid, const ghobject_t
 
   int r;
   CFDRef o, n;
+	bufferlist bl;
+	map_header *mh = NULL;
 
   if (_check_replay_guard(cid, newoid, spos) < 0) {
 		r = 0;
@@ -4608,6 +4614,12 @@ int CStore::_clone(const coll_t& cid, const ghobject_t& oldoid, const ghobject_t
     r = object_map->clone(oldoid, newoid, &spos);
     if (r < 0 && r != -ENOENT)
       goto out3;
+
+		mh = new map_header(cid, newoid);
+		::encode(*mh, bl);
+		r = object_map->set_map(newoid, bl);
+		if (r < 0)
+			goto out3;
   }
 
   {
@@ -6619,6 +6631,8 @@ int CStore::_collection_move_rename(const coll_t& oldcid, const ghobject_t& oldo
 
   int r = 0;
   int dstcmp, srccmp;
+	bufferlist bl;
+	map_header *mh = NULL;
 
   if (replaying) {
     /* If the destination collection doesn't exist during replay,
@@ -6675,6 +6689,12 @@ int CStore::_collection_move_rename(const coll_t& oldcid, const ghobject_t& oldo
       if (r == -ENOENT)
 	r = 0;
     }
+
+		mh = new map_header(c, o);
+		::encode(*mh, bl);
+		if (r == 0) {
+			r = object_map->set_map(o, bl);
+		}
 
     _inject_failure();
 
@@ -7009,7 +7029,7 @@ int CStore::_split_collection(const coll_t& cid,
 			assert(it->match(bits, rem));
 			mh = new map_header(dest, *it);
 			::encode(*mh, bl);
-			r = object_map->set_map_header(*it, bl);
+			r = object_map->set_map(*it, bl);
 			if (r < 0) {
 				derr << __func__ << " update header error " << dendl;
 				goto out;

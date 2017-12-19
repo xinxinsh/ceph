@@ -137,14 +137,18 @@ public:
     bufferlist *bl
     );
 
-	int set_map_header(
+	int set_map(
 		const ghobject_t &oid,
 		const bufferlist &bl
 		);
 
-	int get_map_header(
+	int get_map(
 		const ghobject_t &oid,
 		bufferlist &bl
+		);
+
+	int remove_map(
+		const ghobject_t &oid
 		);
 
   int clear(
