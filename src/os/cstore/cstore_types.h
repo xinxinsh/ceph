@@ -23,6 +23,7 @@
 #include <osd/osd_types.h>
 #include <include/types.h>
 #include <include/encoding.h>
+#include <osd/HitSet.h>
 
 #define ISP2(x) (((x) & ((x) - 1)) == 0)
 #define P2ALIGHN(x, y) ((x) & -(y))
@@ -110,5 +111,31 @@ public:
 	ghobject_t oid;
 };
 WRITE_CLASS_ENCODER(map_header)
+
+class hit_set_t {
+public:
+	hit_set_t() : start(utime_t()), end(utime_t()), hitset(HitSet()) {}
+	hit_set_t(utime_t s, utime_t e, HitSet h) : start(s), end(e), hitset(h) {}
+	void encode(bufferlist &bl) const {
+		ENCODE_START(1, 1, bl);
+		::encode(start, bl);
+		::encode(end, bl);
+		::encode(hitset, bl);
+		ENCODE_FINISH(bl);
+	}
+
+	void decode(bufferlist::iterator &bl) {
+		DECODE_START(1, bl);
+		::decode(start, bl);
+		::decode(end, bl);
+		::decode(hitset, bl);
+		DECODE_FINISH(bl);
+	}
+
+	utime_t start;
+	utime_t end;
+	HitSet hitset;
+};
+WRITE_CLASS_ENCODER(hit_set_t)
 
 #endif
