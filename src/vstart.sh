@@ -99,6 +99,7 @@ cephx=1 #turn cephx on by default
 cache=""
 memstore=0
 bluestore=0
+cstore=0
 lockdep=${LOCKDEP:-1}
 
 MON_ADDR=""
@@ -244,6 +245,9 @@ case $1 in
     --bluestore )
 	    bluestore=1
 	    ;;
+    --cstore )
+	    cstore=1
+	    ;;
     --hitset )
 	    hitset="$hitset $2 $3"
 	    shift
@@ -330,6 +334,7 @@ else
         debug journal = 20
         debug filestore = 20
         debug bluestore = 30
+        debug cstore = 30
         debug bluefs = 20
         debug rocksdb = 10
         debug bdev = 20
@@ -358,6 +363,10 @@ fi
 if [ "$bluestore" -eq 1 ]; then
     COSDMEMSTORE='
 	osd objectstore = bluestore'
+fi
+if [ "$cstore" -eq 1 ]; then
+    COSDMEMSTORE='
+	osd objectstore = cstore'
 fi
 
 if [ -z "$CEPH_PORT" ]; then
