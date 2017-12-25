@@ -35,6 +35,8 @@ using namespace std;
 #include "common/Timer.h"
 #include "common/WorkQueue.h"
 
+#include "osd/HitSet.h"
+
 #include "common/Mutex.h"
 #include "CStoreHashIndex.h"
 #include "CStoreIndexManager.h"
@@ -476,6 +478,7 @@ public:
   int _sanity_check_fs();
 
   bool test_mount_in_use();
+	bool is_object_op(Transaction::Op *op);
   int read_op_seq(uint64_t *seq);
   int write_op_seq(int, uint64_t seq);
   int mount();
@@ -786,6 +789,14 @@ private:
 			       coll_t dest,
 			       const CStoreSequencerPosition &spos);
 
+	void hit_set_create();
+	void hit_set_setup();
+	void hit_set_clear();
+	void hit_set_trim(uint32_t max);
+	bool hit_set_timeout();
+	void hit_set_persist();
+	ghobject_t get_hit_set_archive_object(utime_t start);
+
   virtual const char** get_tracked_conf_keys() const;
   virtual void handle_conf_change(const struct md_config_t *conf,
 			  const std::set <std::string> &changed);
@@ -827,6 +838,13 @@ private:
   Cond comp_cond;
   Mutex op_lock;
   Cond op_cond;
+
+	// track objects
+	utime_t hit_set_start_stamp;
+	HitSetRef hit_set;
+	Mutex hit_set_lock;
+	// in memory representation
+	std::map<uint64_t, HitSet> hit_set_map;
 
   CFSSuperblock superblock;
 

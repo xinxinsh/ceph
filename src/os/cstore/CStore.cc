@@ -103,6 +103,8 @@ using ceph::crypto::SHA1;
 #define NS_COMPRESS ".ceph-compress"
 #define NS_DECOMPRESS ".ceph-decompress"
 
+#define PREFIX_HITSET "HITSET"
+
 //Initial features in new superblock.
 static CompatSet get_fs_initial_compat_set() {
   CompatSet::FeatureSet ceph_osd_feature_compat;
@@ -308,6 +310,184 @@ int get_key_object(string& key, ghobject_t* oid) {
   }  
 
   return 0;
+}
+
+bool CStore::is_object_op(Transaction::Op *op) {
+	switch(op->op) {
+		case Transaction::OP_TOUCH:
+		case Transaction::OP_WRITE:
+		case Transaction::OP_ZERO:
+		case Transaction::OP_TRUNCATE:
+		case Transaction::OP_REMOVE:
+		case Transaction::OP_SETATTR:
+		case Transaction::OP_SETATTRS:
+		case Transaction::OP_RMATTR:
+		case Transaction::OP_RMATTRS:
+		case Transaction::OP_CLONE:
+		case Transaction::OP_CLONERANGE:
+		case Transaction::OP_CLONERANGE2:
+		case Transaction::OP_COLL_ADD:
+		case Transaction::OP_COLL_MOVE:
+		case Transaction::OP_COLL_MOVE_RENAME:
+		case Transaction::OP_TRY_RENAME:
+		case Transaction::OP_OMAP_CLEAR:
+		case Transaction::OP_OMAP_SETKEYS:
+		case Transaction::OP_OMAP_RMKEYS:
+		case Transaction::OP_OMAP_RMKEYRANGE:
+		case Transaction::OP_OMAP_SETHEADER:
+		  return true;
+	}
+	return false;
+}
+
+// create hit set
+void CStore::hit_set_create() {
+  utime_t now = ceph_clock_now(NULL);
+	HitSet::Params params;
+
+	if ("bloom" == g_conf->cstore_hit_set_type) {
+		BloomHitSet::Params *bsp = new BloomHitSet::Params;
+		bsp->set_fpp(g_conf->cstore_hit_set_bloom_fpp);
+		params = HitSet::Params(bsp);
+	} else {
+		assert(0 == "unknow hit set type");
+	}
+
+  dout(20) << __func__ << " " << params << dendl;
+  if (params.get_type() == HitSet::TYPE_BLOOM) {
+    BloomHitSet::Params *p =
+      static_cast<BloomHitSet::Params*>(params.impl.get());
+
+    // convert false positive rate so it holds up across the full period
+    p->set_fpp(p->get_fpp() / g_conf->cstore_hit_set_count);
+    if (p->get_fpp() <= 0.0)
+      p->set_fpp(.01);  // fpp cannot be zero!
+
+    // if we don't have specified size, estimate target size based on the
+    // previous bin!
+    if (p->target_size == 0 && hit_set) {
+      utime_t dur = now - hit_set_start_stamp;
+      unsigned unique = hit_set->approx_unique_insert_count();
+      dout(20) << __func__ << " previous set had approx " << unique
+	       << " unique items over " << dur << " seconds" << dendl;
+      p->target_size = (double)unique * (double)g_conf->cstore_hit_set_period
+		     / (double)dur;
+    }
+    if (p->target_size < static_cast<uint64_t>(g_conf->cstore_hit_set_min_size))
+      p->target_size = g_conf->osd_hit_set_min_size;
+
+    if (p->target_size > static_cast<uint64_t>(g_conf->cstore_hit_set_max_size))
+      p->target_size = g_conf->osd_hit_set_max_size;
+
+    p->seed = now.sec();
+
+    dout(10) << __func__ << " target_size " << p->target_size
+	     << " fpp " << p->get_fpp() << dendl;
+  }
+  hit_set.reset(new HitSet(params));
+  hit_set_start_stamp = now;
+}
+
+void CStore::hit_set_clear() {
+	dout(20) << __func__ << dendl;
+	Mutex::Locker l(hit_set_lock);
+	hit_set.reset();
+	hit_set_start_stamp = utime_t();
+	hit_set_map.clear();
+}
+
+ghobject_t CStore::get_hit_set_archive_object(utime_t start) {
+	ostringstream ss;
+	ss << "hit_set_archive_";
+	start.gmtime(ss);
+  ghobject_t hoid(hobject_t(sobject_t(ss.str(), CEPH_NOSNAP), "",
+			 		 0, -1, g_conf->cstore_hit_set_namespace));
+  dout(20) << __func__ << " " << hoid << dendl;
+  return hoid; 
+}
+
+// setup hit set when mount
+void CStore::hit_set_setup() {
+	dout(20) << __func__ << dendl;
+	bufferlist bl;
+	bufferlist::iterator p;
+  DBCStoreObjectMap::CStoreObjectMapIterator it;
+	hit_set_t hitset;
+
+	// load hit set
+  it = object_map->get_whole_iterator(PREFIX_HITSET);
+  for(it->lower_bound(string()); it->valid(); it->next()) {
+		dout(20) << __func__ << " value " << it->value().length() << dendl;
+    bl = it->value();
+    p = bl.begin();
+    try {
+      ::decode(hitset, p);
+    } catch (buffer::error& e) {
+      derr << __func__ << " failed to decode hit set " << dendl;
+    }
+		dout(20) << __func__ << " start " << hitset.start.to_msec() << dendl;
+		hit_set_map.insert(make_pair(hitset.start.to_msec(), hitset.hitset));
+  }
+
+  // create a hit set 
+	hit_set_create();
+}
+
+// persistent hit set
+void CStore::hit_set_persist() {
+	string key;
+	map<string, bufferlist> vals;
+
+  utime_t now = ceph_clock_now(NULL);
+	hit_set_t hit(hit_set_start_stamp, now, *hit_set);
+	ghobject_t oid = get_hit_set_archive_object(hit.start);
+
+	hit_set->seal();
+	get_object_key(oid, &key);
+	::encode(hit, vals[key]);
+
+	dout(20) << __func__ << " archive " << oid << " start " << hit.start.to_msec() << " bl len " << vals[key].length() << dendl;
+
+	object_map->set_keys_by_prefix(PREFIX_HITSET, vals);
+
+	hit_set_map.insert(make_pair(hit_set_start_stamp.to_msec(), *hit_set));
+
+	uint32_t size = g_conf->cstore_hit_set_count > 0 ? g_conf->cstore_hit_set_count - 1 : 0;
+
+	hit_set_trim(size);
+
+	// create new hit set
+	hit_set_create();
+}
+
+// check if timeout is elapsed
+bool CStore::hit_set_timeout() {
+  utime_t now = ceph_clock_now(NULL);
+	return (hit_set_start_stamp + g_conf->cstore_hit_set_period < now);
+}
+
+// trim hit set
+void CStore::hit_set_trim(uint32_t max) {
+  uint32_t count = hit_set_map.size();
+	dout(20) << __func__ << " count " << count << " max " << max << dendl;
+	set<string> keys;
+
+	for(map<uint64_t, HitSet>::iterator it = hit_set_map.begin();
+			count > max; --count, ++it) {
+		string key;
+		ghobject_t oid = get_hit_set_archive_object(utime_t(it->first, 0));
+		get_object_key(oid, &key);
+		keys.insert(key);
+	}
+
+	while(hit_set_map.size() > max)
+		if (!hit_set_map.empty()) {
+			map<uint64_t, HitSet>::iterator it = hit_set_map.begin();
+			hit_set_map.erase(it);
+		}
+
+	object_map->rm_keys_by_prefix(PREFIX_HITSET, keys);
+	object_map->sync();
 }
 
 int CStore::validate_hobject_key(const hobject_t &obj) const
@@ -811,7 +991,8 @@ CStore::CStore(const std::string &base, const std::string &jdev, osflagbits_t fl
   m_block_size(g_conf->cstore_block_size),
   m_compress_type(g_conf->cstore_compress_type),
   comp_lock("CStore::comp_lock"),
-  op_lock("CStore::op_lock")
+  op_lock("CStore::op_lock"),
+	hit_set_lock("CStore::hit_set_lock")
 {
   m_filestore_kill_at.set(g_conf->filestore_kill_at);
   for (int i = 0; i < m_ondisk_finisher_num; ++i) {
@@ -1822,6 +2003,12 @@ int CStore::mount()
     goto close_current_fd;
   }
 
+	// load history hit set
+	{
+		Mutex::Locker l(hit_set_lock);
+	  hit_set_setup();
+	}
+
   // journal
   new_journal();
 
@@ -2048,6 +2235,8 @@ int CStore::umount()
 		Mutex::Locker l(timer_lock);
 	  timer.cancel_all_events();
 	}
+
+	hit_set_clear();
 
   op_tp.stop();
 
@@ -2700,6 +2889,17 @@ void CStore::_do_transaction(
     Transaction::Op *op = i.decode_op();
     int r = 0;
 
+		// if object is involved in this op
+		// track the object
+		if (is_object_op(op)) {
+			Mutex::Locker l(hit_set_lock);
+			ghobject_t oid = i.get_oid(op->oid);
+			assert(oid != ghobject_t());
+		  hit_set->insert(oid.hobj);
+		  if(hit_set->is_full() || hit_set_timeout()) 
+			  hit_set_persist();
+		}
+
     _inject_failure();
 
     switch (op->op) {
@@ -3250,7 +3450,7 @@ int CStore::stat(
 {
   tracepoint(objectstore, stat_enter, _cid.c_str());
   const coll_t& cid = !_need_temp_object_collection(_cid, oid) ? _cid : _cid.get_temp();
-  
+
   op_lock.Lock();
   while(in_progress_comp.count(oid)) {
     dout(20) << __func__ << " object " << oid << " is in progress compress, wait ..." << dendl;
@@ -3267,7 +3467,7 @@ int CStore::stat(
   keys.insert(OBJ_DATA);
   r = object_map->get_values(oid, keys, &values);
   if (r < 0) {
-    dout(0) << "cannot find object data " << dendl;
+    dout(0) << __func__ << " cannot find object data " << oid << dendl;
     goto out;
   } else {
     bufferlist::iterator p = values[OBJ_DATA].begin();
@@ -3556,8 +3756,50 @@ out:
 }
 
 bool CStore::_need_compress(const coll_t &cid, const ghobject_t &oid) {
-  return true;
-  //return false;
+
+	uint32_t recency = g_conf->cstore_min_recency_for_compress;
+	bool in_hit_set = false;
+	{
+		Mutex::Locker l(hit_set_lock);
+	  in_hit_set = hit_set->contains(oid.hobj);
+	}
+
+	dout(20) << __func__ << "  " << cid << " / " << oid << "in_hit_set " << in_hit_set << dendl;
+	switch(recency) {
+		case 0:
+			break;
+		case 1:
+			if (in_hit_set) {
+				break;
+			} else {
+				return true;
+			}
+			break;
+		default:
+			{
+			  unsigned count = (int)in_hit_set;
+				if (count) {
+					for(map<uint64_t, HitSet>::reverse_iterator it = hit_set_map.rbegin();
+							it != hit_set_map.rend(); ++it) {
+						bool in_hist_hit_set = false;
+						{
+							Mutex::Locker l(hit_set_lock);
+							in_hist_hit_set = it->second.contains(oid.hobj);
+						}
+						if (in_hist_hit_set)
+							break;
+						++count;
+						if (count > recency)
+							break;
+					}
+				}
+				if (count > recency)
+					break;
+				return true;
+			}
+			break;
+	}
+  return false;
 }
 
 void CStore::_filter_comp(coll_t &cid, ghobject_t &oid) {
@@ -3567,8 +3809,12 @@ void CStore::_filter_comp(coll_t &cid, ghobject_t &oid) {
 
   keys.insert(OBJ_DATA);
   int r = object_map->get_values(oid, keys, &values);
-  if (r < 0) {
-    derr << __func__ << " get object metadata error " << dendl;
+	if (r < 0) {
+		if (r == -ENOENT) {
+			dout(20) << __func__ << " object " << oid << " maybe moved or renamed " << dendl;
+		} else {
+      derr << __func__ << " get object metadata error " << cpp_strerror(r) << dendl;
+		}
     return;
   }
 
@@ -3580,10 +3826,22 @@ void CStore::_filter_comp(coll_t &cid, ghobject_t &oid) {
   dout(20) << __func__ << " object " << cid << "/" << oid << dendl;
   if (g_conf->cstore_inject_compress) {
     // compress object randomly
+		int s;
+		thread_local unsigned seed = (unsigned) time(nullptr) +
+			      (unsigned) std::hash<std::thread::id>()(std::this_thread::get_id());
+		s = rand_r(&seed) % 2;
+		if (s == 0) {
+      comp_wq.queue(obj);
+		} else {
+			CompContext *c = new CompContext(this, cid, oid);
+      timer.add_event_after(g_conf->cstore_compress_interval, c);
+		}
   } else {
     // FIXME
     // compress objects depending on hotness 
-    if (_need_compress(cid, oid)) {
+		bool need_compress = _need_compress(cid, oid);
+		dout(20) << __func__ << "  " << need_compress << dendl;
+    if (need_compress) {
       comp_wq.queue(obj);
       // _filter_comp is executed by timer thread, timer_lock is locked
     } else {
@@ -4282,7 +4540,6 @@ out:
 int CStore::_truncate(const coll_t& cid, const ghobject_t& oid, uint64_t size)
 {
   dout(15) << "truncate " << cid << "/" << oid << " size " << size << dendl;
-
   op_lock.Lock();
   while(in_progress_comp.count(oid)) {
     dout(20) << __func__ << " object " << oid << " is in progress compress, wait ..." << dendl;
@@ -4301,10 +4558,10 @@ int CStore::_truncate(const coll_t& cid, const ghobject_t& oid, uint64_t size)
   if (r < 0) {
     goto out;
   } else {
-    bufferlist::iterator p = values[OBJ_DATA].begin();
-    ::decode(*node, p);
-    obj.reset(node);
-  }
+	  bufferlist::iterator p = values[OBJ_DATA].begin();
+	  ::decode(*node, p);
+		obj.reset(node);
+	}
 
   if (obj->is_compressed()) {
     r = _decompress(cid, oid, obj);
@@ -4319,10 +4576,10 @@ int CStore::_truncate(const coll_t& cid, const ghobject_t& oid, uint64_t size)
     goto out;
 
   r = ::ftruncate(**fd, size);
-	if (r < 0) {
-		derr << __func__ << " ftruncate " << cpp_strerror(r) << dendl;
-		goto out1;
-	}
+  if (r < 0) {
+    derr << __func__ << " ftruncate " << cpp_strerror(r) << dendl;
+    goto out1;
+  }
 
   obj->set_size(size);
   obj->update_blocks(0, size);
@@ -4332,8 +4589,8 @@ int CStore::_truncate(const coll_t& cid, const ghobject_t& oid, uint64_t size)
   r = object_map->set_keys(oid, values, NULL);
   if (r < 0) {
     derr << "update object data r=" << cpp_strerror(r) << dendl;
-		goto out1;
-	}
+    goto out1;
+  }
 
 out1:
   lfn_close(fd);
@@ -4351,7 +4608,6 @@ out:
 
   return r;
 }
-
 
 int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
 {
@@ -4472,7 +4728,7 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
         timer.add_event_after(g_conf->cstore_compress_interval, c);
 			}
     } else {
-      dout(0) << "cannot find object data " << dendl;
+      dout(0) << __func__ << " cannot find object data " << oid << dendl;
       goto out;
     }
   } else {
@@ -6817,30 +7073,27 @@ int CStore::_omap_setkeys(const coll_t& cid, const ghobject_t &hoid,
 
   CStoreIndex index;
   int r;
-  //treat pgmeta as a logical object, skip to check exist
-  if (hoid.is_pgmeta())
-    goto skip;
+
+	if (hoid.is_pgmeta())
+		goto skip;
 
   r = get_index(cid, &index);
   if (r < 0) {
-    dout(20) << __func__ << " get_index got " << cpp_strerror(r) << dendl;
+		dout(20) << __func__ << " get_index got " << cpp_strerror(r) << dendl;
     goto out;
-  }
+	}
   {
     assert(NULL != index.index);
     RWLock::RLocker l((index.index)->access_lock);
     r = lfn_find(hoid, index);
     if (r < 0) {
-      dout(20) << __func__ << " lfn_find got " << cpp_strerror(r) << dendl;
+			dout(20) << __func__ << " lfn_find got " << cpp_strerror(r) << dendl;
       goto out;
-    }
+		}
   }
 skip:
   r = object_map->set_keys(hoid, aset, &spos);
-
-out:
-  dout(20) << __func__ << " " << cid << "/" << hoid << " = " << r << dendl;
-  
+out:	
   {
     Mutex::Locker l(op_lock);
     in_progress_op.erase(hoid);
@@ -6849,13 +7102,14 @@ out:
     Mutex::Locker l(comp_lock);
     comp_cond.SignalAll();
   }
-
-  return r;
+  
+	dout(20) << __func__ << " " << cid << "/" << hoid << " = " << r << dendl;
+	return r;
 }
 
 int CStore::_omap_rmkeys(const coll_t& cid, const ghobject_t &hoid,
-			    const set<string> &keys,
-			    const CStoreSequencerPosition &spos) {
+					 const set<string> &keys,
+					 const CStoreSequencerPosition &spos) {
   dout(15) << __func__ << " " << cid << "/" << hoid << dendl;
 
   op_lock.Lock();
