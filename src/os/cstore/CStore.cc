@@ -463,7 +463,9 @@ void CStore::hit_set_persist() {
 // check if timeout is elapsed
 bool CStore::hit_set_timeout() {
   utime_t now = ceph_clock_now(NULL);
-	return (hit_set_start_stamp + g_conf->cstore_hit_set_period < now);
+	bool timeout = (hit_set_start_stamp + g_conf->cstore_hit_set_period < now);
+	dout(30) << __func__ << " timeout " << timeout << " start " << hit_set_start_stamp << " period " << g_conf->cstore_hit_set_period << " now " << now << dendl;
+	return timeout;
 }
 
 // trim hit set
@@ -2896,6 +2898,7 @@ void CStore::_do_transaction(
 			ghobject_t oid = i.get_oid(op->oid);
 			assert(oid != ghobject_t());
 		  hit_set->insert(oid.hobj);
+			dout(20) << __func__ << " hit_set full " << hit_set->is_full() << " count " << hit_set->approx_unique_insert_count() << dendl;
 		  if(hit_set->is_full() || hit_set_timeout()) 
 			  hit_set_persist();
 		}
@@ -3764,7 +3767,12 @@ bool CStore::_need_compress(const coll_t &cid, const ghobject_t &oid) {
 	  in_hit_set = hit_set->contains(oid.hobj);
 	}
 
-	dout(20) << __func__ << "  " << cid << " / " << oid << "in_hit_set " << in_hit_set << dendl;
+	// persist hit set, without this code
+	// object cannot be compressed if there is no request for a long period
+	if (hit_set_timeout())
+		hit_set_persist();
+
+	dout(20) << __func__ << "  " << cid << " / " << oid << " in_hit_set " << in_hit_set << dendl;
 	switch(recency) {
 		case 0:
 			break;
