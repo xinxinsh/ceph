@@ -6819,6 +6819,8 @@ int CStore::_collection_add(const coll_t& c, const coll_t& oldcid, const ghobjec
   in_progress_op.insert(o);
   op_lock.Unlock();
 
+	map_header *mh = NULL;
+	bufferlist bl;
 	int r, srccmp, dstcmp;
   CFDRef fd;
   dstcmp = _check_replay_guard(c, o, spos);
@@ -6862,6 +6864,13 @@ int CStore::_collection_add(const coll_t& c, const coll_t& oldcid, const ghobjec
     _close_replay_guard(**fd, spos);
   }
   lfn_close(fd);
+
+
+	mh = new map_header(c, o);
+	::encode(*mh, bl);
+	r = object_map->set_map(o, bl);
+	if (r < 0)
+		goto out;
 
 out:
   dout(10) << "collection_add " << c << "/" << o << " from " << oldcid << "/" << o << " = " << r << dendl;
