@@ -6980,6 +6980,9 @@ int CStore::_collection_move_rename(const coll_t& oldcid, const ghobject_t& oldo
     if (r == 0)
       r = lfn_open(c, o, 0, &fd);
 
+		if (r == 0)
+			r = object_map->remove_map(oldoid);
+
     // close guard on object so we don't do this again
     if (r == 0) {
       _close_replay_guard(**fd, spos);
