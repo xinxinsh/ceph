@@ -4530,9 +4530,19 @@ int CStore::_remove(const coll_t& cid, const ghobject_t& oid,
 	}
 
   r = object_map->clear(oid, NULL);
-  dout(10) << "remove " << cid << "/" << oid << " = " << r << dendl;
+	if (r < 0) {
+    derr << __func__ << " clear object map error " << dendl;
+		goto out;
+	}
+
+	r = object_map->remove_map(oid);
+	if (r < 0) {
+		derr << __func__ << " remove map header error " << dendl;
+		goto out;
+	}
   
 out:
+  dout(10) << "remove " << cid << "/" << oid << " = " << r << dendl;
   {
     Mutex::Locker l(op_lock);
     in_progress_op.erase(oid);
