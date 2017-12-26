@@ -374,10 +374,10 @@ void CStore::hit_set_create() {
 		     / (double)dur;
     }
     if (p->target_size < static_cast<uint64_t>(g_conf->cstore_hit_set_min_size))
-      p->target_size = g_conf->osd_hit_set_min_size;
+      p->target_size = g_conf->cstore_hit_set_min_size;
 
     if (p->target_size > static_cast<uint64_t>(g_conf->cstore_hit_set_max_size))
-      p->target_size = g_conf->osd_hit_set_max_size;
+      p->target_size = g_conf->cstore_hit_set_max_size;
 
     p->seed = now.sec();
 
