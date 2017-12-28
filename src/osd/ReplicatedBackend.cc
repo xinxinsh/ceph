@@ -2001,57 +2001,34 @@ int ReplicatedBackend::build_push_op(const ObjectRecoveryInfo &recovery_info,
   }
 
   uint64_t available = cct->_conf->osd_recovery_max_chunk;
-  if (!progress.omap_complete) {
-    ObjectMap::ObjectMapIterator iter =
-      store->get_omap_iterator(coll,
-			       ghobject_t(recovery_info.soid));
-    for (iter->lower_bound(progress.omap_recovered_to);
-	 iter->valid();
-	 iter->next(false)) {
-      if (!out_op->omap_entries.empty() &&
-	  available <= (iter->key().size() + iter->value().length()))
-	break;
-      out_op->omap_entries.insert(make_pair(iter->key(), iter->value()));
+	if (!progress.data_complete) {
+		if (!recovery_info.copy_subset.empty()) {
+			interval_set<uint64_t> copy_subset = recovery_info.copy_subset;
+			bufferlist bl;
+			int r = store->fiemap(ch, ghobject_t(recovery_info.soid), 0,
+														copy_subset.range_end(), bl);
+			if (r >= 0)  {
+				interval_set<uint64_t> fiemap_included;
+				map<uint64_t, uint64_t> m;
+				bufferlist::iterator iter = bl.begin();
+				::decode(m, iter);
+				map<uint64_t, uint64_t>::iterator miter;
+				for (miter = m.begin(); miter != m.end(); ++miter) {
+					fiemap_included.insert(miter->first, miter->second);
+				}
 
-      if ((iter->key().size() + iter->value().length()) <= available)
-	available -= (iter->key().size() + iter->value().length());
-      else
-	available = 0;
-    }
-    if (!iter->valid())
-      new_progress.omap_complete = true;
-    else
-      new_progress.omap_recovered_to = iter->key();
-  }
-
-  if (available > 0) {
-    if (!recovery_info.copy_subset.empty()) {
-      interval_set<uint64_t> copy_subset = recovery_info.copy_subset;
-      bufferlist bl;
-      int r = store->fiemap(ch, ghobject_t(recovery_info.soid), 0,
-                            copy_subset.range_end(), bl);
-      if (r >= 0)  {
-        interval_set<uint64_t> fiemap_included;
-        map<uint64_t, uint64_t> m;
-        bufferlist::iterator iter = bl.begin();
-        ::decode(m, iter);
-        map<uint64_t, uint64_t>::iterator miter;
-        for (miter = m.begin(); miter != m.end(); ++miter) {
-          fiemap_included.insert(miter->first, miter->second);
-        }
-
-        copy_subset.intersection_of(fiemap_included);
-      }
-      out_op->data_included.span_of(copy_subset, progress.data_recovered_to,
-                                    available);
-      if (out_op->data_included.empty()) // zero filled section, skip to end!
-        new_progress.data_recovered_to = recovery_info.copy_subset.range_end();
-      else
-        new_progress.data_recovered_to = out_op->data_included.range_end();
-    }
+				copy_subset.intersection_of(fiemap_included);
+			}
+			out_op->data_included.span_of(copy_subset, progress.data_recovered_to,
+																		available);
+			if (out_op->data_included.empty()) // zero filled section, skip to end!
+				new_progress.data_recovered_to = recovery_info.copy_subset.range_end();
+			else
+				new_progress.data_recovered_to = out_op->data_included.range_end();
+		} 
   } else {
-    out_op->data_included.clear();
-  }
+		out_op->data_included.clear();
+	}
 
   for (interval_set<uint64_t>::iterator p = out_op->data_included.begin();
        p != out_op->data_included.end();
@@ -2080,9 +2057,36 @@ int ReplicatedBackend::build_push_op(const ObjectRecoveryInfo &recovery_info,
     }
     out_op->data.claim_append(bit);
   }
+	if ((new_progress.data_recovered_to >= (recovery_info.copy_subset.empty() ? 0 : recovery_info.copy_subset.range_end())))
+		new_progress.data_complete = true;
+
+
+	if (available > 0) {
+		if (!progress.omap_complete) {
+			ObjectMap::ObjectMapIterator iter =
+				store->get_omap_iterator(coll,
+							 ghobject_t(recovery_info.soid));
+			for (iter->lower_bound(progress.omap_recovered_to);
+		 iter->valid();
+		 iter->next(false)) {
+				if (!out_op->omap_entries.empty() &&
+			available <= (iter->key().size() + iter->value().length()))
+		break;
+				out_op->omap_entries.insert(make_pair(iter->key(), iter->value()));
+
+				if ((iter->key().size() + iter->value().length()) <= available)
+		available -= (iter->key().size() + iter->value().length());
+				else
+		available = 0;
+			}
+			if (!iter->valid())
+				new_progress.omap_complete = true;
+			else
+				new_progress.omap_recovered_to = iter->key();
+		}
+  }
 
   if (new_progress.is_complete(recovery_info)) {
-    new_progress.data_complete = true;
     if (stat)
       stat->num_objects_recovered++;
   }

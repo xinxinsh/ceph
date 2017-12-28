@@ -374,10 +374,10 @@ void CStore::hit_set_create() {
 		     / (double)dur;
     }
     if (p->target_size < static_cast<uint64_t>(g_conf->cstore_hit_set_min_size))
-      p->target_size = g_conf->osd_hit_set_min_size;
+      p->target_size = g_conf->cstore_hit_set_min_size;
 
     if (p->target_size > static_cast<uint64_t>(g_conf->cstore_hit_set_max_size))
-      p->target_size = g_conf->osd_hit_set_max_size;
+      p->target_size = g_conf->cstore_hit_set_max_size;
 
     p->seed = now.sec();
 
@@ -4531,13 +4531,13 @@ int CStore::_remove(const coll_t& cid, const ghobject_t& oid,
 
   r = object_map->clear(oid, NULL);
 	if (r < 0) {
-    derr << __func__ << " clear object map error " << dendl;
+    derr << __func__ << " clear object map error " << cpp_strerror(r) << dendl;
 		goto out;
 	}
 
 	r = object_map->remove_map(oid);
 	if (r < 0) {
-		derr << __func__ << " remove map header error " << dendl;
+		derr << __func__ << " remove map header error " << cpp_strerror(r) << dendl;
 		goto out;
 	}
   
@@ -4651,6 +4651,7 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
   int r = object_map->get_values(oid, keys, &values);
   if (r < 0) {
     if (r == -ENOENT) {
+			dout(20) << __func__ << " not exist " << dendl;
       node = new objnode(oid, m_block_size, 0);
 			CompContext *c = new CompContext(this, cid, oid);
 			{
@@ -4738,6 +4739,7 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
   r = object_map->get_values(oid, keys, &values);
   if (r < 0) {
     if (r == -ENOENT) {
+			dout(20) << __func__ << " not exist " << dendl;
       obj.reset(node);
       obj->c_type = objnode::COMP_ALG_NONE;
 			CompContext *c = new CompContext(this, cid, oid);
@@ -4789,6 +4791,7 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
   }
 
   // update blocks map
+	assert(!obj->is_compressed());
   obj->update_blocks(offset, len);
   values[OBJ_DATA].clear();
   ::encode(*obj, values[OBJ_DATA]);
