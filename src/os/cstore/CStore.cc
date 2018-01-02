@@ -3769,8 +3769,10 @@ bool CStore::_need_compress(const coll_t &cid, const ghobject_t &oid) {
 
 	// persist hit set, without this code
 	// object cannot be compressed if there is no request for a long period
-	if (hit_set_timeout())
+	if (hit_set_timeout()) {
+		Mutex::Locker l(hit_set_lock);
 		hit_set_persist();
+	}
 
 	dout(20) << __func__ << "  " << cid << " / " << oid << " in_hit_set " << in_hit_set << dendl;
 	switch(recency) {
