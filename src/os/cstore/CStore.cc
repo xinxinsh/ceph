@@ -4572,7 +4572,9 @@ int CStore::_truncate(const coll_t& cid, const ghobject_t& oid, uint64_t size)
   set<string> keys;
   map<string, bufferlist> values;
   ObjnodeRef obj;
+	CompContext *c = NULL;
   objnode *node = new objnode(oid, m_block_size, 0);
+
   keys.insert(OBJ_DATA);
   int r = object_map->get_values(oid, keys, &values);
   if (r < 0) {
@@ -4612,6 +4614,12 @@ int CStore::_truncate(const coll_t& cid, const ghobject_t& oid, uint64_t size)
     goto out1;
   }
 
+	c = new CompContext(this, cid, oid);
+	{
+		Mutex::Locker l(timer_lock);
+		timer.add_event_after(g_conf->cstore_compress_interval, c);
+	}
+
 out1:
   lfn_close(fd);
 out:
@@ -4648,6 +4656,7 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
   objnode *node;
 	map_header *mh = NULL;
 	bool exist = false;
+	CompContext *c = NULL;
 
   keys.insert(OBJ_DATA);
   int r = object_map->get_values(oid, keys, &values);
@@ -4655,11 +4664,6 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
     if (r == -ENOENT) {
 			dout(20) << __func__ << " not exist " << dendl;
       node = new objnode(oid, m_block_size, 0);
-			CompContext *c = new CompContext(this, cid, oid);
-			{
-        Mutex::Locker l(timer_lock);
-        timer.add_event_after(g_conf->cstore_compress_interval, c);
-			}
     } else {
       goto out;
     }
@@ -4685,6 +4689,11 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
 	  r = object_map->set_map(oid, bl);
 	}
 
+	c = new CompContext(this, cid, oid);
+	{
+		Mutex::Locker l(timer_lock);
+		timer.add_event_after(g_conf->cstore_compress_interval, c);
+	}
 out:
   {
     Mutex::Locker l(op_lock);
@@ -4734,6 +4743,7 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
 	bufferlist mbl;
 	map_header *mh = NULL;
 	bool exist = false;
+	CompContext *c = NULL;
 
 
   objnode *node = new objnode(oid, m_block_size, offset+len);;
@@ -4744,11 +4754,6 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
 			dout(20) << __func__ << " not exist " << dendl;
       obj.reset(node);
       obj->c_type = objnode::COMP_ALG_NONE;
-			CompContext *c = new CompContext(this, cid, oid);
-			{
-        Mutex::Locker l(timer_lock);
-        timer.add_event_after(g_conf->cstore_compress_interval, c);
-			}
     } else {
       dout(0) << __func__ << " cannot find object data " << oid << dendl;
       goto out;
@@ -4808,6 +4813,12 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
     mh = new map_header(cid, oid);
 		::encode(*mh, mbl);
 	  r = object_map->set_map(oid, mbl);
+	}
+
+	c = new CompContext(this, cid, oid);
+	{
+		Mutex::Locker l(timer_lock);
+		timer.add_event_after(g_conf->cstore_compress_interval, c);
 	}
 
 out1:
