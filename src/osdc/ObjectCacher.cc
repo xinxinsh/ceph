@@ -2797,7 +2797,7 @@ bool ObjectCacher::can_merge_bh(BufferHead *left, BufferHead *right)
 	return false;
 }
 
-bool ObjectCacher::pre_init(const std::string &cache_path)
+bool ObjectCacher::pre_init(std::string *cache_path)
 {
 	int r;
 	bool mounted = false;
@@ -2808,26 +2808,31 @@ bool ObjectCacher::pre_init(const std::string &cache_path)
 		return false;
 
 	//check cache path
-	if (cache_path.empty() && (cct->_conf->rbd_ssd_config_server.empty() 
-		&& cct->_conf->rbd_ssd_cache_path_prefix.empty())) {
+	if ((cache_path == NULL || (*cache_path).empty()) 
+		&& (cct->_conf->rbd_ssd_config_server.empty() || cct->_conf->rbd_ssd_cache_path_prefix.empty())) {
 		lderr(cct) << "either cache_path or config_server and path_prefix should be set" << dendl;
 		goto failed;
 	}
-
+	
 	if (!cct->_conf->rbd_ssd_config_server.empty()
 		&& !cct->_conf->rbd_ssd_cache_path_prefix.empty()) {
 		char _cache_path[256] = {0};
 		char localhost[64] = {0};
-		
-		r = gethostname(localhost, sizeof(localhost));
-		if (r == -1) {
-			lderr(cct) << "Failed to get host name"
-				<< ", err msg: " << cpp_strerror(errno) << dendl;
-			return -1;
+		if ((*cache_path).empty()) {
+			r = gethostname(localhost, sizeof(localhost));
+			if (r == -1) {
+				lderr(cct) << "Failed to get host name"
+					<< ", err msg: " << cpp_strerror(errno) << dendl;
+				return -1;
+			}
+			snprintf(_cache_path, sizeof(_cache_path), "%s:%s", cct->_conf->rbd_ssd_cache_path_prefix.c_str(), localhost);
+			*cache_path = _cache_path;
+		} else {
+			snprintf(_cache_path, sizeof(_cache_path), "%s", (*cache_path).c_str());
 		}
-		snprintf(_cache_path, sizeof(_cache_path), "%s:%s", cct->_conf->rbd_ssd_cache_path_prefix.c_str(), localhost);
+		
 
-		ldout(cct, 11) << " create cache path if it's not exist: " << _cache_path << dendl;
+		ldout(cct, 11) << "cache path: " << _cache_path << dendl;
 		if ((r = ::mkdir(_cache_path, 0755)) != 0 && EEXIST != errno) {
 			lderr(cct) << "Failed to create cache path, Error Msg: " << cpp_strerror(errno) << dendl;
 			goto failed;
@@ -2858,18 +2863,18 @@ bool ObjectCacher::pre_init(const std::string &cache_path)
 		mounted = cli->cetcd_check_mount_stat();
 		if (!mounted) {
 			r = cli->cetcd_attach_device(devname, sizeof(devname));
-			if (r == -1)
+			if (r < 0)
 				goto failed;
 			
 			snprintf(devname, sizeof(devname), "/dev/md%d", r);
 			r = cli->cetcd_mount_device(devname, _cache_path);
-			if (r == -1)
+			if (r < 0)
 				goto failed;
 		}
 	}
 	else { //!caceh_path.empty()
-		ldout(cct, 11) << " create cache path if it's not exist: " << cache_path.c_str() << dendl;
-		if ((r = ::mkdir(cache_path.c_str(), 0755)) != 0 && EEXIST != errno) {
+		ldout(cct, 11) << " create cache path if it's not exist: " << (*cache_path).c_str() << dendl;
+		if ((r = ::mkdir((*cache_path).c_str(), 0755)) != 0 && EEXIST != errno) {
 			lderr(cct) << "Failed to create cache path, Error Msg: " << cpp_strerror(errno) << dendl;
 			goto failed;
 		}
@@ -3096,7 +3101,7 @@ int LCache::open(const string path, int flags)
   dh = (DataHead*)data_head;
 
   if ( r == 0 ) {
-  	ldout(oc->cct, 10)<<"Open cache file: "<<path<<dendl;
+  	ldout(oc->cct, 10)<<"Open cache file: "<< path <<dendl;
 	
 	r = read(file_head, fh_size, 0);
 	if ( r == -1 || r != fh_size ) {

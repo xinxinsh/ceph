@@ -262,14 +262,15 @@ struct C_InvalidateCache : public Context {
       uint64_t init_max_dirty = cache_max_dirty;
       if (cache_writethrough_until_flush)
 		init_max_dirty = 0;
+      metadata_get(this, "rbd_ssd_cache_path", &ssd_cache_path);
       ldout(cct, 20) << "Initial cache settings:"
 		     << " size=" << cache_size
 		     << " num_objects=" << 10
 		     << " max_dirty=" << init_max_dirty
 		     << " target_dirty=" << cache_target_dirty
 		     << " max_dirty_age=" << cache_max_dirty_age 
-		     << " ssd cache path=" 
-		     << ssd_cache_path << dendl;
+		     << " ssd cache path=" << ssd_cache_path
+		     << dendl;
 
       object_cacher = new ObjectCacher(cct, pname, *writeback_handler, cache_lock,
 				       NULL, NULL,
@@ -362,10 +363,43 @@ struct C_InvalidateCache : public Context {
   }
 
   int ImageCtx::post_init(const std::string &ssd_cache_path) {
-	//register cache features:path
-	map<string, bufferlist> data;
-    data["ssd_cache_path"].append(ssd_cache_path);
-    return cls_client::metadata_set(&md_ctx, header_oid, data);
+	//register cache features:path if it haven't been set
+	int r = 0;
+	std::string value;
+	std::string key = "rbd_ssd_cache_path";
+
+	if (ssd_cache_path.empty())
+		return -EINVAL;
+	ldout(cct, 20) << "metadata_get " << this << " key=" << key << dendl;
+
+    r = state->refresh_if_required();
+    if (r < 0) {
+      return r;
+    }
+
+    r = cls_client::metadata_get(&this->md_ctx, this->header_oid, key, &value);
+	if (r == 0 && !value.empty()) {
+		ldout(cct, 10) << "rbd_ssd_cache_path: " << value << dendl;
+		return r;
+	}
+
+	ldout(cct, 20) << "metadata_set " << this << " key=" << key << " value= " << ssd_cache_path << dendl;
+
+    r = state->refresh_if_required();
+    if (r < 0) {
+      return r;
+    }
+
+    map<string, bufferlist> data;
+    data[key].append(ssd_cache_path);
+    r = cls_client::metadata_set(&this->md_ctx, this->header_oid, data);
+    if (r < 0) {
+	  lderr(cct) << "Failed to set metadata, error: " << cpp_strerror(r) << dendl;
+	  return r;
+    }
+    this->notify_update();
+
+	return 0;
   }
 
   void ImageCtx::shutdown() {

@@ -391,7 +391,7 @@ Context *OpenRequest<I>::handle_refresh(int *result) {
   } else {
     if (m_image_ctx->cache) {
 		//pre-init Local Cache
-	  	m_image_ctx->object_cacher->pre_init(m_image_ctx->ssd_cache_path);
+	  	m_image_ctx->object_cacher->pre_init(&m_image_ctx->ssd_cache_path);
 			  
 		//set default cache size to the twentieth of image size
 		m_image_ctx->object_cacher->init_cache(m_image_ctx->size/20, 
@@ -403,7 +403,7 @@ Context *OpenRequest<I>::handle_refresh(int *result) {
 			m_image_ctx->layout);
 
 		//register cache properties(reserved)
-    	//m_image_ctx->post_init(m_image_ctx->ssd_cache_path);
+    	m_image_ctx->post_init(m_image_ctx->ssd_cache_path);
     }
     return send_set_snap(result);
   }

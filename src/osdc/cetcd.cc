@@ -316,12 +316,12 @@ bool cetcd_client::cetcd_check_mount_stat()
 	if (stat(cache_path.c_str(), &st) != 0) {
 		lderr(oc->cct) << "Failed to get stat info for  " << cache_path.c_str()
 			<< ", err msg: " << cpp_strerror(errno) << dendl;
-		return false;
+		return mounted;
 	}
 	if (stat(p_dir, &p_st) != 0) {
 		lderr(oc->cct) << "Failed to get stat info for " << p_dir 
 			<< ", err msg: " << cpp_strerror(errno) << dendl;
-		return false;
+		return mounted;
 	}
 
 	if (st.st_dev != p_st.st_dev)
@@ -341,7 +341,7 @@ int cetcd_client::cetcd_get_ips(vector <std::string> &ips)
 	if (r == -1) {
 		lderr(oc->cct) << "Failed to get host name"
 			<< ", err msg: " << cpp_strerror(errno) << dendl;
-		return -1;
+		return r;
 	}
 	ldout(oc->cct, 11) << " host name: " << localhost << dendl;
 	
@@ -355,7 +355,7 @@ int cetcd_client::cetcd_get_ips(vector <std::string> &ips)
 	if (r < 0) {
 	    lderr(oc->cct) << " Failed to find host: " << localhost 
 			<< ", err msg: " << gai_strerror(r) << dendl;
-		return -1;
+		return r;
 	}
 
 	ores = res;
@@ -368,7 +368,7 @@ int cetcd_client::cetcd_get_ips(vector <std::string> &ips)
 	}
 	freeaddrinfo(ores);
 
-	return 1;
+	return 0;
 }
 
 int cetcd_client::cetcd_check_role(char *uuidstring, int len)
@@ -377,10 +377,10 @@ int cetcd_client::cetcd_check_role(char *uuidstring, int len)
 	vector<std::string> ips;
 
 	if (NULL == uuidstring || len <= 0)
-		return -1;
+		return -EINVAL;
 	
 	r = cetcd_get_ips(ips);
-	if (r == -1)
+	if (r != 0)
 		return r;
 
 	vector<std::string>::iterator it = ips.begin();
@@ -395,7 +395,7 @@ int cetcd_client::cetcd_check_role(char *uuidstring, int len)
 		++it;
 	}
 
-	return 2;
+	return ETCD_OTHER;
 }
 
 int cetcd_client::cetcd_attach_device(char *devname, int size)
@@ -404,15 +404,14 @@ int cetcd_client::cetcd_attach_device(char *devname, int size)
 	char uuidstring[64] = {0};
 
 	if (NULL == devname || size <= 0)
-		return -1;
+		return -EINVAL;
 
-	r = cetcd_check_role((char*)uuidstring, sizeof(uuidstring));
-	switch( r ) {
+	int role = cetcd_check_role((char*)uuidstring, sizeof(uuidstring));
+	switch( role ) {
 	case ETCD_SLAVE: 
 		{
-			ldout(oc->cct, 5) << " Running on slave node, for your data safty, "
-				<< "pls rebuild front cache soon" << dendl;
-				
+			ldout(oc->cct, 5) << " Running on slave node, Cache is degraded?"
+							  << " for your data safty, please rebuild cache immediately" << dendl;
 			/*running on slave node,
 			these could happen on the following two cases:
 			 1. master node crashed, migrate to slave node
@@ -424,28 +423,30 @@ int cetcd_client::cetcd_attach_device(char *devname, int size)
 			 data copy manually(ie, assemble raid1 device on the slave node).
 			*/
 			//systemctl stop target.service
-			ldout(oc->cct, 11) << " Try to stop target service" << dendl;
+			ldout(oc->cct, 11) << " Try to stop service target.service" << dendl;
 			r = cetcd_stop_target();
-			if (r == -1)
+			if (r < 0)
 				goto failed;
 
 			//convert UUID to name
-			ldout(oc->cct, 11) << " Try to convert uuid: " << uuidstring
-				<< " to device name " << dendl;
+			ldout(oc->cct, 11) << " Try to convert uuid " 
+							   << uuidstring << " to device name " << dendl;
 			r = cetcd_convert_device(uuidstring, devname, size);
-			if (r == -1)
+			if (r < 0) 
 				goto failed;
 
 			//mdadm -S /dev/md{X}
-			ldout(oc->cct, 11) << " Try to stop inactive raid" << dendl;
+			ldout(oc->cct, 11) << " Try to stop inactive mdraid with"
+							   << " device= " << devname << dendl;
 			r = cetcd_stop_inactive_raid(devname);
-			if (r == -1)
+			if (r < 0) 
 				goto failed;
 			
 			//mdadm --assemble /dev/md{X} /dev/nvme0n1 --run? 
-			ldout(oc->cct, 11) << " Try to assemble raid1 with deivce: " << devname << dendl;
+			ldout(oc->cct, 11) << " Try to assemble mdraid with"
+							   << " device= " << devname << dendl;
 			r = cetcd_assemble_raid(devname);
-			if (r == -1)
+			if (r < 0) 
 				goto failed;	
 		}
 		break;
@@ -456,9 +457,8 @@ int cetcd_client::cetcd_attach_device(char *devname, int size)
 		break;
 	case ETCD_OTHER: 
 		{
-			ldout(oc->cct, 5) << " Running on the third node, for your data safty, "
-				<< "pls rebuild front cache soon" << dendl;
-			
+			ldout(oc->cct, 5) << " Running on the third node, Cache is degraded?"
+							  << " for your data safty, please rebuild cache immediately" << dendl;
 			/* running on the third available node, 
 			these could happened on the following two cases:
 			  1. scheduled migration: master/slave node -> the third node
@@ -472,58 +472,60 @@ int cetcd_client::cetcd_attach_device(char *devname, int size)
 			ldout(oc->cct, 11) << " Try to get target ip" << dendl;
 			char tip[32] = {0};
 			r = cetcd_get_target_ip(tip, sizeof(tip));
-			if (r == -1)
+			if (r < 0)
 				goto failed;
 
 			//iscsiadm -m discovery -t st -p {target-ip}
 			ldout(oc->cct, 11) << " Try to discovery target from portal: " << tip << dendl;
 			char iqn[64] = {0};
 			r = cetcd_discovery_target(tip, iqn, sizeof(iqn));
-			if (r == -1)
+			if (r < 0)
 			 	goto failed;
 			 
 			//iscsiadm -m node -T {target-iqn} -p {target-ip} -l
 			ldout(oc->cct, 11) << " Try to login target: " << iqn 
-				<< " on portal: " << tip << dendl;
+							   << " on portal: " << tip << dendl;
 			r = cetcd_login_target(tip, iqn);
-			if (r == -1)
+			if (r < 0)
 			 	goto failed;
 			 
 			//iscsiadm -m session -P 3
 			ldout(oc->cct, 11) << " Try to get iscsi device" << dendl;
 			r = cetcd_get_device(iqn, devname, size);
-			if (r == -1)
+			if (r < 0)
 			 	goto failed;
 
 			//mdadm -S /dev/md{X}
-			ldout(oc->cct, 11) << " Try to stop inactive raid" << dendl;
+			ldout(oc->cct, 11) << " Try to stop inactive mdraid with"
+			                   << " device= " << devname << dendl;
 			r = cetcd_stop_inactive_raid(devname);
-			if (r == -1)
+			if (r < 0)
 				goto failed;
 			 
 			//mdadm --assemble /dev/md{X} /dev/{dev} --run?
-			ldout(oc->cct, 11) << " Try to assemble raid1 with deivce: " << devname << dendl;
+			ldout(oc->cct, 11) << " Try to assemble mdraid with"
+			                   << " deivce= " << devname << dendl;
 			r = cetcd_assemble_raid(devname);
-			if (r == -1)
+			if (r < 0)
 			 	goto failed;
 		}
 		break;
 	default:
+		r = role;
 		goto failed;
 	}
-	
-	return r;
 
 failed:
-	lderr(oc->cct) << " Failed to attach device" << dendl;
-	return -1;
+	if (role == ETCD_SLAVE)
+		cetcd_start_target();
+	return r;
 }
 
 int cetcd_client::cetcd_mount_device(const char *dev, const char *path)
 {
 	//mount {dev} {path} 2>&1
 	if (NULL == dev || NULL == path)
-		return -1;
+		return -EINVAL;
 
 	bool succeed = true;
 	FILE *pf = NULL;
@@ -532,11 +534,12 @@ int cetcd_client::cetcd_mount_device(const char *dev, const char *path)
 
 	pf = popen(cmd, "r");
 	if (NULL == pf) {
-		lderr(oc->cct) << " Failed to create sub-process: " << cmd
-			<< ", err msg: " << cpp_strerror(errno) << dendl;
-		return -1;
+		int r = errno;
+		lderr(oc->cct) << " Failed to create sub process: " << cmd
+			           << " err msg: " << cpp_strerror(r) << dendl;
+		return -r;
 	}
-	ldout(oc->cct, 11) << " Succeed to create sub-process: " << cmd << dendl;
+	ldout(oc->cct, 11) << " Succeed to create sub process: " << cmd << dendl;
 
 	char key[256] = {0};
 	snprintf(key, sizeof(key), "%s is alreadly mounted on %s", dev, path);
@@ -552,7 +555,7 @@ int cetcd_client::cetcd_mount_device(const char *dev, const char *path)
 	}
 	
 	pclose(pf);
-	return (succeed? 1: -1);
+	return (succeed? 0: -1);
 }
 
 int cetcd_client::cetcd_start_target()
@@ -563,11 +566,12 @@ int cetcd_client::cetcd_start_target()
 	
 	pf = popen(cmd, "r");
 	if (NULL == pf) {
-		lderr(oc->cct) << " Failed to create sub-process: " << cmd 
-			<< " , err msg: " << cpp_strerror(errno) << dendl;
-		return -1;
+		int r = errno;
+		lderr(oc->cct) << " Failed to create sub process: " << cmd 
+			           << " err msg: " << cpp_strerror(r) << dendl;
+		return -r;
 	}
-	ldout(oc->cct, 11) << " Succeed to create sub-process: " << cmd << dendl;
+	ldout(oc->cct, 11) << " Succeed to create sub process: " << cmd << dendl;
 
 	char output[1024] = {0};
 	while(fgets(output, sizeof(output), pf) != NULL) {
@@ -587,11 +591,12 @@ int cetcd_client::cetcd_stop_target()
 
 	pf = popen(cmd, "r");
 	if (NULL == pf) {
-		lderr(oc->cct) << " Failed to create sub-process: " << cmd 
-			<< ", err msg: " << cpp_strerror(errno) << dendl;
-		return -1;
+		int r = errno;
+		lderr(oc->cct) << " Failed to create sub process: " << cmd 
+			           << " err msg: " << cpp_strerror(r) << dendl;
+		return -r;
 	}
-	ldout(oc->cct, 11) << " Succeed to create sub-process: " << cmd << dendl;
+	ldout(oc->cct, 11) << " Succeed to create sub process: " << cmd << dendl;
 
 	char output[1024] = {0};
 	while(fgets(output, sizeof(output), pf) != NULL) {
@@ -601,7 +606,7 @@ int cetcd_client::cetcd_stop_target()
 	}
 
 	pclose(pf);
-	return (succeed? 1: -1);
+	return (succeed? 0: -1);
 }
 
 int cetcd_client::cetcd_stop_inactive_raid(const char *devname)
@@ -615,11 +620,12 @@ int cetcd_client::cetcd_stop_inactive_raid(const char *devname)
 	snprintf(cmd, sizeof(cmd), "cat /proc/mdstat|grep -e \"inactive %s\"", tmp_dev);
 	pf = popen(cmd, "r");
 	if (NULL == pf) {
-		lderr(oc->cct) << " Failed to create sub-process: " << cmd 
-			<< ", err msg: " << cpp_strerror(errno) << dendl;
-		return -1;
+		int r = errno;
+		lderr(oc->cct) << " Failed to create sub process: " << cmd 
+			           << " err msg: " << cpp_strerror(r) << dendl;
+		return -r;
 	}
-	ldout(oc->cct, 11) << " Succeed to create sub-process: " << cmd << dendl;
+	ldout(oc->cct, 11) << " Succeed to create sub process: " << cmd << dendl;
 
 	/*cat /proc/mdstat 
 
@@ -640,13 +646,13 @@ int cetcd_client::cetcd_stop_inactive_raid(const char *devname)
 	}
 
 	pclose(pf);
-	return 1;
+	return 0;
 }
 
 int cetcd_client::cetcd_assemble_raid(const char *devname)
 {
 	if (NULL == devname)
-		return -1;
+		return -EINVAL;
 
 	int num = 0;
 	bool succeed = false;
@@ -658,11 +664,12 @@ int cetcd_client::cetcd_assemble_raid(const char *devname)
 		snprintf(cmd, sizeof(cmd), "mdadm --assemble /dev/md%d %s --run 2>&1", num, devname);
 		pf = popen(cmd, "r");
 		if (NULL == pf) {
-			lderr(oc->cct) << " Failed to create sub-process: " << cmd 
-				<< ", err msg: " << cpp_strerror(errno) << dendl;
-			return -1;
+			int r = errno;
+			lderr(oc->cct) << " Failed to create sub process: " << cmd 
+				           << " err msg: " << cpp_strerror(r) << dendl;
+			return -r;
 		}
-		ldout(oc->cct, 11) << " Succeed to create sub-process: " << cmd << dendl;
+		ldout(oc->cct, 11) << " Succeed to create sub process: " << cmd << dendl;
 
 		/*mdadm --assemble /dev/md{0|X} /dev/nvme0n1 --run? 
 
@@ -672,7 +679,7 @@ int cetcd_client::cetcd_assemble_raid(const char *devname)
 	 		mdadm: /dev/sdn is busy - skipping  - pls check /proc/mdstat for details
 		*/
 		const char *key1 = "has been started with";
-		const char *key2 = "is alreadly in use";
+		const char *key2 = "is already in use";
 		if (fgets(output, sizeof(output), pf) != NULL) {
 			if (strstr(output, key1) != NULL) {
 				succeed = true;
@@ -704,7 +711,7 @@ int cetcd_client::cetcd_get_target_ip(char *tip, int size)
      *4 packets transmitted, 4 received, 0% packet loss, time 2999ms
 	*/
 	if (NULL == tip || size <= 0)
-		return -1;
+		return -EINVAL;
 
 	//TODO: we now take the first active target as our candidate
 	dev_map_iterator it, it_end = server_dev_map.end();
@@ -716,9 +723,10 @@ int cetcd_client::cetcd_get_target_ip(char *tip, int size)
 
 		pf = popen(cmd, "r");
 		if (NULL == pf) {
+			int r = errno;
 			lderr(oc->cct) << " Failed to create sub-process: " << cmd 
-				<< ", err msg: " << cpp_strerror(errno) << dendl;
-			return -1;
+						   << " err msg: " << cpp_strerror(r) << dendl;
+			return -r;
 		}
 		ldout(oc->cct, 11) << " Succeed to create sub-process: " << cmd << dendl;
 
@@ -728,7 +736,7 @@ int cetcd_client::cetcd_get_target_ip(char *tip, int size)
 			
 			pclose(pf);
 			ldout(oc->cct, 11) << " Succeed to find a target ip: " << tip << dendl;
-			return 1;
+			return 0;
 		}
 		pclose(pf);
 		lderr(oc->cct) << "Failed to get target ip, err msg: " << output << dendl;
@@ -746,18 +754,19 @@ int cetcd_client::cetcd_discovery_target(const char *tip, char *iqn, int size)
 	*/
 	if (NULL == tip ||
 		NULL == iqn || size <= 0)
-		return -1;
+		return -EINVAL;
 
 	FILE *pf = NULL;
 	char cmd[128] = {0};
 	snprintf(cmd, sizeof(cmd), "iscsiadm -m discovery -t st -p %s 2>&1", tip);
 	pf = popen(cmd, "r");
 	if (NULL == pf) {
+		int r = errno;
 		lderr(oc->cct) << " Failed to create sub-process: " << cmd
-			<< ", err msg: " << cpp_strerror(errno) << dendl;
-		return -1;
+					   << " err msg: " << cpp_strerror(r) << dendl;
+		return -r;
 	}
-	ldout(oc->cct, 11) << " Succeed to create sub-process: " << cmd << dendl;
+	ldout(oc->cct, 11) << " Succeed to create sub process: " << cmd << dendl;
 
 	char output[1024] = {0};
 	char key[32] = {0};
@@ -776,7 +785,7 @@ int cetcd_client::cetcd_discovery_target(const char *tip, char *iqn, int size)
 
 			pclose(pf);
 			ldout(oc->cct, 11) << " Succeed to find a target iqn: " << iqn << dendl;
-			return 1;
+			return 0;
 		}
 		lderr(oc->cct) << " Failed to find target, err msg: " << output << dendl;
 	}
@@ -789,7 +798,7 @@ int cetcd_client::cetcd_discovery_target(const char *tip, char *iqn, int size)
 int cetcd_client::cetcd_login_target(const char *tip, const char *iqn)
 {
 	if (NULL == tip || NULL == iqn)
-		return -1;
+		return -EINVAL;
 
 	FILE *pf = NULL;
 	char cmd[256] = {0};
@@ -798,11 +807,12 @@ int cetcd_client::cetcd_login_target(const char *tip, const char *iqn)
 	snprintf(cmd, sizeof(cmd), "iscsiadm -m node -T %s -p %s --login 2>&1", iqn, tip);
 	pf = popen(cmd, "r");
 	if (NULL == pf) {
-		lderr(oc->cct) << " Failed to create sub-process: " << cmd
-			<< ", err msg: " << cpp_strerror(errno) << dendl;
-		return -1;
+		int r = errno;
+		lderr(oc->cct) << " Failed to create sub process: " << cmd
+				       << " err msg: " << cpp_strerror(r) << dendl;
+		return -r;
 	}
-	ldout(oc->cct, 11) << " Succeed to create sub-process: " << cmd << dendl;
+	ldout(oc->cct, 11) << " Succeed to create sub process: " << cmd << dendl;
 
 	/* iscsiadm -m node -T {target-iqn} -p {target-ip} -l
 	Success output: first login  
@@ -822,12 +832,20 @@ int cetcd_client::cetcd_login_target(const char *tip, const char *iqn)
 
 	pclose(pf);
 	ldout(oc->cct, 11) << " Succeed to login" << dendl; 
-	return 1;
+	return 0;
 }
 
 int cetcd_client::cetcd_get_device(const char *iqn, char *devname, int size)
 {
-	/*iscsiadm -m session -P 3 -n {iqn}
+	/*
+	1. get session id 
+	
+	iscsiadm -m session 
+	tcp: [2] 10.130.120.15:3260,1 iqn.2017-11.com.compute02:disk1 (non-flash)
+
+    2. get iscsi device
+    
+	iscsiadm -m session -P 3 -n {iqn}
 
 	************************
 	Attached SCSI devices:
@@ -837,23 +855,53 @@ int cetcd_client::cetcd_get_device(const char *iqn, char *devname, int size)
 		Attached scsi disk sdo		State: running
 	*/
 	if (NULL == iqn ||
-		NULL == devname || size <= 0)
-		return -1;
+		NULL == devname || size <= 0) {
+		return -EINVAL;
+	}
 	
 	FILE *pf = NULL;
+	int sid = -1;
 	char cmd[256] = {0};
-	
-	snprintf(cmd, sizeof(cmd), "iscsiadm -m session -n %s -P 3" 
-		" | grep -e \"Attached scsi disk\"|cut -d ' ' -f 4", iqn);
+	char output[1024] = {0};
+
+	snprintf(cmd, sizeof(cmd), "iscsiadm -m session | grep %s"
+		" | awk -F'[' '{print $2}' | awk -F']' '{print $1}'", iqn);
 	pf = popen(cmd, "r");
 	if (NULL == pf) {
-		lderr(oc->cct) << " Failed to create sub-process: " << cmd
-			<< ", err msg: " << cpp_strerror(errno) << dendl;
-		return -1;
+		int r = errno;
+		lderr(oc->cct) << " Failed to create sub process: " << cmd
+					   << " err msg: " << cpp_strerror(r) << dendl;
+		return -r;
 	}
-	ldout(oc->cct, 11) << " Succeed to create sub-process: " << cmd << dendl;
+	ldout(oc->cct, 11) << " Succeed to create sub process: " << cmd << dendl;
 
-	char output[1024] = {0};
+	if (fgets(output, sizeof(output), pf) != NULL) {
+		sid = atoi((char*)output);
+		ldout(oc->cct, 11) << " iscsi session id " << sid << dendl;
+	}	
+
+	if (sid == -1) {
+		int r = ferror(pf);
+		lderr(oc->cct) << " Failed to get iscsi session id" 
+					   << " err msg: " << cpp_strerror(r) << dendl;
+		pclose(pf);
+		return -r;
+	}
+	pclose(pf);
+
+	cmd[256] = {0};
+	snprintf(cmd, sizeof(cmd), "iscsiadm -m session -r %d -P 3" 
+		" | grep -e \"Attached scsi disk\"|cut -d ' ' -f 4", sid);
+	pf = popen(cmd, "r");
+	if (NULL == pf) {
+		int r = errno;
+		lderr(oc->cct) << " Failed to create sub-process: " << cmd
+					   << " err msg: " << cpp_strerror(r) << dendl;
+		return -r;
+	}
+	ldout(oc->cct, 11) << " Succeed to create sub process: " << cmd << dendl;
+
+	output[1024] = {0};
 	if (fgets(output, sizeof(output), pf) != NULL) {
 		//sdo\t\tState: running\n
 		char *p = output;
@@ -864,13 +912,14 @@ int cetcd_client::cetcd_get_device(const char *iqn, char *devname, int size)
 		
 		pclose(pf);
 		ldout(oc->cct, 11) << " Succeed to get device Name: " << devname << dendl;
-		return 1;
+		return 0;
 	}
-	
-	lderr(oc->cct) << " Failed to get device " 
-		<< ", err msg: " << cpp_strerror(ferror(pf)) << dendl;
+
+	int r = ferror(pf);
+	lderr(oc->cct) << " Failed to get device" 
+				   << " err msg: " << cpp_strerror(r) << dendl;
 	pclose(pf);
-	return -1;
+	return -r;
 }
 
 int cetcd_client::cetcd_convert_device(const char *uuid, char *devname, int size)
@@ -878,7 +927,7 @@ int cetcd_client::cetcd_convert_device(const char *uuid, char *devname, int size
 	//lsblk --fs -l|grep {uuid}
 	if (NULL == uuid ||
 		NULL == devname || size <= 0)
-		return -1;
+		return -EINVAL;
 	
 	FILE *pf = NULL;
 	char cmd[256] = {0};
@@ -886,9 +935,10 @@ int cetcd_client::cetcd_convert_device(const char *uuid, char *devname, int size
 
 	pf = popen(cmd, "r");
 	if (NULL == pf) {
+		int r = errno;
 		lderr(oc->cct) << " Failed to create sub-process: " << cmd 
-			<< ", err msg: " << cpp_strerror(errno) << dendl;
-		return -1;
+			<< ", err msg: " << cpp_strerror(r) << dendl;
+		return -r;
 	}
 			
 	char output[1024] = {0};
@@ -902,13 +952,13 @@ int cetcd_client::cetcd_convert_device(const char *uuid, char *devname, int size
 		pclose(pf);
 		ldout(oc->cct, 11) << " Succeed to convert uuid: " << uuid 
 			<< " to device name: " << devname << dendl;
-		return 1;
+		return 0;
 	} 
 
 	lderr(oc->cct) << " Failed to convert uuid to device name"
-		<< ", err msg: " << cpp_strerror(errno)<< dendl;
+		<< ", err msg: " << cpp_strerror(ENXIO)<< dendl;
 	pclose(pf);
-	return -1;	
+	return -ENXIO;	
 }
 
 int cetcd_client::cetcd_curl_setopt(CURL *curl, cetcd_watcher *watcher) 

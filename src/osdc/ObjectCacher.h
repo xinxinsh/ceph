@@ -692,7 +692,7 @@ public:
 	 	(uint64_t)get_stat_dirty() < target_dirty);
   }
 
-  bool pre_init(const std::string &cache_path);
+  bool pre_init(std::string *cache_path);
   bool init_cache(uint64_t cache_size, uint32_t obj_order, const std::string &obj_prefix, 
   	const std::string &cache_path, bool old_format, ObjectSet *oset, const file_layout_t &l);
 
