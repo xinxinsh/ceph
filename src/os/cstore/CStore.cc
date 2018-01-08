@@ -3468,7 +3468,7 @@ int CStore::stat(
   ObjnodeRef obj;
   objnode *node = new objnode(oid, m_block_size, 0);;
   keys.insert(OBJ_DATA);
-  r = object_map->get_values(oid, keys, &values);
+  r = object_map->get_xattrs(oid, keys, &values);
   if (r < 0) {
     dout(0) << __func__ << " cannot find object data " << oid << dendl;
     goto out;
@@ -3547,7 +3547,7 @@ int CStore::_replay_event(const coll_t &cid, const ghobject_t &oid, uint8_t stat
   }
 
   keys.insert(OBJ_DATA);
-  r = object_map->get_values(oid, keys, &vals);
+  r = object_map->get_xattrs(oid, keys, &vals);
 
   assert(r == 0);
 
@@ -3638,7 +3638,7 @@ int CStore::_replay_event(const coll_t &cid, const ghobject_t &oid, uint8_t stat
       node->c_type = ctype;
       ::encode(*node, bl);
       vals[OBJ_DATA] = bl;
-      r = object_map->set_keys(oid, vals);
+      r = object_map->set_xattrs(oid, vals);
       if (r < 0) {
 	derr << __func__ << " set metadata " << oid << dendl;
 	goto out;
@@ -3818,7 +3818,7 @@ void CStore::_filter_comp(coll_t &cid, ghobject_t &oid) {
   objnode *obj = new objnode(oid, m_block_size, 0);
 
   keys.insert(OBJ_DATA);
-  int r = object_map->get_values(oid, keys, &values);
+  int r = object_map->get_xattrs(oid, keys, &values);
 	if (r < 0) {
 		if (r == -ENOENT) {
 			dout(20) << __func__ << " object " << oid << " maybe moved or renamed " << dendl;
@@ -3917,7 +3917,7 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
   dout(20) << __func__ << " " << cid << "/" << oid << dendl;
 
   keys.insert(OBJ_DATA);
-  r = object_map->get_values(oid, keys, &vals);
+  r = object_map->get_xattrs(oid, keys, &vals);
   if (r < 0) {
     derr << "cannot get object metadata " << cpp_strerror(r) << dendl;
     goto out;
@@ -4043,7 +4043,7 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
     // update metadata and persist
     node->c_type = node->get_alg_type(g_conf->cstore_compress_type);
     ::encode(*node, vals[OBJ_DATA]);
-    r = object_map->set_keys(oid, vals);
+    r = object_map->set_xattrs(oid, vals);
     if (r < 0) {
       derr << __func__ << " set metadata " << oid << dendl;
       goto out1;
@@ -4257,7 +4257,7 @@ int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
   // update metadata and persist
   obj->c_type = objnode::COMP_ALG_NONE;
   ::encode(*obj, vals[OBJ_DATA]);
-  r = object_map->set_keys(oid, vals);
+  r = object_map->set_xattrs(oid, vals);
   if (r < 0) {
     derr << __func__ << " set metadata " << oid << dendl;
     goto out;
@@ -4393,7 +4393,7 @@ int CStore::read(
   ObjnodeRef obj_node;
   objnode *node = new objnode(oid, m_block_size, 0);
   keys.insert(OBJ_DATA);
-  int r = object_map->get_values(oid, keys, &values);
+  int r = object_map->get_xattrs(oid, keys, &values);
   if (r < 0) {
     return r;
   } else {
@@ -4449,7 +4449,7 @@ int CStore::_do_fiemap(const coll_t& _cid, const ghobject_t& oid,
   objnode *node = new objnode(oid, m_block_size, 0);
 
   keys.insert(OBJ_DATA);
-  int r = object_map->get_values(oid, keys, &values);
+  int r = object_map->get_xattrs(oid, keys, &values);
   if (r < 0) {
     dout(0) << "cannot get object data" << dendl;
     return r;
@@ -4576,7 +4576,7 @@ int CStore::_truncate(const coll_t& cid, const ghobject_t& oid, uint64_t size)
   objnode *node = new objnode(oid, m_block_size, 0);
 
   keys.insert(OBJ_DATA);
-  int r = object_map->get_values(oid, keys, &values);
+  int r = object_map->get_xattrs(oid, keys, &values);
   if (r < 0) {
     goto out;
   } else {
@@ -4608,7 +4608,7 @@ int CStore::_truncate(const coll_t& cid, const ghobject_t& oid, uint64_t size)
 
   values[OBJ_DATA].clear();
   ::encode(*obj, values[OBJ_DATA]);
-  r = object_map->set_keys(oid, values, NULL);
+  r = object_map->set_xattrs(oid, values, NULL);
   if (r < 0) {
     derr << "update object data r=" << cpp_strerror(r) << dendl;
     goto out1;
@@ -4659,7 +4659,7 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
 	CompContext *c = NULL;
 
   keys.insert(OBJ_DATA);
-  int r = object_map->get_values(oid, keys, &values);
+  int r = object_map->get_xattrs(oid, keys, &values);
   if (r < 0) {
     if (r == -ENOENT) {
 			dout(20) << __func__ << " not exist " << dendl;
@@ -4682,7 +4682,7 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
 
   values[OBJ_DATA].clear();
   ::encode(*node, values[OBJ_DATA]);
-  r = object_map->set_keys(oid, values, NULL);
+  r = object_map->set_xattrs(oid, values, NULL);
 	if (!exist) {
 	  mh = new map_header(cid, oid);
 	  ::encode(*mh, bl);
@@ -4748,7 +4748,7 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
 
   objnode *node = new objnode(oid, m_block_size, offset+len);;
   keys.insert(OBJ_DATA);
-  r = object_map->get_values(oid, keys, &values);
+  r = object_map->get_xattrs(oid, keys, &values);
   if (r < 0) {
     if (r == -ENOENT) {
 			dout(20) << __func__ << " not exist " << dendl;
@@ -4803,7 +4803,7 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
   values[OBJ_DATA].clear();
   ::encode(*obj, values[OBJ_DATA]);
 
-  r = object_map->set_keys(oid, values, NULL);
+  r = object_map->set_xattrs(oid, values, NULL);
   if (r < 0 ) {
 		derr << __func__ << " update metadata error " << cpp_strerror(r) << dendl;
 		goto out1;
