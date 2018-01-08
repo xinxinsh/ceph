@@ -107,6 +107,7 @@ noinst_HEADERS += \
 	os/cstore/cstore_chain_xattr.h \
 	os/cstore/CStoreCollectionIndex.h \
 	os/cstore/DBCStoreObjectMap.h \
+	os/cstore/CStoreObjectMap.h \
 	os/cstore/CStoreFileJournal.h \
 	os/cstore/CStore.h \
 	os/cstore/CStoreJournalThrottle.h \
