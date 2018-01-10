@@ -3891,6 +3891,23 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
 
   handle.reset_tp_timeout();
 
+  dout(20) << __func__ << " " << cid << "/" << oid << dendl;
+
+  keys.insert(OBJ_DATA);
+  r = object_map->get_xattrs(oid, keys, &vals);
+  if (r < 0) {
+    derr << "cannot get object metadata " << cpp_strerror(r) << dendl;
+    goto out;
+  }
+  assert(r==0);
+  node = new objnode(oid, m_block_size, 0);
+  bp = vals[OBJ_DATA].begin();
+  ::decode(*node, bp);
+  if (node->is_compressed())
+    goto out;
+  keys.clear();
+  vals.clear();
+
   // get object header to get collection
 	r = object_map->get_map(oid, bl);
 	if (r == -ENOENT) {
@@ -3913,23 +3930,6 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
 		cid = h->cid;
 	}
 	bl.clear();
-
-  dout(20) << __func__ << " " << cid << "/" << oid << dendl;
-
-  keys.insert(OBJ_DATA);
-  r = object_map->get_xattrs(oid, keys, &vals);
-  if (r < 0) {
-    derr << "cannot get object metadata " << cpp_strerror(r) << dendl;
-    goto out;
-  }
-  assert(r==0);
-  node = new objnode(oid, m_block_size, 0);
-  bp = vals[OBJ_DATA].begin();
-  ::decode(*node, bp);
-  if (node->is_compressed())
-    return 0;
-  keys.clear();
-  vals.clear();
 
   get_object_key(oid, &key);
 
