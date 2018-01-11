@@ -4552,12 +4552,6 @@ int CStore::_remove(const coll_t& cid, const ghobject_t& oid,
 		goto out;
 	}
 
-  r = object_map->clear(oid, NULL);
-	if (r < 0) {
-    derr << __func__ << " clear object map error " << cpp_strerror(r) << dendl;
-		goto out;
-	}
-
 	r = object_map->remove_map(oid);
 	if (r < 0) {
 		derr << __func__ << " remove map header error " << cpp_strerror(r) << dendl;
