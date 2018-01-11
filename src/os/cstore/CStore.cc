@@ -4387,7 +4387,16 @@ int CStore::read(
 
   dout(15) << "read " << cid << "/" << oid << " " << offset << "~" << len << dendl;
 
-  int got;
+  op_lock.Lock();
+  while(in_progress_comp.count(oid)) {
+    dout(20) << __func__ << " object " << oid << " is in progress compress, wait ..." << dendl;
+    op_cond.Wait(op_lock);
+  }
+  in_progress_op.insert(oid);
+  op_lock.Unlock();
+
+  int got = 0;
+  CFDRef fd;
   set<string> keys;
   map<string, bufferlist> values;
   ObjnodeRef obj_node;
@@ -4395,7 +4404,8 @@ int CStore::read(
   keys.insert(OBJ_DATA);
   int r = object_map->get_xattrs(oid, keys, &values);
   if (r < 0) {
-    return r;
+		got = r;
+    goto out;
   } else {
     bufferlist::iterator p = values[OBJ_DATA].begin();
     ::decode(*node, p);
@@ -4405,17 +4415,18 @@ int CStore::read(
   if (obj_node->is_compressed()) {
     r = _decompress(cid, oid, obj_node);
     if (r < 0) {
-      dout(10) << "uncompresse error " << cpp_strerror(r) << dendl;
-      return r;
+      derr << "uncompresse error " << cpp_strerror(r) << dendl;
+			got = r;
+      goto out;
     }
   }
 
-  CFDRef fd;
   r = lfn_open(cid, oid, false, &fd);
   if (r < 0) {
     dout(10) << "CStore::read(" << cid << "/" << oid << ") open error: "
 	     << cpp_strerror(r) << dendl;
-    return r;
+		got = r;
+		goto out;
   }
 
   if (offset == 0 && len == 0) {
@@ -4428,8 +4439,18 @@ int CStore::read(
 
   lfn_close(fd);
 
+out:
   dout(10) << "CStore::read " << cid << "/" << oid << " " << offset << "~"
 	   << got << "/" << len << dendl;
+  {
+    Mutex::Locker l(op_lock);
+    in_progress_op.erase(oid);
+  }
+  {
+    Mutex::Locker l(comp_lock);
+    comp_cond.SignalAll();
+  }
+
   if (g_conf->filestore_debug_inject_read_err &&
       debug_data_eio(oid)) {
     return -EIO;
