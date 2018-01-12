@@ -24,9 +24,8 @@ class cstore_types_objnode_test : public ::testing::Test {
 public:
   objnode *on;
   void SetUp() {
-    coll_t *c = new coll_t();
     ghobject_t *o = new ghobject_t();
-    on = new objnode(*c, *o, 4*1024, 8);
+    on = new objnode(*o, 4*1024, 8);
   }
   void TearDown() {
     delete on;
@@ -59,8 +58,12 @@ TEST_F(cstore_types_objnode_test, objnode_blocks) {
   uint64_t n;
   uint32_t size = 4 * 1024 * 1024;
   on->set_size(size);
-  on->update_blocks(52210, 40977);
+  on->update_blocks(0, 783);
   r = on->get_next_set_block(0, &n);
+  EXPECT_EQ(0, r);
+  EXPECT_EQ(0, n);
+  on->update_blocks(52210, 40977);
+  r = on->get_next_set_block(10, &n);
   EXPECT_EQ(0, r);
   EXPECT_EQ(12, n);
   r = on->get_next_set_block(22, &n);
@@ -69,7 +72,7 @@ TEST_F(cstore_types_objnode_test, objnode_blocks) {
   r = on->get_next_set_block(24, &n);
   EXPECT_EQ(-1, r);
   on->update_blocks(52210, 42977);
-  r = on->get_next_set_block(0, &n);
+  r = on->get_next_set_block(10, &n);
   EXPECT_EQ(12, n);
   r = on->get_next_set_block(23, &n);
   EXPECT_EQ(23, n);
