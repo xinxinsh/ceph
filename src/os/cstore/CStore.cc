@@ -3961,9 +3961,9 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
     goto out2;
 	}
 
-  bp = bl.begin();
-  ::decode(exomap, bp);
-  bl.clear();
+	bp = bl.begin();
+	::decode(exomap, bp);
+	bl.clear();
 
   for(map<uint64_t, uint64_t>::iterator it = exomap.begin();
     it != exomap.end(); it++) {
@@ -4132,6 +4132,7 @@ int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
   string prefix = PREFIX_DECOMPRESS;
   char buf[2];
   map<string, bufferptr> aset;
+	bufferlist::iterator bp;
 
   dout(20) << __func__ << " " << cid << "/" << oid << dendl;
   if (!obj->is_compressed())
@@ -4161,33 +4162,22 @@ int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
   bpr.set_length(st.st_size);
   cbl.push_back(std::move(bpr));
 
+	r = fiemap(cid, oid, 0, obj->size, bl);
+	if (r < 0) {
+		derr << "cannot get fiemap " << dendl;
+		return r;
+	}
+
+	bp = bl.begin();
+	::decode(exomap, bp);
+	bl.clear();
+
   // decompress data
   CompressorRef c = Compressor::create(g_ceph_context, g_conf->cstore_compress_type);
   c->decompress(cbl, ubl);
   dout(20) << "compressed buffer len " << cbl.length() << " to " << " raw buffer " << ubl.length() << dendl;
 
-  bufferptr bptr(obj->size);
-	bptr.zero(0, obj->size);
-  bufferlist::iterator bp = ubl.begin();
-
-  uint64_t s = 0;
-  uint64_t e = P2ROUNDUP(obj->size, m_block_size) / m_block_size;
-  uint64_t n;
-  dout(20) << __func__ << " start " << s << " ~ " << e << " bitmap " << obj->blocks << dendl;
-  while((obj->get_next_set_block(s, &n) != -1) && (s < e)) {
-    uint64_t copy_len;
-    bufferlist tbl;
-    if (m_block_size * (n + 1) > obj->size)
-      copy_len = obj->size - m_block_size * n;
-    else
-      copy_len = m_block_size;
-    s = n+1;
-    bp.copy(copy_len, tbl);
-    bptr.copy_in(n * m_block_size, copy_len, tbl.c_str());
-  }
-  cbl.clear();
-  cbl.push_back(std::move(bptr));
-
+	bp = ubl.begin();
   r = _fgetattrs(**fd, aset);
   if (r < 0) {
     derr << "cannot get extend attrs " << cpp_strerror(r) << dendl;
@@ -4227,11 +4217,18 @@ int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
     return r;
   }
 
-  r = cbl.write_fd(**cfd, 0);
-  if (r < 0) {
-    derr << __func__ << " write error " << dendl;
-    goto out1;
-  }
+	for(map<uint64_t, uint64_t>::iterator it = exomap.begin();
+		it != exomap.end(); ++it) {
+		dout(30) << __func__ << " extent " << it->first << "~" << it->second << dendl;
+		bufferlist tbl;
+		bp.copy(it->second, tbl);
+		assert(tbl.length() == it->second);
+		r = tbl.write_fd(**cfd, it->first);
+		if (r < 0) {
+			derr << __func__ << " write " << it->first << "~" << it->second << " error "<< dendl;
+			goto out1;
+		}
+	}
 
   if (!strncmp(buf, XATTR_NO_SPILL_OUT, sizeof(XATTR_NO_SPILL_OUT))) {
     r = chain_fsetxattr<true, true>(**cfd, XATTR_SPILL_OUT_NAME, XATTR_NO_SPILL_OUT,
@@ -4482,8 +4479,8 @@ int CStore::_do_fiemap(const coll_t& _cid, const ghobject_t& oid,
   uint64_t s = offset / m_block_size;
   uint64_t e = P2ROUNDUP(offset+len, m_block_size) / m_block_size;
   uint64_t n;
-  dout(20) << __func__ << " start " << s << "~" << e << dendl;
   while((node->get_next_set_block(s, &n) != -1) && (s < e)) {
+		dout(30) << __func__ << " get next " << n << " from " << s << dendl;
     if (exomap.empty()) {
       if (offset > n * m_block_size) {
 	      exomap[offset] = m_block_size * (n + 1) - offset;
