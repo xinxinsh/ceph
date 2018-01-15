@@ -2124,7 +2124,7 @@ int CStore::mount()
   for(omap_it->lower_bound(string()); omap_it->valid(); omap_it->next()) {
     bufferlist bl = omap_it->value();
     bufferlist::iterator p = bl.begin();
-    map_header *h = new map_header();
+    map_header_t *h = new map_header_t();
     try {
       h->decode(p);
     } catch (buffer::error& e) {
@@ -3466,7 +3466,7 @@ int CStore::stat(
   set<string> keys;
   map<string, bufferlist> values;
   ObjnodeRef obj;
-  objnode *node = new objnode(oid, m_block_size, 0);;
+  objnode_t *node = new objnode_t(oid, m_block_size, 0);;
   keys.insert(OBJ_DATA);
   r = object_map->get_xattrs(oid, keys, &values);
   if (r < 0) {
@@ -3525,25 +3525,25 @@ int CStore::_replay_event(const coll_t &cid, const ghobject_t &oid, uint8_t stat
   bufferlist bl;
   map<string, bufferlist> vals;
   ghobject_t coid;
-  objnode *node;
+  objnode_t *node;
   string prefix;
-  objnode::state_t ctype;
+  objnode_t::state_t ctype;
   int r;
   CFDRef fd, cfd;
   char buf[2];
   map<string, bufferptr> aset;
 
-  compression_header h(cid, oid, (compression_header::state_t)state);
+  compression_header_t h(cid, oid, (compression_header_t::state_t)state);
 
   if (compression) {
     coid = h.oid.make_temp_obj(NS_COMPRESS);
     prefix = PREFIX_COMPRESS;
     // FIXME
-    ctype = objnode::COMP_ALG_SNAPPY;
+    ctype = objnode_t::COMP_ALG_SNAPPY;
   } else {
     coid = h.oid.make_temp_obj(NS_DECOMPRESS);
     prefix = PREFIX_DECOMPRESS;
-    ctype = objnode::COMP_ALG_NONE;
+    ctype = objnode_t::COMP_ALG_NONE;
   }
 
   keys.insert(OBJ_DATA);
@@ -3551,7 +3551,7 @@ int CStore::_replay_event(const coll_t &cid, const ghobject_t &oid, uint8_t stat
 
   assert(r == 0);
 
-  node = new objnode(oid, m_block_size, 0);
+  node = new objnode_t(oid, m_block_size, 0);
   bufferlist::iterator p = vals[OBJ_DATA].begin();
   ::decode(*node, p);
   keys.clear();
@@ -3564,10 +3564,10 @@ int CStore::_replay_event(const coll_t &cid, const ghobject_t &oid, uint8_t stat
   if (r == -ENOENT) {
     // non-exist temp object, clear WAL
     keys.insert(key);
-    if (h.state == compression_header::STATE_INIT) {
+    if (h.state == compression_header_t::STATE_INIT) {
       assert(!node->is_compressed());
       r = object_map->rm_keys_by_prefix(prefix, keys);   
-    } else if (h.state == compression_header::STATE_PROGRESS) {
+    } else if (h.state == compression_header_t::STATE_PROGRESS) {
       assert(node->is_compressed());
       r = object_map->rm_keys_by_prefix(prefix, keys);   
     }
@@ -3584,7 +3584,7 @@ int CStore::_replay_event(const coll_t &cid, const ghobject_t &oid, uint8_t stat
     }
   } else if (r == 0) {
     // temp object exist
-    if (h.state == compression_header::STATE_INIT) {
+    if (h.state == compression_header_t::STATE_INIT) {
       // copy attres
       r = lfn_open(cid, oid, false, &fd);
       if (r < 0) {
@@ -3646,7 +3646,7 @@ int CStore::_replay_event(const coll_t &cid, const ghobject_t &oid, uint8_t stat
       bl.clear();
       vals.clear();
 
-      h.state = compression_header::STATE_INIT;
+      h.state = compression_header_t::STATE_INIT;
       ::encode(h, bl);
       vals[key] = bl;
       r = object_map->set_keys_by_prefix(prefix, vals);
@@ -3681,7 +3681,7 @@ int CStore::_replay_event(const coll_t &cid, const ghobject_t &oid, uint8_t stat
 	derr << __func__ << " sync wal & metadata error " << dendl;
 	goto out;
       }
-    } else if (h.state == compression_header::STATE_PROGRESS) {
+    } else if (h.state == compression_header_t::STATE_PROGRESS) {
 
       r = lfn_unlink(h.cid, oid, false);
 
@@ -3714,7 +3714,7 @@ out:
 
 int CStore::_wal_replay() {
   int r = 0;
-  compression_header h(coll_t(), ghobject_t(), compression_header::STATE_INIT);
+  compression_header_t h(coll_t(), ghobject_t(), compression_header_t::STATE_INIT);
   bufferlist bl;
   bufferlist::iterator p;
   DBCStoreObjectMap::CStoreObjectMapIterator it;
@@ -3815,7 +3815,7 @@ bool CStore::_need_compress(const coll_t &cid, const ghobject_t &oid) {
 void CStore::_filter_comp(coll_t &cid, ghobject_t &oid) {
   set<string> keys;
   map<string, bufferlist> values;
-  objnode *obj = new objnode(oid, m_block_size, 0);
+  objnode_t *obj = new objnode_t(oid, m_block_size, 0);
 
   keys.insert(OBJ_DATA);
   int r = object_map->get_xattrs(oid, keys, &values);
@@ -3882,7 +3882,7 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
   map<uint64_t, uint64_t> exomap;
   set<string> keys;
   map<string, bufferlist> vals;
-  objnode *node;
+  objnode_t *node;
   string key;
   string prefix = PREFIX_COMPRESS;
   char buf[2];
@@ -3900,7 +3900,7 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
     goto out;
   }
   assert(r==0);
-  node = new objnode(oid, m_block_size, 0);
+  node = new objnode_t(oid, m_block_size, 0);
   bp = vals[OBJ_DATA].begin();
   ::decode(*node, bp);
   if (node->is_compressed())
@@ -3918,7 +3918,7 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
     derr << __func__ << " cannot get object header" << cpp_strerror(r) << dendl;
 		goto out;
 	} else {
-    map_header *h = new map_header();
+    map_header_t *h = new map_header_t();
     try {
 		  bp = bl.begin();
       h->decode(bp);
@@ -3970,6 +3970,7 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
     int got;
     bufferptr bptr(it->second);
     got = safe_pread(**fd, bptr.c_str(), it->second, it->first);
+		dout(10) << __func__ << " extent " << it->first << "~" << it->second << dendl;
     if (got < 0) {
       dout(10) << "CStore::read(" << cid << "/" << oid << ") pread error: " << cpp_strerror(got) << dendl;
       lfn_close(fd);
@@ -3989,10 +3990,10 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
   if (cbl.length() <= wantlen) {
     dout(20) << "Start Compress " << oid << dendl;
     ghobject_t coid = oid.make_temp_obj(NS_COMPRESS);
-    compression_header h(cid, oid, compression_header::STATE_INIT);
+    compression_header_t h(cid, oid, compression_header_t::STATE_INIT);
 
     // persist wal
-    h.state = compression_header::STATE_INIT;
+    h.state = compression_header_t::STATE_INIT;
     ::encode(h, vals[key]);
     r = object_map->set_keys_by_prefix(prefix, vals);
     if (r < 0) {
@@ -4050,7 +4051,7 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
     }
     vals.clear();
 
-    h.state = compression_header::STATE_INIT;
+    h.state = compression_header_t::STATE_INIT;
     ::encode(h, vals[key]);
     r = object_map->set_keys_by_prefix(prefix, vals);
     if (r < 0) {
@@ -4201,10 +4202,10 @@ int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
   lfn_close(fd);
 
   ghobject_t coid = oid.make_temp_obj(NS_DECOMPRESS);
-  compression_header h(cid, oid, compression_header::STATE_INIT);
+  compression_header_t h(cid, oid, compression_header_t::STATE_INIT);
 
   // persist wal
-  h.state = compression_header::STATE_INIT;
+  h.state = compression_header_t::STATE_INIT;
   ::encode(h, vals[key]);
   r = object_map->set_keys_by_prefix(prefix, vals);
   if (r < 0) {
@@ -4255,7 +4256,7 @@ int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
   lfn_close(fd);
 
   // update metadata and persist
-  obj->c_type = objnode::COMP_ALG_NONE;
+  obj->c_type = objnode_t::COMP_ALG_NONE;
   ::encode(*obj, vals[OBJ_DATA]);
   r = object_map->set_xattrs(oid, vals);
   if (r < 0) {
@@ -4264,7 +4265,7 @@ int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
   }
   vals.clear();
 
-  h.state = compression_header::STATE_PROGRESS;
+  h.state = compression_header_t::STATE_PROGRESS;
   ::encode(h, vals[key]);
   r = object_map->set_keys_by_prefix(prefix, vals);
   if (r < 0) {
@@ -4400,7 +4401,7 @@ int CStore::read(
   set<string> keys;
   map<string, bufferlist> values;
   ObjnodeRef obj_node;
-  objnode *node = new objnode(oid, m_block_size, 0);
+  objnode_t *node = new objnode_t(oid, m_block_size, 0);
   keys.insert(OBJ_DATA);
   int r = object_map->get_xattrs(oid, keys, &values);
   if (r < 0) {
@@ -4467,7 +4468,7 @@ int CStore::_do_fiemap(const coll_t& _cid, const ghobject_t& oid,
 
   set<string> keys;
   map<string, bufferlist> values;
-  objnode *node = new objnode(oid, m_block_size, 0);
+  objnode_t *node = new objnode_t(oid, m_block_size, 0);
 
   keys.insert(OBJ_DATA);
   int r = object_map->get_xattrs(oid, keys, &values);
@@ -4484,7 +4485,11 @@ int CStore::_do_fiemap(const coll_t& _cid, const ghobject_t& oid,
   dout(20) << __func__ << " start " << s << "~" << e << dendl;
   while((node->get_next_set_block(s, &n) != -1) && (s < e)) {
     if (exomap.empty()) {
-      exomap[n * m_block_size] = m_block_size;
+      if (offset > n * m_block_size) {
+	      exomap[offset] = m_block_size * (n + 1) - offset;
+			} else {
+        exomap[n * m_block_size] = m_block_size;
+			}
       s = n+1;
       continue;
     }
@@ -4492,7 +4497,7 @@ int CStore::_do_fiemap(const coll_t& _cid, const ghobject_t& oid,
       exomap.rbegin()->second = m_block_size + exomap.rbegin()->second;
     } else {
       if (offset > n * m_block_size)
-	exomap[offset] = m_block_size * (n + 1) - offset;
+	      exomap[offset] = m_block_size * (n + 1) - offset;
       else
         exomap[n * m_block_size] = m_block_size;
     }
@@ -4588,7 +4593,7 @@ int CStore::_truncate(const coll_t& cid, const ghobject_t& oid, uint64_t size)
   map<string, bufferlist> values;
   ObjnodeRef obj;
 	CompContext *c = NULL;
-  objnode *node = new objnode(oid, m_block_size, 0);
+  objnode_t *node = new objnode_t(oid, m_block_size, 0);
 
   keys.insert(OBJ_DATA);
   int r = object_map->get_xattrs(oid, keys, &values);
@@ -4668,8 +4673,8 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
   set<string> keys;
   map<string, bufferlist> values;
 	bufferlist bl;
-  objnode *node;
-	map_header *mh = NULL;
+  objnode_t *node;
+	map_header_t *mh = NULL;
 	bool exist = false;
 	CompContext *c = NULL;
 
@@ -4678,13 +4683,13 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
   if (r < 0) {
     if (r == -ENOENT) {
 			dout(20) << __func__ << " not exist " << dendl;
-      node = new objnode(oid, m_block_size, 0);
+      node = new objnode_t(oid, m_block_size, 0);
     } else {
       goto out;
     }
   } else {
 		exist = true;
-    node = new objnode(oid, m_block_size, 0);
+    node = new objnode_t(oid, m_block_size, 0);
     bufferlist::iterator p = values[OBJ_DATA].begin();
     ::decode(*node, p);
   }
@@ -4699,7 +4704,7 @@ int CStore::_touch(const coll_t& cid, const ghobject_t& oid)
   ::encode(*node, values[OBJ_DATA]);
   r = object_map->set_xattrs(oid, values, NULL);
 	if (!exist) {
-	  mh = new map_header(cid, oid);
+	  mh = new map_header_t(cid, oid);
 	  ::encode(*mh, bl);
 	  r = object_map->set_map(oid, bl);
 	}
@@ -4756,19 +4761,19 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
   map<string, bufferlist> values;
   ObjnodeRef obj;
 	bufferlist mbl;
-	map_header *mh = NULL;
+	map_header_t *mh = NULL;
 	bool exist = false;
 	CompContext *c = NULL;
 
 
-  objnode *node = new objnode(oid, m_block_size, offset+len);;
+  objnode_t *node = new objnode_t(oid, m_block_size, offset+len);;
   keys.insert(OBJ_DATA);
   r = object_map->get_xattrs(oid, keys, &values);
   if (r < 0) {
     if (r == -ENOENT) {
 			dout(20) << __func__ << " not exist " << dendl;
       obj.reset(node);
-      obj->c_type = objnode::COMP_ALG_NONE;
+      obj->c_type = objnode_t::COMP_ALG_NONE;
     } else {
       dout(0) << __func__ << " cannot find object data " << oid << dendl;
       goto out;
@@ -4825,7 +4830,7 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
 	}
 
 	if (!exist) {
-    mh = new map_header(cid, oid);
+    mh = new map_header_t(cid, oid);
 		::encode(*mh, mbl);
 	  r = object_map->set_map(oid, mbl);
 	}
@@ -4884,7 +4889,7 @@ int CStore::_clone(const coll_t& cid, const ghobject_t& oldoid, const ghobject_t
   int r;
   CFDRef o, n;
 	bufferlist bl;
-	map_header *mh = NULL;
+	map_header_t *mh = NULL;
 
   if (_check_replay_guard(cid, newoid, spos) < 0) {
 		r = 0;
@@ -4920,7 +4925,7 @@ int CStore::_clone(const coll_t& cid, const ghobject_t& oldoid, const ghobject_t
     if (r < 0 && r != -ENOENT)
       goto out3;
 
-		mh = new map_header(cid, newoid);
+		mh = new map_header_t(cid, newoid);
 		::encode(*mh, bl);
 		r = object_map->set_map(newoid, bl);
 		if (r < 0)
@@ -6860,7 +6865,7 @@ int CStore::_collection_add(const coll_t& c, const coll_t& oldcid, const ghobjec
   in_progress_op.insert(o);
   op_lock.Unlock();
 
-	map_header *mh = NULL;
+	map_header_t *mh = NULL;
 	bufferlist bl;
 	int r, srccmp, dstcmp;
   CFDRef fd;
@@ -6907,7 +6912,7 @@ int CStore::_collection_add(const coll_t& c, const coll_t& oldcid, const ghobjec
   lfn_close(fd);
 
 
-	mh = new map_header(c, o);
+	mh = new map_header_t(c, o);
 	::encode(*mh, bl);
 	r = object_map->set_map(o, bl);
 	if (r < 0)
@@ -6946,7 +6951,7 @@ int CStore::_collection_move_rename(const coll_t& oldcid, const ghobject_t& oldo
   int r = 0;
   int dstcmp, srccmp;
 	bufferlist bl;
-	map_header *mh = NULL;
+	map_header_t *mh = NULL;
 
   if (replaying) {
     /* If the destination collection doesn't exist during replay,
@@ -7004,7 +7009,7 @@ int CStore::_collection_move_rename(const coll_t& oldcid, const ghobject_t& oldo
 	r = 0;
     }
 
-		mh = new map_header(c, o);
+		mh = new map_header_t(c, o);
 		::encode(*mh, bl);
 		if (r == 0) {
 			r = object_map->set_map(o, bl);
@@ -7286,7 +7291,7 @@ int CStore::_split_collection(const coll_t& cid,
   int r = 0;
 	bufferlist bl;
 	bufferlist::iterator p;
-	map_header *mh = NULL;
+	map_header_t *mh = NULL;
 
   {
     dout(15) << __func__ << " " << cid << " bits: " << bits << dendl;
@@ -7342,7 +7347,7 @@ int CStore::_split_collection(const coll_t& cid,
 		for(vector<ghobject_t>::iterator it = updated.begin(); it != updated.end(); ++it) {
 			dout(20) << __func__ << ": " << *it << " now in dest " << dest << dendl;
 			assert(it->match(bits, rem));
-			mh = new map_header(dest, *it);
+			mh = new map_header_t(dest, *it);
 			::encode(*mh, bl);
 			r = object_map->set_map(*it, bl);
 			if (r < 0) {
