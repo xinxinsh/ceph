@@ -1543,7 +1543,7 @@ TEST_P(CStoreStoreTest, OmapSimple) {
     map<string,bufferlist> r;
     store->omap_get(cid, hoid, &h, &r);
     ASSERT_TRUE(h.contents_equal(header));
-    ASSERT_EQ(r.size(), km.size() + 1);
+    ASSERT_EQ(r.size(), km.size());
     cout << "r: " << r << std::endl;
   }
   // test iterator with seek_to_first
@@ -1554,7 +1554,7 @@ TEST_P(CStoreStoreTest, OmapSimple) {
       r[iter->key()] = iter->value();
     }
     cout << "r: " << r << std::endl;
-    ASSERT_EQ(r.size(), km.size() + 1);
+    ASSERT_EQ(r.size(), km.size());
   }
   // test iterator with initial lower_bound
   {
@@ -1564,7 +1564,7 @@ TEST_P(CStoreStoreTest, OmapSimple) {
       r[iter->key()] = iter->value();
     }
     cout << "r: " << r << std::endl;
-    ASSERT_EQ(r.size(), km.size() + 1);
+    ASSERT_EQ(r.size(), km.size());
   }
   {
     ObjectStore::Transaction t;
@@ -1619,7 +1619,7 @@ TEST_P(CStoreStoreTest, OmapCloneTest) {
     bufferlist h;
     store->omap_get(cid, hoid2, &h, &r);
     ASSERT_TRUE(h.contents_equal(header));
-    ASSERT_EQ(r.size(), km.size() + 1);
+    ASSERT_EQ(r.size(), km.size());
   }
   {
     ObjectStore::Transaction t;
@@ -2590,10 +2590,14 @@ public:
     for (set<ghobject_t, ghobject_t::BitwiseComparator>::iterator i = objects_set.begin();
 	 i != objects_set.end();
 	 ++i) {
-			if ((i->hobj.nspace == ".ceph-compress") || (i->hobj.nspace == ".ceph-decompress"))
-        partial_set.insert(*i);
+			if ((i->hobj.nspace == ".ceph-compress") || (i->hobj.nspace == ".ceph-decompress")) {
+				ghobject_t obj = *i;
+			  obj.hobj.nspace.clear();
+			  if(!available_objects.count(obj))
+          partial_set.insert(*i);
+			}
 		}
-    ASSERT_EQ(objects_set.size(), available_objects.size() + partial_set.size());
+    ASSERT_GE(objects_set.size(), available_objects.size());
     for (set<ghobject_t, ghobject_t::BitwiseComparator>::iterator i = objects_set.begin();
 	 i != objects_set.end();
 	 ++i) {
@@ -2608,10 +2612,14 @@ public:
     for (set<ghobject_t, ghobject_t::BitwiseComparator>::iterator i = objects_set2.begin();
 	 i != objects_set2.end();
 	 ++i) {
-			if ((i->hobj.nspace == ".ceph-compress") || (i->hobj.nspace == ".ceph-decompress"))
+			if ((i->hobj.nspace == ".ceph-compress") || (i->hobj.nspace == ".ceph-decompress")) {
+				ghobject_t obj = *i;
+			  obj.hobj.nspace.clear();
+			  if(!available_objects.count(obj))
         partial_set2.insert(*i);
+			}
 		}
-    ASSERT_EQ(objects_set2.size(), available_objects.size() + partial_set2.size());
+    ASSERT_GE(objects_set2.size(), available_objects.size());
     for (set<ghobject_t, ghobject_t::BitwiseComparator>::iterator i = objects_set2.begin();
 	 i != objects_set2.end();
 	 ++i) {
@@ -3129,7 +3137,7 @@ TEST_P(CStoreStoreTest, OMapTest) {
       ASSERT_TRUE(m.count("7"));
       ASSERT_TRUE(m.count("8"));
       //cout << m << std::endl;
-      ASSERT_EQ(7u, m.size());
+      ASSERT_EQ(6u, m.size());
     }
     {
       ObjectStore::Transaction t;

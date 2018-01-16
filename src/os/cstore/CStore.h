@@ -347,7 +347,7 @@ private:
   atomic_t next_osr_id;
   bool m_disable_wbthrottle;
   deque<OpSequencer*> op_queue;
-  deque<objnode*> comp_queue;
+  deque<objnode_t*> comp_queue;
   BackoffThrottle throttle_ops, throttle_bytes;
   const int m_ondisk_finisher_num;
   const int m_apply_finisher_num;
@@ -391,18 +391,18 @@ private:
 
   ThreadPool comp_tp;
 
-  struct CompWQ : public ThreadPool::WorkQueue<objnode> {
+  struct CompWQ : public ThreadPool::WorkQueue<objnode_t> {
     CStore *fs;
     CompWQ(CStore *fs, time_t timeout, time_t suicide_timeout, ThreadPool *tp)
-      : ThreadPool::WorkQueue<objnode>("CStore::CompWQ", timeout, suicide_timeout, tp), fs(fs) {}
+      : ThreadPool::WorkQueue<objnode_t>("CStore::CompWQ", timeout, suicide_timeout, tp), fs(fs) {}
 
-    bool _enqueue(objnode *p) {
+    bool _enqueue(objnode_t *p) {
       assert(fs);
       fs->comp_queue.push_back(p);
       return true;
     }
 
-    void _dequeue(objnode *p) {
+    void _dequeue(objnode_t *p) {
       assert(0);
     }
 
@@ -410,19 +410,19 @@ private:
       return fs->comp_queue.empty();
     }
 
-    objnode* _dequeue() {
+    objnode_t* _dequeue() {
       if (fs->comp_queue.empty())
 	return NULL;
-      objnode *p = fs->comp_queue.front();
+      objnode_t *p = fs->comp_queue.front();
       fs->comp_queue.pop_front();
       return p;
     }
 
-    void _process(objnode *p, ThreadPool::TPHandle &handle) override {
+    void _process(objnode_t *p, ThreadPool::TPHandle &handle) override {
       fs->_compress(p->o, handle);
     }
 
-    void _process_finish(objnode *p) {}
+    void _process_finish(objnode_t *p) {}
 
     void _clear() {
 			fs->comp_queue.clear();
