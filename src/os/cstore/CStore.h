@@ -845,6 +845,9 @@ private:
 	Mutex hit_set_lock;
 	// in memory representation
 	std::map<uint64_t, HitSet> hit_set_map;
+	std::unordered_map<ghobject_t, uint64_t> obj_digest;
+	std::unordered_map<ghobject_t, uint64_t> obj_raw_digest;
+	std::unordered_map<ghobject_t, uint64_t> obj_comp_digest;
 
   CFSSuperblock superblock;
 

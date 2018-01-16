@@ -3983,15 +3983,33 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
   // compress data
   c = Compressor::create(g_ceph_context, g_conf->cstore_compress_type);
   c->compress(bl, cbl);
-  dout(10) << __func__ << " " << bl.length() << " -> " << cbl.length() << dendl;
+  dout(10) << __func__ << " uncompressed buffer len " << bl.length() << " -> " << cbl.length() << dendl;
   rawlen = bl.length();
   wantlen = bl.length() * g_conf->cstore_compress_ratio;
-  bl.clear();
   if (cbl.length() <= wantlen) {
     dout(20) << "Start Compress " << oid << dendl;
     ghobject_t coid = oid.make_temp_obj(NS_COMPRESS);
     compression_header_t h(cid, oid, compression_header_t::STATE_INIT);
 
+		if(g_conf->cstore_compress_debug) {
+	    bufferhash h(-1), h1(-1), h2(-1);
+
+		  h2 << cbl;
+			bufferptr bptr(st.st_size);
+			bufferlist tmp;
+			h1 << bl;
+		  int got = safe_pread(**fd, bptr.c_str(), st.st_size, 0);
+			assert(st.st_size == got);
+			tmp.push_back(bptr);
+			h << tmp;
+      obj_digest[oid] = h.digest();
+      obj_raw_digest[oid] = h1.digest();
+      obj_comp_digest[oid] = h2.digest();
+			dout(0) << __func__ << " debug obj " << oid << " raw digest " << h1.digest() << " digest " 
+				<< h.digest() << " compress digest " << h2.digest() << dendl;
+		}
+
+    bl.clear();
     // persist wal
     h.state = compression_header_t::STATE_INIT;
     ::encode(h, vals[key]);
@@ -4133,6 +4151,7 @@ int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
   char buf[2];
   map<string, bufferptr> aset;
 	bufferlist::iterator bp;
+	bufferhash hh(-1);
 
   dout(20) << __func__ << " " << cid << "/" << oid << dendl;
   if (!obj->is_compressed())
@@ -4176,6 +4195,7 @@ int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
   CompressorRef c = Compressor::create(g_ceph_context, g_conf->cstore_compress_type);
   c->decompress(cbl, ubl);
   dout(20) << "compressed buffer len " << cbl.length() << " to " << " raw buffer " << ubl.length() << dendl;
+	hh << ubl;
 
 	bp = ubl.begin();
   r = _fgetattrs(**fd, aset);
@@ -4305,6 +4325,58 @@ int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
     derr << __func__ << " clear wal error " << dendl;
     goto out;
   }
+
+	if(g_conf->cstore_compress_debug) {
+		uint64_t digest = obj_digest[oid];
+		uint64_t raw_digest = obj_raw_digest[oid];
+		uint64_t comp_digest = obj_comp_digest[oid];
+		bufferlist tmp;
+		CFDRef fd;
+    struct stat st;
+		bufferhash h(-1), h1(-1), h2(-1);
+
+		h1 << ubl;
+		h2 << cbl;
+
+    r = lfn_open(cid, oid, false, &fd);
+		assert(r >= 0);
+
+    memset(&st, 0, sizeof(struct stat));
+    r = ::fstat(**fd, &st);
+		assert(r >= 0);
+
+		bufferptr bptr(st.st_size);
+		int got = safe_pread(**fd, bptr.c_str(), st.st_size, 0);
+		assert(st.st_size == got);
+		tmp.push_back(bptr);
+		h << tmp;
+
+		if (comp_digest != h2.digest()) {
+			dout(0) << "object " << oid << " data corrupted " << " previous comp digest " 
+				<< comp_digest << " but now comp digest is " << h2.digest() << dendl;
+			assert(0 == "bad read");
+		} else {
+			dout(0) << "object " << oid << " data " << " previous comp digest " 
+				<< comp_digest << " == " << h2.digest() << dendl;
+		}
+		if (raw_digest != h1.digest()) {
+			dout(0) << "object " << oid << " data corrupted " << " previous raw digest " 
+				<< raw_digest << " but now raw digest is " << h1.digest() << " uncomp " << hh.digest()<< dendl;
+			assert(0 == "bad comp");
+		} else {
+			dout(0) << "object " << oid << " data " << " previous raw digest " 
+				<< raw_digest << " == " << h1.digest() << " == " << hh.digest()<< dendl;
+		}
+		if (digest != h.digest()) {
+			dout(0) << "object " << oid << " data corrupted " << " previous digest " 
+				<< digest << " but now digest is " << h.digest() << dendl;
+			assert(0 == "bad data");
+		}
+
+		obj_digest.erase(oid);
+		obj_raw_digest.erase(oid);
+		obj_comp_digest.erase(oid);
+	}
 
   r = object_map->sync();
   if (r < 0) {
@@ -4436,6 +4508,16 @@ int CStore::read(
   got = _read_data(fd, offset, len, bl, op_flags, allow_eio);
 
   lfn_close(fd);
+
+	if (m_filestore_sloppy_crc && (!replaying || backend->can_checkpoint())) {
+		ostringstream ss;
+		int errors = backend->_crc_verify_read(**fd, offset, got, bl, &ss);
+		if (errors != 0) {
+		  dout(0) << "CStore::read " << cid << "/" << oid << " " << offset << "~"
+		    << got << " ... BAD CRC:\n" << ss.str() << dendl;
+			  assert(0 == "bad crc on read");
+		}
+	}
 
 out:
   dout(10) << "CStore::read " << cid << "/" << oid << " " << offset << "~"
