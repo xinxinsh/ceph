@@ -998,7 +998,7 @@ OPTION(kstore_default_stripe_size, OPT_INT, 65536)
 OPTION(cstore_compress_type, OPT_STR, "snappy")
 OPTION(cstore_compress_ratio, OPT_DOUBLE, .6)
 OPTION(cstore_block_size, OPT_U64, 4*1024)
-OPTION(cstore_compress_interval, OPT_DOUBLE, 5)
+OPTION(cstore_compress_interval, OPT_DOUBLE, 60)
 OPTION(cstore_inject_compress, OPT_BOOL, false)
 OPTION(cstore_compress_debug, OPT_BOOL, false)
 OPTION(cstore_comp_threads, OPT_INT, 1)
@@ -1009,7 +1009,7 @@ OPTION(cstore_hit_set_min_size, OPT_INT, 5000)  // min target size for a HitSet
 OPTION(cstore_hit_set_max_size, OPT_INT, 100000)  // max target size for a HitSet
 OPTION(cstore_hit_set_namespace, OPT_STR, ".ceph-cstore-internal") // rados namespace for hit_set tracking
 OPTION(cstore_hit_set_count, OPT_INT, 6)
-OPTION(cstore_hit_set_period, OPT_INT, 3600)
+OPTION(cstore_hit_set_period, OPT_INT, 60*60*12)
 OPTION(cstore_hit_set_type, OPT_STR, "bloom")
 OPTION(cstore_hit_set_bloom_fpp, OPT_FLOAT, .05)
 OPTION(cstore_min_recency_for_compress, OPT_INT, 1)

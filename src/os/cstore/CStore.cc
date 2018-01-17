@@ -4007,6 +4007,11 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
       obj_comp_digest[oid] = h2.digest();
 			dout(0) << __func__ << " debug obj " << oid << " raw digest " << h1.digest() << " digest " 
 				<< h.digest() << " compress digest " << h2.digest() << dendl;
+		  for(std::unordered_map<ghobject_t, uint64_t>::iterator it = obj_digest.begin();
+				it != obj_digest.end(); ++it) {
+			dout(0) << __func__ << " print object " << it->first << " comp digest " << obj_comp_digest[it->first]
+				<< " raw digest " << obj_raw_digest[it->first] << " digest " << it->second << dendl;
+		}
 		}
 
     bl.clear();
@@ -4327,9 +4332,14 @@ int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
   }
 
 	if(g_conf->cstore_compress_debug) {
-		uint64_t digest = obj_digest[oid];
-		uint64_t raw_digest = obj_raw_digest[oid];
-		uint64_t comp_digest = obj_comp_digest[oid];
+		for(std::unordered_map<ghobject_t, uint64_t>::iterator it = obj_digest.begin();
+				it != obj_digest.end(); ++it) {
+			dout(0) << __func__ << " print object " << it->first << " comp digest " << obj_comp_digest[it->first]
+				<< " raw digest " << obj_raw_digest[it->first] << " digest " << it->second << dendl;
+		}
+		uint64_t digest = -1;
+		uint64_t raw_digest = -1;
+		uint64_t comp_digest = -1;
 		bufferlist tmp;
 		CFDRef fd;
     struct stat st;
@@ -4350,27 +4360,44 @@ int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
 		assert(st.st_size == got);
 		tmp.push_back(bptr);
 		h << tmp;
+		if (obj_comp_digest.count(oid))
+			comp_digest = obj_comp_digest[oid];
+		if (obj_raw_digest.count(oid))
+			raw_digest = obj_raw_digest[oid];
+		if (obj_digest.count(oid))
+			digest = obj_digest[oid];
 
-		if (comp_digest != h2.digest()) {
+		if (obj_comp_digest.count(oid) && comp_digest != h2.digest()) {
 			dout(0) << "object " << oid << " data corrupted " << " previous comp digest " 
 				<< comp_digest << " but now comp digest is " << h2.digest() << dendl;
 			assert(0 == "bad read");
-		} else {
-			dout(0) << "object " << oid << " data " << " previous comp digest " 
+		} else if (comp_digest == h2.digest()){
+			dout(0) << "object " << oid << " previous comp digest " 
 				<< comp_digest << " == " << h2.digest() << dendl;
+		} else {
+			dout(0) << "object " << oid << " do not have previous comp digest " << dendl;
 		}
-		if (raw_digest != h1.digest()) {
+
+		if (obj_raw_digest.count(oid) && raw_digest != h1.digest()) {
 			dout(0) << "object " << oid << " data corrupted " << " previous raw digest " 
 				<< raw_digest << " but now raw digest is " << h1.digest() << " uncomp " << hh.digest()<< dendl;
 			assert(0 == "bad comp");
-		} else {
-			dout(0) << "object " << oid << " data " << " previous raw digest " 
+		} else if (raw_digest == h1.digest()){
+			dout(0) << "object " << oid << " previous raw digest " 
 				<< raw_digest << " == " << h1.digest() << " == " << hh.digest()<< dendl;
+		} else {
+			dout(0) << "object " << oid << " do not have previous raw digest " << dendl;
 		}
-		if (digest != h.digest()) {
+
+		if (obj_digest.count(oid) && digest != h.digest()) {
 			dout(0) << "object " << oid << " data corrupted " << " previous digest " 
 				<< digest << " but now digest is " << h.digest() << dendl;
 			assert(0 == "bad data");
+		} else if (digest == h.digest()) {
+			dout(0) << "object " << oid << " previous digest " 
+				<< digest << " == " << h.digest() << dendl;
+		} else {
+			dout(0) << "object " << oid << " do not have previous digest " << dendl;
 		}
 
 		obj_digest.erase(oid);
