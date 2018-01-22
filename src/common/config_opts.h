@@ -1013,6 +1013,7 @@ OPTION(cstore_hit_set_period, OPT_INT, 60*60*12)
 OPTION(cstore_hit_set_type, OPT_STR, "bloom")
 OPTION(cstore_hit_set_bloom_fpp, OPT_FLOAT, .05)
 OPTION(cstore_min_recency_for_compress, OPT_INT, 1)
+OPTION(cstore_max_compress_size, OPT_U64, 1024*1024*1024)
 
 OPTION(filestore_omap_backend, OPT_STR, "leveldb")
 
