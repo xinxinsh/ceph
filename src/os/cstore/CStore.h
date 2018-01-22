@@ -599,7 +599,8 @@ public:
     ghobject_t &oid);
   bool _need_compress(
     const coll_t &cid,
-    const ghobject_t &oid);
+    const ghobject_t &oid,
+		objnode_t &obj);
   int _compress(
     const ghobject_t& oid,
     ThreadPool::TPHandle &handle);

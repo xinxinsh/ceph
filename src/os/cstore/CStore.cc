@@ -104,6 +104,7 @@ using ceph::crypto::SHA1;
 #define NS_DECOMPRESS ".ceph-decompress"
 
 #define PREFIX_HITSET "HITSET"
+#define MAX_SNAPPY_SIZE 4294967296
 
 //Initial features in new superblock.
 static CompatSet get_fs_initial_compat_set() {
@@ -3758,7 +3759,21 @@ out:
   return r;
 }
 
-bool CStore::_need_compress(const coll_t &cid, const ghobject_t &oid) {
+bool CStore::_need_compress(const coll_t &cid, const ghobject_t &oid, objnode_t &obj) {
+
+  if (obj.is_compressed()) {
+		dout(30) << __func__ << " obj " << oid << " is compressed " << dendl;
+    return false;
+	}
+
+	if((obj.size > g_conf->cstore_max_compress_size) ||
+			(!strcmp(obj.get_alg_str(), "snappy") && obj.size > (uint64_t)MAX_SNAPPY_SIZE)) {
+		dout(30) << __func__ << " obj " << oid << " size " << obj.size
+		 	<< " is greater than cstore_max_compress_size" 
+			<< g_conf->cstore_max_compress_size << " or snappy max size " 
+			<< MAX_SNAPPY_SIZE << dendl;
+		return false;
+	}
 
 	uint32_t recency = g_conf->cstore_min_recency_for_compress;
 	bool in_hit_set = false;
@@ -3813,6 +3828,7 @@ bool CStore::_need_compress(const coll_t &cid, const ghobject_t &oid) {
 }
 
 void CStore::_filter_comp(coll_t &cid, ghobject_t &oid) {
+
   set<string> keys;
   map<string, bufferlist> values;
   objnode_t *obj = new objnode_t(oid, m_block_size, 0);
@@ -3830,9 +3846,9 @@ void CStore::_filter_comp(coll_t &cid, ghobject_t &oid) {
 
   bufferlist::iterator p = values[OBJ_DATA].begin();
   ::decode(*obj, p);
-  if (obj->is_compressed())
-    return;
 
+
+	bool need_compress = _need_compress(cid, oid, *obj);
   dout(20) << __func__ << " object " << cid << "/" << oid << dendl;
   if (g_conf->cstore_inject_compress) {
     // compress object randomly
@@ -3849,7 +3865,6 @@ void CStore::_filter_comp(coll_t &cid, ghobject_t &oid) {
   } else {
     // FIXME
     // compress objects depending on hotness 
-		bool need_compress = _need_compress(cid, oid);
 		dout(20) << __func__ << "  " << need_compress << dendl;
     if (need_compress) {
       comp_wq.queue(obj);
