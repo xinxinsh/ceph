@@ -34,7 +34,7 @@ void intrusive_ptr_release(objnode_t* o) {
 }
 
 objnode_t::objnode_t(const ghobject_t &o, uint64_t block_size, uint64_t size) 
-: o(o), ref(0), block_size(block_size), size(size), c_type(0) {
+: o(o), ref(0), block_size(block_size), size(size), c_type(Compressor::COMP_ALG_NONE) {
   uint64_t bits = P2ROUNDUP(size, block_size) / block_size;
   uint64_t len = P2ROUNDUP(bits, 8) / 8;
   blocks.append_zero(len);
@@ -80,25 +80,33 @@ int objnode_t::get_next_set_block(uint64_t start, uint64_t* next) {
   return -1;
 }
 
-objnode_t::state_t objnode_t::get_alg_type(const string &type) {
-  if (type == "none") return COMP_ALG_NONE;
-  else if (type == "snappy") return COMP_ALG_SNAPPY;
-  else return COMP_ALG_UNKNOW;
+void objnode_t::set_alg_type(const string &type) {
+	if (type == "none")
+		c_type = Compressor::COMP_ALG_NONE;
+	if (type == "snappy")
+	  c_type = Compressor::COMP_ALG_SNAPPY;
+  if (type == "zlib")
+    c_type = Compressor::COMP_ALG_ZLIB;
 }
 
 const char* objnode_t::get_alg_str() {
   switch(c_type) {
-    case COMP_ALG_NONE: return "none";
-    case COMP_ALG_SNAPPY: return "snappy";
+		case Compressor::COMP_ALG_NONE: return "none";
+		case Compressor::COMP_ALG_SNAPPY: return "snappy";
+		case Compressor::COMP_ALG_ZLIB: return "zlib";
     default: return "???";
   }
 }
 
 bool objnode_t::is_compressed() {
   switch (c_type) {
-    case COMP_ALG_NONE: return false;
-    case COMP_ALG_SNAPPY: return true;
-    default: return false;
+		case Compressor::COMP_ALG_NONE: 
+			return false;
+		case Compressor::COMP_ALG_SNAPPY: 
+		case Compressor::COMP_ALG_ZLIB: 
+			return true;
+    default: 
+			return false;
   }
 }
 

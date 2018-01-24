@@ -15,6 +15,25 @@
 #include "Compressor.h"
 #include "CompressionPlugin.h"
 
+const char * Compressor::get_comp_alg_name(int a) {
+  switch (a) {
+  case COMP_ALG_NONE: return "none";
+  case COMP_ALG_SNAPPY: return "snappy";
+  case COMP_ALG_ZLIB: return "zlib";
+  default: return "???";
+  }
+}
+
+boost::optional<Compressor::CompressionAlgorithm> Compressor::get_comp_alg_type(const std::string &s) {
+  if (s == "snappy")
+    return COMP_ALG_SNAPPY;
+  if (s == "zlib")
+    return COMP_ALG_ZLIB;
+  if (s == "" || s == "none")
+    return COMP_ALG_NONE;
+
+  return boost::optional<CompressionAlgorithm>();
+}
 
 CompressorRef Compressor::create(CephContext *cct, const string &type)
 {

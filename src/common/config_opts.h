@@ -995,7 +995,7 @@ OPTION(kstore_cache_tails, OPT_BOOL, true)
 OPTION(kstore_default_stripe_size, OPT_INT, 65536)
 
 //CStore Configs
-OPTION(cstore_compress_type, OPT_STR, "snappy")
+OPTION(cstore_compress_type, OPT_STR, "none")
 OPTION(cstore_compress_ratio, OPT_DOUBLE, .6)
 OPTION(cstore_block_size, OPT_U64, 4*1024)
 OPTION(cstore_compress_interval, OPT_DOUBLE, 60)

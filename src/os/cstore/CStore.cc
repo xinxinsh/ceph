@@ -3528,23 +3528,23 @@ int CStore::_replay_event(const coll_t &cid, const ghobject_t &oid, uint8_t stat
   ghobject_t coid;
   objnode_t *node;
   string prefix;
-  objnode_t::state_t ctype;
   int r;
   CFDRef fd, cfd;
   char buf[2];
   map<string, bufferptr> aset;
+	string ctype;
 
   compression_header_t h(cid, oid, (compression_header_t::state_t)state);
 
   if (compression) {
     coid = h.oid.make_temp_obj(NS_COMPRESS);
     prefix = PREFIX_COMPRESS;
+		ctype = "snappy";
     // FIXME
-    ctype = objnode_t::COMP_ALG_SNAPPY;
   } else {
     coid = h.oid.make_temp_obj(NS_DECOMPRESS);
     prefix = PREFIX_DECOMPRESS;
-    ctype = objnode_t::COMP_ALG_NONE;
+		ctype = "none";
   }
 
   keys.insert(OBJ_DATA);
@@ -3636,7 +3636,7 @@ int CStore::_replay_event(const coll_t &cid, const ghobject_t &oid, uint8_t stat
       }
 
       // update object metadata
-      node->c_type = ctype;
+      node->set_alg_type(ctype);
       ::encode(*node, bl);
       vals[OBJ_DATA] = bl;
       r = object_map->set_xattrs(oid, vals);
@@ -4080,7 +4080,7 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
     }
 
     // update metadata and persist
-    node->c_type = node->get_alg_type(g_conf->cstore_compress_type);
+    node->set_alg_type(g_conf->cstore_compress_type);
     ::encode(*node, vals[OBJ_DATA]);
     r = object_map->set_xattrs(oid, vals);
     if (r < 0) {
@@ -4172,6 +4172,7 @@ int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
   map<string, bufferptr> aset;
 	bufferlist::iterator bp;
 	bufferhash hh(-1);
+	string ctype("none");
 
   dout(20) << __func__ << " " << cid << "/" << oid << dendl;
   if (!obj->is_compressed())
@@ -4293,7 +4294,7 @@ int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
   lfn_close(fd);
 
   // update metadata and persist
-  obj->c_type = objnode_t::COMP_ALG_NONE;
+  obj->set_alg_type(ctype);
   ::encode(*obj, vals[OBJ_DATA]);
   r = object_map->set_xattrs(oid, vals);
   if (r < 0) {
@@ -4894,7 +4895,8 @@ int CStore::_write(const coll_t& cid, const ghobject_t& oid,
     if (r == -ENOENT) {
 			dout(20) << __func__ << " not exist " << dendl;
       obj.reset(node);
-      obj->c_type = objnode_t::COMP_ALG_NONE;
+			string ctype("none");
+      obj->set_alg_type(ctype);
     } else {
       dout(0) << __func__ << " cannot find object data " << oid << dendl;
       goto out;
