@@ -690,6 +690,14 @@ public:
   }
   uuid_d get_fsid() { return fsid; }
 
+	template<typename T, typename F>
+	T select_option(const std::string& opt_name, T& val1, F f) {
+		boost::optional<T> val2 = f();
+		if (val2)
+			return *val2;
+		return val1;
+	}
+
   // DEBUG read error injection, an object is removed from both on delete()
   Mutex read_error_lock;
   set<ghobject_t, ghobject_t::BitwiseComparator> data_error_set; // read() will return -EIO

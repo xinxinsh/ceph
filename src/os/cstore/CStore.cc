@@ -3448,6 +3448,7 @@ CStore::CollectionRef CStore::_get_collection(const coll_t& cid) {
 }
 
 ObjectStore::CollectionHandle CStore::open_collection(const coll_t& cid) {
+	dout(30) << __func__ << "  " << cid << dendl;
 	CStore::CollectionRef c = _get_collection(cid);
 	if (!c) {
 		c.reset(new Collection(cid));
@@ -3776,6 +3777,29 @@ out:
 }
 
 bool CStore::_need_compress(const coll_t &cid, const ghobject_t &oid, objnode_t &obj) {
+	dout(30) << __func__ << " obj " << oid << dendl;
+
+	// skip compression if pg is meta or temp
+	spg_t pgid;
+	if (cid.is_temp(&pgid) || cid.is_meta())
+		return false;
+
+	string alg = g_conf->cstore_compress_type;
+	alg = select_option(
+		"compression_algorithm",
+		alg,
+		[&]() {
+		  string val;
+			CStore::CollectionRef ch = _get_collection(cid);
+			assert(ch);
+      if (ch->pool_opts.get(pool_opts_t::COMPRESSION_ALGORITHM, &val)) {
+			  return boost::optional<string>(val);
+			}
+			return boost::optional<string>();
+		}
+		);
+	if (alg == "none")
+		return false;
 
   if (obj.is_compressed()) {
 		dout(30) << __func__ << " obj " << oid << " is compressed " << dendl;
@@ -3914,11 +3938,13 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
   set<string> keys;
   map<string, bufferlist> vals;
   objnode_t *node;
-  string key;
+  string key; 
+	string alg = g_conf->cstore_compress_type;
   string prefix = PREFIX_COMPRESS;
   char buf[2];
   map<string, bufferptr> aset;
   struct stat st;
+	double rat = g_conf->cstore_compress_ratio;
 
   handle.reset_tp_timeout();
 
@@ -4012,11 +4038,37 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
   }
 
   // compress data
-  c = Compressor::create(g_ceph_context, g_conf->cstore_compress_type);
+	alg = select_option(
+		"compression_algorithm",
+		alg,
+		[&]() {
+		  string val;
+			CStore::CollectionRef ch = _get_collection(cid);
+			assert(ch);
+      if (ch->pool_opts.get(pool_opts_t::COMPRESSION_ALGORITHM, &val)) {
+			  return boost::optional<string>(val);
+			}
+			return boost::optional<string>();
+		}
+		);
+	rat = select_option(
+		"compression_required_ratio",
+		rat,
+		[&]() {
+		  double val;
+			CStore::CollectionRef ch = _get_collection(cid);
+			assert(ch);
+			if (ch->pool_opts.get(pool_opts_t::COMPRESSION_REQUIRED_RATIO, &val)) {
+			  return boost::optional<double>(val);
+			}
+			return boost::optional<double>();
+		}
+		);
+  c = Compressor::create(g_ceph_context, alg);
   c->compress(bl, cbl);
   dout(10) << __func__ << " uncompressed buffer len " << bl.length() << " -> " << cbl.length() << dendl;
   rawlen = bl.length();
-  wantlen = bl.length() * g_conf->cstore_compress_ratio;
+  wantlen = bl.length() * rat;
   if (cbl.length() <= wantlen) {
     dout(20) << "Start Compress " << oid << dendl;
     ghobject_t coid = oid.make_temp_obj(NS_COMPRESS);
@@ -4096,7 +4148,7 @@ int CStore::_compress(const ghobject_t &oid, ThreadPool::TPHandle &handle) {
     }
 
     // update metadata and persist
-    node->set_alg_type(g_conf->cstore_compress_type);
+    node->set_alg_type(alg);
     ::encode(*node, vals[OBJ_DATA]);
     r = object_map->set_xattrs(oid, vals);
     if (r < 0) {
@@ -4229,7 +4281,7 @@ int CStore::_decompress(const coll_t& cid, const ghobject_t& oid,
 	bl.clear();
 
   // decompress data
-  CompressorRef c = Compressor::create(g_ceph_context, g_conf->cstore_compress_type);
+  CompressorRef c = Compressor::create(g_ceph_context, obj->get_alg_str());
   c->decompress(cbl, ubl);
   dout(20) << "compressed buffer len " << cbl.length() << " to " << " raw buffer " << ubl.length() << dendl;
 	hh << ubl;
@@ -4511,6 +4563,7 @@ int CStore::set_collection_opts(
 		return -ENOENT;
 
 	dout(15) << __func__ << " " << cid << " options " << opts << dendl;
+	assert(ch);
 	Collection *c = static_cast<Collection *>(ch.get());
 	{
 		RWLock::WLocker l(coll_lock);
