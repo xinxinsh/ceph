@@ -4505,7 +4505,18 @@ int CStore::_read_data(
 int CStore::set_collection_opts(
 	const coll_t& cid,
 	const pool_opts_t& opts) {
-	return -EOPNOTSUPP;
+
+	CollectionHandle ch = _get_collection(cid);
+	if (!ch)
+		return -ENOENT;
+
+	dout(15) << __func__ << " " << cid << " options " << opts << dendl;
+	Collection *c = static_cast<Collection *>(ch.get());
+	{
+		RWLock::WLocker l(coll_lock);
+		c->pool_opts = opts;
+	}
+	return 0;
 }
 
 int CStore::read(

@@ -2223,6 +2223,7 @@ public:
 
 private:
   void prepare_write_info(map<string,bufferlist> *km);
+	void update_store_with_options();
 
 public:
   static int _prepare_write_info(map<string,bufferlist> *km,
