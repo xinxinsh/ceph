@@ -2541,6 +2541,12 @@ int BlueStore::stat(
   return 0;
 }
 
+int BlueStore::set_collection_opts(
+	const coll_t& cid,
+	const pool_opts_t& opts) {
+	return -EOPNOTSUPP;
+}
+
 int BlueStore::read(
   const coll_t& cid,
   const ghobject_t& oid,

@@ -2025,6 +2025,17 @@ public:
   }
 
   /**
+   * set_collection_opts -- set pool options for a collectioninformation for an object
+   *
+   * @param cid collection
+   * @param opts new collection options
+   * @returns 0 on success, negative error code on failure.
+   */
+  virtual int set_collection_opts(
+    const coll_t& cid,
+    const pool_opts_t& opts) = 0;
+
+  /**
    * stat -- get information for an object
    *
    * @param cid collection for object

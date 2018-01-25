@@ -4486,6 +4486,12 @@ int CStore::_read_data(
   return got;
 }
 
+int CStore::set_collection_opts(
+	const coll_t& cid,
+	const pool_opts_t& opts) {
+	return -EOPNOTSUPP;
+}
+
 int CStore::read(
   const coll_t& _cid,
   const ghobject_t& oid,
