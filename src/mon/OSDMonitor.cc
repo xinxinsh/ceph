@@ -54,6 +54,7 @@
 #include "common/config.h"
 #include "common/errno.h"
 
+#include "compressor/Compressor.h"
 #include "erasure-code/ErasureCodePlugin.h"
 
 #include "include/compat.h"
@@ -3068,7 +3069,8 @@ namespace {
     MIN_WRITE_RECENCY_FOR_PROMOTE, FAST_READ,
     HIT_SET_GRADE_DECAY_RATE, HIT_SET_SEARCH_LAST_N,
     SCRUB_MIN_INTERVAL, SCRUB_MAX_INTERVAL, DEEP_SCRUB_INTERVAL,
-    RECOVERY_PRIORITY, RECOVERY_OP_PRIORITY, SCRUB_PRIORITY};
+    RECOVERY_PRIORITY, RECOVERY_OP_PRIORITY, SCRUB_PRIORITY,
+		COMPRESSION_ALGORITHM, COMPRESSION_REQUIRED_RATIO};
 
   std::set<osd_pool_get_choices>
     subtract_second_from_first(const std::set<osd_pool_get_choices>& first,
@@ -3567,7 +3569,9 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
       ("deep_scrub_interval", DEEP_SCRUB_INTERVAL)
       ("recovery_priority", RECOVERY_PRIORITY)
       ("recovery_op_priority", RECOVERY_OP_PRIORITY)
-      ("scrub_priority", SCRUB_PRIORITY);
+      ("scrub_priority", SCRUB_PRIORITY)
+      ("compression_algorithm", COMPRESSION_ALGORITHM)
+      ("compression_required_ratio", COMPRESSION_REQUIRED_RATIO);
 
     typedef std::set<osd_pool_get_choices> choices_set_t;
 
@@ -3752,6 +3756,8 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
           case RECOVERY_PRIORITY:
           case RECOVERY_OP_PRIORITY:
           case SCRUB_PRIORITY:
+		case COMPRESSION_ALGORITHM:
+		case COMPRESSION_REQUIRED_RATIO:
 	    for (i = ALL_CHOICES.begin(); i != ALL_CHOICES.end(); ++i) {
 	      if (i->second == *it)
 		break;
@@ -3886,6 +3892,8 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
           case RECOVERY_PRIORITY:
           case RECOVERY_OP_PRIORITY:
           case SCRUB_PRIORITY:
+		case COMPRESSION_ALGORITHM:
+		case COMPRESSION_REQUIRED_RATIO:
 	    for (i = ALL_CHOICES.begin(); i != ALL_CHOICES.end(); ++i) {
 	      if (i->second == *it)
 		break;
@@ -5330,6 +5338,26 @@ int OSDMonitor::prepare_command_pool_set(map<string,cmd_vartype> &cmdmap,
       p.fast_read = false;
     }
   } else if (pool_opts_t::is_opt_name(var)) {
+		bool unset = val == "unset";
+
+    if (var == "compression_algorithm") {
+      if (!unset) {
+        auto alg = Compressor::get_comp_alg_type(val);
+        if (!alg) {
+          ss << "unrecognized compression_algorithm '" << val << "'";
+	        return -EINVAL;
+        }
+      }
+    } else if (var == "compression_required_ratio") {
+      if (floaterr.length()) {
+        ss << "error parsing float value '" << val << "': " << floaterr;
+        return -EINVAL;
+      }
+      if (f < 0 || f > 1) {
+        ss << "compression_required_ratio is out of range (0-1): '" << val << "'";
+	      return -EINVAL;
+      }
+    }
     pool_opts_t::opt_desc_t desc = pool_opts_t::get_opt_desc(var);
     switch (desc.type) {
     case pool_opts_t::STR:
