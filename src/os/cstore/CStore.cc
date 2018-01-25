@@ -3439,6 +3439,22 @@ void CStore::_do_transaction(
 // --------------------
 // objects
 
+CStore::CollectionRef CStore::_get_collection(const coll_t& cid) {
+	RWLock::RLocker l(coll_lock);
+	ceph::unordered_map<coll_t, CollectionRef>::iterator it = coll_map.find(cid);
+	if (it != coll_map.end())
+		return it->second;
+	return CollectionRef();
+}
+
+ObjectStore::CollectionHandle CStore::open_collection(const coll_t& cid) {
+	CStore::CollectionRef c = _get_collection(cid);
+	if (!c) {
+		c.reset(new Collection(cid));
+	}
+	return c;
+}
+
 bool CStore::exists(const coll_t& _cid, const ghobject_t& oid)
 {
   tracepoint(objectstore, exists_enter, _cid.c_str());
@@ -6936,6 +6952,14 @@ int CStore::_create_collection(
       return r;
   }
 
+	{
+		RWLock::WLocker l(coll_lock);
+	  CollectionRef ch;
+	  ch.reset(new Collection(c));
+		coll_map[c] = ch;
+	}
+	
+
   _set_replay_guard(c, spos);
   return 0;
 }
@@ -6974,6 +6998,11 @@ int CStore::_destroy_collection(const coll_t& c)
       goto out_final;
     }
   }
+
+	{
+		RWLock::WLocker l(coll_lock);
+		coll_map.erase(c);
+	}
 
  out_final:
   dout(10) << "_destroy_collection " << fn << " = " << r << dendl;

@@ -102,6 +102,18 @@ public:
 
   static int get_block_device_fsid(const string& path, uuid_d *fsid);
 
+	struct Collection : public CollectionImpl {
+		coll_t cid;
+		pool_opts_t pool_opts;
+		Collection(coll_t c) : cid(c) {}
+		~Collection() {}
+		const coll_t& get_cid() override {
+			return cid;
+		}
+	};
+
+	typedef boost::intrusive_ptr<Collection> CollectionRef;
+
   struct FSPerfTracker {
     PerfCounters::avg_tracker<uint64_t> os_commit_latency;
     PerfCounters::avg_tracker<uint64_t> os_apply_latency;
@@ -579,6 +591,10 @@ public:
   int pick_object_revision_lt(ghobject_t& oid) {
     return 0;
   }
+
+	CollectionRef _get_collection(const coll_t& cid);
+	CollectionHandle open_collection(const coll_t& cid) override;
+
   using ObjectStore::exists;
   bool exists(const coll_t& cid, const ghobject_t& oid);
   using ObjectStore::stat;
@@ -853,6 +869,10 @@ private:
 	std::unordered_map<ghobject_t, uint64_t> obj_digest;
 	std::unordered_map<ghobject_t, uint64_t> obj_raw_digest;
 	std::unordered_map<ghobject_t, uint64_t> obj_comp_digest;
+
+	// track pool opts
+	RWLock coll_lock = {"CStore::coll_lock"};
+	std::unordered_map<coll_t, CollectionRef> coll_map;
 
   CFSSuperblock superblock;
 
