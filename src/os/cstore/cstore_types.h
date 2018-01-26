@@ -24,6 +24,7 @@
 #include <include/types.h>
 #include <include/encoding.h>
 #include <osd/HitSet.h>
+#include <compressor/Compressor.h>
 
 #define ISP2(x) (((x) & ((x) - 1)) == 0)
 #define P2ALIGHN(x, y) ((x) & -(y))
@@ -31,18 +32,13 @@
 
 class objnode_t {
 public:
-  enum state_t {
-    COMP_ALG_UNKNOW = 0,
-    COMP_ALG_NONE,
-    COMP_ALG_SNAPPY,
-  };
 
-  objnode_t() : o(ghobject_t()), ref(0), block_size(0), size(0), c_type(COMP_ALG_NONE) {}
+  objnode_t() : o(ghobject_t()), ref(0), block_size(0), size(0), c_type(Compressor::COMP_ALG_NONE) {}
   objnode_t(const ghobject_t &o, uint64_t block_size, uint64_t size);
   virtual ~objnode_t(){}
   void set_size(uint64_t nsize);
   uint32_t get_size() {return size;}
-  objnode_t::state_t get_alg_type(const string &type);
+	void set_alg_type(const string &type);
   const char* get_alg_str();
   void update_blocks(uint64_t off, uint64_t len);
   int get_next_set_block(uint64_t start, uint64_t *next);
@@ -64,7 +60,7 @@ public:
   std::atomic_int ref;
   uint64_t block_size;
   uint64_t size;
-  uint8_t c_type;
+	uint8_t c_type;
   bufferlist blocks;
 };
 typedef boost::intrusive_ptr<objnode_t> ObjnodeRef;
