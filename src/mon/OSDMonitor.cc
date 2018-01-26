@@ -5361,7 +5361,7 @@ int OSDMonitor::prepare_command_pool_set(map<string,cmd_vartype> &cmdmap,
     pool_opts_t::opt_desc_t desc = pool_opts_t::get_opt_desc(var);
     switch (desc.type) {
     case pool_opts_t::STR:
-      if (val.empty()) {
+      if (unset) {
 	p.opts.unset(desc.key);
       } else {
 	p.opts.set(desc.key, static_cast<std::string>(val));
