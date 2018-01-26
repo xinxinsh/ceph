@@ -70,6 +70,23 @@ TEST(SnappyCompressor, sharded_input_decompress)
   EXPECT_EQ(res, 0);
 }
 
+TEST(SnappyCompressor, large_input)
+{
+	SnappyCompressor sp;
+	
+	string test(256*1024*1024,0);
+	int len = test.size();
+	bufferlist in, out;
+	in.append(test.c_str(), len);
+	int res = sp.compress(in, out);
+	EXPECT_EQ(res, 0);
+
+	bufferlist after;
+	res = sp.decompress(out, after);
+	EXPECT_EQ(res, 0);
+	EXPECT_EQ(after.length(), 256*1024*1024);
+}
+
 int main(int argc, char **argv) {
   vector<const char*> args;
   argv_to_vec(argc, (const char **)argv, args);

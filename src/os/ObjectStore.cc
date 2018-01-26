@@ -20,6 +20,7 @@
 
 #include "filestore/FileStore.h"
 #include "memstore/MemStore.h"
+#include "cstore/CStore.h"
 #if defined(HAVE_LIBAIO)
 #include "bluestore/BlueStore.h"
 #endif
@@ -68,6 +69,9 @@ ObjectStore *ObjectStore::create(CephContext *cct,
 {
   if (type == "filestore") {
     return new FileStore(data, journal, flags);
+  }
+  if (type == "cstore") {
+    return new CStore(data, journal, flags);
   }
   if (type == "memstore") {
     return new MemStore(cct, data);

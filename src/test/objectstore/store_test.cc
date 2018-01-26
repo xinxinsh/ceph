@@ -3651,10 +3651,11 @@ INSTANTIATE_TEST_CASE_P(
   ObjectStore,
   StoreTest,
   ::testing::Values(
-    "memstore",
-    "filestore",
-    "bluestore",
-    "kstore"));
+//   "memstore",
+    "filestore"
+    ));
+//    "bluestore",
+//    "kstore"));
 
 #else
 

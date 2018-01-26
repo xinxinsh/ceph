@@ -997,6 +997,12 @@ int FileStore::mkjournal()
   return ret;
 }
 
+int FileStore::set_collection_opts(
+	const coll_t& cid,
+	const pool_opts_t& opts) {
+	return -EOPNOTSUPP;
+}
+
 int FileStore::read_fsid(int fd, uuid_d *uuid)
 {
   char fsid_str[40];

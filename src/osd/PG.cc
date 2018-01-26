@@ -5610,8 +5610,10 @@ void PG::handle_advance_map(
     osdmap, lastmap, newup, up_primary,
     newacting, acting_primary);
   recovery_state.handle_event(evt, rctx);
-  if (pool.info.last_change == osdmap_ref->get_epoch())
+  if (pool.info.last_change == osdmap_ref->get_epoch()) {
     on_pool_change();
+		update_store_with_options();
+	}
 }
 
 void PG::handle_activate_map(RecoveryCtx *rctx)
@@ -5657,7 +5659,13 @@ void PG::handle_query_state(Formatter *f)
   recovery_state.handle_event(q, 0);
 }
 
-
+void PG::update_store_with_options() 
+{
+	int r = osd->store->set_collection_opts(coll, pool.info.opts);
+  if(r < 0 && r != -EOPNOTSUPP) {
+   derr << __func__ << "set_collection_opts returns error:" << r << dendl;
+  }
+}
 
 std::ostream& operator<<(std::ostream& oss,
 			 const struct PG::PriorSet &prior)
@@ -5697,6 +5705,7 @@ boost::statechart::result PG::RecoveryState::Initial::react(const Load& l)
 
   // do we tell someone we're here?
   pg->send_notify = (!pg->is_primary());
+	pg->update_store_with_options();
 
   return transit< Reset >();
 }

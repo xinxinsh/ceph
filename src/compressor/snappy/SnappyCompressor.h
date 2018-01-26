@@ -65,7 +65,7 @@ class SnappyCompressor : public Compressor {
     size_t res_len = 0;
     // Trick, decompress only need first 32bits buffer
     bufferlist tmp;
-    tmp.substr_of( src, 0, 4 );
+    tmp.substr_of( src, 0, 5 );
     if (!snappy::GetUncompressedLength(tmp.c_str(), tmp.length(), &res_len))
       return -1;
     BufferlistSource source(src);

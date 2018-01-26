@@ -24,6 +24,16 @@ typedef shared_ptr<Compressor> CompressorRef;
 
 class Compressor {
  public:
+  enum CompressionAlgorithm {
+    COMP_ALG_NONE = 0,
+    COMP_ALG_SNAPPY = 1,
+    COMP_ALG_ZLIB = 2,
+    COMP_ALG_LAST	//the last value for range checks
+  };
+
+  static const char * get_comp_alg_name(int a);
+  static boost::optional<CompressionAlgorithm> get_comp_alg_type(const std::string &s);
+
   virtual ~Compressor() {}
   virtual int compress(const bufferlist &in, bufferlist &out) = 0;
   virtual int decompress(const bufferlist &in, bufferlist &out) = 0;

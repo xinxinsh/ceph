@@ -128,6 +128,7 @@ SUBSYS(osd, 0, 5)
 SUBSYS(optracker, 0, 5)
 SUBSYS(objclass, 0, 5)
 SUBSYS(filestore, 1, 3)
+SUBSYS(cstore, 1, 3)
 SUBSYS(journal, 1, 3)
 SUBSYS(ms, 0, 5)
 SUBSYS(mon, 1, 5)
@@ -992,6 +993,27 @@ OPTION(kstore_sync_submit_transaction, OPT_BOOL, false)
 OPTION(kstore_onode_map_size, OPT_U64, 1024)
 OPTION(kstore_cache_tails, OPT_BOOL, true)
 OPTION(kstore_default_stripe_size, OPT_INT, 65536)
+
+//CStore Configs
+OPTION(cstore_compress_type, OPT_STR, "none")
+OPTION(cstore_compress_ratio, OPT_DOUBLE, .6)
+OPTION(cstore_block_size, OPT_U64, 4*1024)
+OPTION(cstore_compress_interval, OPT_DOUBLE, 60)
+OPTION(cstore_inject_compress, OPT_BOOL, false)
+OPTION(cstore_compress_debug, OPT_BOOL, false)
+OPTION(cstore_comp_threads, OPT_INT, 1)
+OPTION(cstore_comp_thread_timeout, OPT_INT, 30)
+OPTION(cstore_comp_thread_suicide_timeout, OPT_INT, 60)
+
+OPTION(cstore_hit_set_min_size, OPT_INT, 5000)  // min target size for a HitSet
+OPTION(cstore_hit_set_max_size, OPT_INT, 100000)  // max target size for a HitSet
+OPTION(cstore_hit_set_namespace, OPT_STR, ".ceph-cstore-internal") // rados namespace for hit_set tracking
+OPTION(cstore_hit_set_count, OPT_INT, 6)
+OPTION(cstore_hit_set_period, OPT_INT, 60*60*12)
+OPTION(cstore_hit_set_type, OPT_STR, "bloom")
+OPTION(cstore_hit_set_bloom_fpp, OPT_FLOAT, .05)
+OPTION(cstore_min_recency_for_compress, OPT_INT, 1)
+OPTION(cstore_max_compress_size, OPT_U64, 1024*1024*1024)
 
 OPTION(filestore_omap_backend, OPT_STR, "leveldb")
 
