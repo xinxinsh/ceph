@@ -51,6 +51,11 @@ ceph_test_objectstore_LDADD = $(LIBOS) $(UNITTEST_LDADD) $(CEPH_GLOBAL)
 ceph_test_objectstore_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 bin_DEBUGPROGRAMS += ceph_test_objectstore
 
+ceph_test_cstore_SOURCES = test/cstore/cstore_test.cc
+ceph_test_cstore_LDADD = $(LIBOS) $(UNITTEST_LDADD) $(CEPH_GLOBAL)
+ceph_test_cstore_CXXFLAGS = $(UNITTEST_CXXFLAGS)
+bin_DEBUGPROGRAMS += ceph_test_cstore
+
 ceph_test_keyvaluedb_SOURCES = test/objectstore/test_kv.cc
 ceph_test_keyvaluedb_LDADD = $(LIBOS) $(UNITTEST_LDADD) $(CEPH_GLOBAL)
 ceph_test_keyvaluedb_CXXFLAGS = $(UNITTEST_CXXFLAGS)
@@ -70,6 +75,11 @@ unittest_bluestore_types_SOURCES = test/objectstore/test_bluestore_types.cc
 unittest_bluestore_types_LDADD = $(LIBOS) $(UNITTEST_LDADD) $(CEPH_GLOBAL)
 unittest_bluestore_types_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 check_TESTPROGRAMS += unittest_bluestore_types
+
+unittest_cstore_types_SOURCES = test/objectstore/test_cstore_types.cc
+unittest_cstore_types_LDADD = $(LIBOS) $(UNITTEST_LDADD) $(CEPH_GLOBAL)
+unittest_cstore_types_CXXFLAGS = $(UNITTEST_CXXFLAGS)
+check_TESTPROGRAMS += unittest_cstore_types
 
 endif
 

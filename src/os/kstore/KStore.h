@@ -434,6 +434,10 @@ public:
     const ghobject_t& oid,
     struct stat *st,
     bool allow_eio = false); // struct stat?
+	using ObjectStore::set_collection_opts;
+	int set_collection_opts(
+		const coll_t& cid,
+		const pool_opts_t& opts);
   using ObjectStore::read;
   int read(
     const coll_t& cid,

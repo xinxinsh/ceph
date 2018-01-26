@@ -444,6 +444,11 @@ public:
       shard_id(shard),
       max(false) {}
 
+  ghobject_t make_temp_obj(const string ns) const {
+    hobject_t toid(hobj);
+		toid.nspace = ns;
+    return ghobject_t(toid, generation, shard_id);
+  }
   static ghobject_t make_pgmeta(int64_t pool, uint32_t hash, shard_id_t shard) {
     hobject_t h(object_t(), string(), CEPH_NOSNAP, hash, pool, string());
     return ghobject_t(h, NO_GEN, shard);

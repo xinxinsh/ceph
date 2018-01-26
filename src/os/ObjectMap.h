@@ -145,7 +145,6 @@ public:
     return ObjectMapIterator();
   }
 
-
   virtual ~ObjectMap() {}
 };
 

@@ -7,10 +7,13 @@ noinst_LIBRARIES += libos_types.a
 if WITH_LIBAIO
 libos_types_a_SOURCES += \
 	os/bluestore/bluestore_types.cc \
-	os/bluestore/bluefs_types.cc
+	os/bluestore/bluefs_types.cc 
 endif
 
 if ENABLE_SERVER
+
+libos_types_a_SOURCES += \
+	os/cstore/cstore_types.cc 
 
 libos_a_SOURCES = \
 	os/filestore/chain_xattr.cc \
@@ -24,6 +27,18 @@ libos_a_SOURCES = \
 	os/filestore/JournalingObjectStore.cc \
 	os/filestore/LFNIndex.cc \
 	os/filestore/WBThrottle.cc \
+	os/cstore/cstore_chain_xattr.cc \
+	os/cstore/DBCStoreObjectMap.cc \
+	os/cstore/CStoreFileJournal.cc \
+	os/cstore/CStore.cc \
+	os/cstore/CStoreJournalThrottle.cc \
+	os/cstore/GenericCStoreBackend.cc \
+	os/cstore/CStoreHashIndex.cc \
+	os/cstore/CStoreIndexManager.cc \
+	os/cstore/CStoreJournalingObjectStore.cc \
+	os/cstore/CStoreLFNIndex.cc \
+	os/cstore/CStoreWBThrottle.cc \
+	os/cstore/cstore_kv.cc \
 	os/fs/FS.cc \
 	os/kstore/kv.cc \
 	os/kstore/KStore.cc \
@@ -54,6 +69,7 @@ endif
 if WITH_LIBXFS
 libos_a_SOURCES += \
     os/filestore/XfsFileStoreBackend.cc \
+    os/cstore/XfsCStoreBackend.cc \
     os/fs/XFS.cc
 endif
 
@@ -88,6 +104,25 @@ noinst_HEADERS += \
 	os/filestore/WBThrottle.h \
 	os/filestore/XfsFileStoreBackend.h \
 	os/filestore/ZFSFileStoreBackend.h \
+	os/cstore/cstore_chain_xattr.h \
+	os/cstore/CStoreCollectionIndex.h \
+	os/cstore/DBCStoreObjectMap.h \
+	os/cstore/CStoreObjectMap.h \
+	os/cstore/CStoreFileJournal.h \
+	os/cstore/CStore.h \
+	os/cstore/CStoreJournalThrottle.h \
+	os/cstore/CStoreFDCache.h \
+	os/cstore/GenericCStoreBackend.h \
+	os/cstore/CStoreHashIndex.h \
+	os/cstore/CStoreIndexManager.h \
+	os/cstore/CStoreJournal.h \
+	os/cstore/CStoreJournalingObjectStore.h \
+	os/cstore/CStoreLFNIndex.h \
+	os/cstore/CStoreSequencerPosition.h \
+	os/cstore/CStoreWBThrottle.h \
+	os/cstore/XfsCStoreBackend.h \
+	os/cstore/cstore_kv.h \
+	os/cstore/cstore_types.h \
 	os/fs/btrfs_ioctl.h \
 	os/fs/FS.h \
 	os/fs/XFS.h \
