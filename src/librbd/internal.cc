@@ -2093,8 +2093,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     return 0;
   }
 
-  int remove(IoCtx& io_ctx, const std::string &imgname,
-             const std::string &image_id, ProgressContext& prog_ctx,
+  int remove(IoCtx& io_ctx, const char *imgname, ProgressContext& prog_ctx,
              bool force)
   {
     CephContext *cct((CephContext *)io_ctx.cct());
