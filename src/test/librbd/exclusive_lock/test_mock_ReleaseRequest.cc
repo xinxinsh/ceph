@@ -216,7 +216,6 @@ TEST_F(TestMockExclusiveLockReleaseRequest, Blacklisted) {
   expect_op_work_queue(mock_image_ctx);
 
   InSequence seq;
-  expect_prepare_lock(mock_image_ctx);
   expect_cancel_op_requests(mock_image_ctx, 0);
   expect_block_writes(mock_image_ctx, -EBLACKLISTED);
   expect_invalidate_cache(mock_image_ctx, false, -EBLACKLISTED);
@@ -236,13 +235,12 @@ TEST_F(TestMockExclusiveLockReleaseRequest, Blacklisted) {
   MockContext mock_releasing_ctx;
   expect_complete_context(mock_releasing_ctx, 0);
   expect_unlock(mock_image_ctx, -EBLACKLISTED);
-  expect_handle_prepare_lock_complete(mock_image_ctx);
 
   C_SaferCond ctx;
   MockReleaseRequest *req = MockReleaseRequest::create(mock_image_ctx,
                                                        TEST_COOKIE,
                                                        &mock_releasing_ctx,
-                                                       &ctx, false);
+                                                       &ctx);
   req->send();
   ASSERT_EQ(0, ctx.wait());
 }

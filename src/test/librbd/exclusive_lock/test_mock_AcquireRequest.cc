@@ -118,6 +118,7 @@ namespace exclusive_lock {
 using ::testing::_;
 using ::testing::DoAll;
 using ::testing::InSequence;
+using ::testing::Invoke;
 using ::testing::Return;
 using ::testing::SetArgPointee;
 using ::testing::StrEq;
@@ -414,18 +415,15 @@ TEST_F(TestMockExclusiveLockAcquireRequest, RefreshLockDisabled) {
   expect_op_work_queue(mock_image_ctx);
 
   InSequence seq;
-  expect_prepare_lock(mock_image_ctx);
   expect_flush_notifies(mock_image_ctx);
   expect_get_locker(mock_image_ctx, mock_get_locker_request, {}, 0);
   expect_lock(mock_image_ctx, 0);
   expect_is_refresh_required(mock_image_ctx, true);
-  expect_refresh(mock_image_ctx, mock_refresh_request, -ERESTART);
+  expect_refresh(mock_image_ctx, -ERESTART);
 
   MockObjectMap mock_object_map;
   expect_test_features(mock_image_ctx, RBD_FEATURE_OBJECT_MAP, false);
-  expect_test_features(mock_image_ctx, RBD_FEATURE_JOURNALING,
-                       mock_image_ctx.snap_lock, false);
-  expect_handle_prepare_lock_complete(mock_image_ctx);
+  expect_test_features(mock_image_ctx, RBD_FEATURE_JOURNALING, false);
 
   C_SaferCond acquire_ctx;
   C_SaferCond ctx;
@@ -558,7 +556,6 @@ TEST_F(TestMockExclusiveLockAcquireRequest, GetLockInfoError) {
   InSequence seq;
   expect_flush_notifies(mock_image_ctx);
   expect_get_locker(mock_image_ctx, mock_get_locker_request, {}, -EINVAL);
-  expect_handle_prepare_lock_complete(mock_image_ctx);
 
   C_SaferCond ctx;
   MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx,
@@ -609,7 +606,6 @@ TEST_F(TestMockExclusiveLockAcquireRequest, BreakLockError) {
                     0);
   expect_lock(mock_image_ctx, -EBUSY);
   expect_break_lock(mock_image_ctx, mock_break_request, -EINVAL);
-  expect_handle_prepare_lock_complete(mock_image_ctx);
 
   C_SaferCond ctx;
   MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx,
