@@ -16,6 +16,7 @@
 #include "librbd/internal.h"
 #include "librbd/Journal.h"
 #include "librbd/Operations.h"
+#include "librbd/ReadResult.h"
 #include "librbd/journal/Types.h"
 
 void register_test_journal_replay() {
@@ -117,9 +118,10 @@ TEST_F(TestJournalReplay, AioDiscardEvent) {
   aio_comp->release();
 
   std::string read_payload(4096, '\0');
+  librbd::ReadResult read_result1{&read_payload[0], read_payload.size()};
   aio_comp = new librbd::AioCompletion();
   ictx->aio_work_queue->aio_read(aio_comp, 0, read_payload.size(),
-                                 &read_payload[0], NULL, 0);
+                                 std::move(read_result1), 0);
   ASSERT_EQ(0, aio_comp->wait_for_complete());
   aio_comp->release();
   ASSERT_EQ(payload, read_payload);
@@ -135,16 +137,17 @@ TEST_F(TestJournalReplay, AioDiscardEvent) {
 
   // inject a discard operation into the journal
   inject_into_journal(ictx,
-                      librbd::journal::AioDiscardEvent(0, payload.size()));
+                      librbd::journal::AioDiscardEvent(0, payload.size(), ictx->skip_partial_discard));
   close_image(ictx);
 
   // re-open the journal so that it replays the new entry
   ASSERT_EQ(0, open_image(m_image_name, &ictx));
   ASSERT_EQ(0, when_acquired_lock(ictx));
 
+  librbd::ReadResult read_result{&read_payload[0], read_payload.size()};
   aio_comp = new librbd::AioCompletion();
   ictx->aio_work_queue->aio_read(aio_comp, 0, read_payload.size(),
-                                 &read_payload[0], NULL, 0);
+                                 std::move(read_result), 0);
   ASSERT_EQ(0, aio_comp->wait_for_complete());
   aio_comp->release();
   if (ictx->cct->_conf->rbd_skip_partial_discard) {
@@ -162,9 +165,9 @@ TEST_F(TestJournalReplay, AioDiscardEvent) {
 
   // replay several envents and check the commit position
   inject_into_journal(ictx,
-                      librbd::journal::AioDiscardEvent(0, payload.size()));
+                      librbd::journal::AioDiscardEvent(0, payload.size(), ictx->cct->_conf->rbd_skip_partial_discard));
   inject_into_journal(ictx,
-                      librbd::journal::AioDiscardEvent(0, payload.size()));
+                      librbd::journal::AioDiscardEvent(0, payload.size(), ictx->cct->_conf->rbd_skip_partial_discard));
   close_image(ictx);
 
   ASSERT_EQ(0, open_image(m_image_name, &ictx));
@@ -175,7 +178,7 @@ TEST_F(TestJournalReplay, AioDiscardEvent) {
 
   // verify lock ordering constraints
   aio_comp = new librbd::AioCompletion();
-  ictx->aio_work_queue->aio_discard(aio_comp, 0, read_payload.size());
+  ictx->aio_work_queue->aio_discard(aio_comp, 0, read_payload.size(), ictx->cct->_conf->rbd_skip_partial_discard);
   ASSERT_EQ(0, aio_comp->wait_for_complete());
   aio_comp->release();
 }
@@ -205,9 +208,10 @@ TEST_F(TestJournalReplay, AioWriteEvent) {
   ASSERT_EQ(0, when_acquired_lock(ictx));
 
   std::string read_payload(4096, '\0');
+  librbd::ReadResult read_result{&read_payload[0], read_payload.size()};
   librbd::AioCompletion *aio_comp = new librbd::AioCompletion();
   ictx->aio_work_queue->aio_read(aio_comp, 0, read_payload.size(),
-                                 &read_payload[0], NULL, 0);
+                                 std::move(read_result), 0);
   ASSERT_EQ(0, aio_comp->wait_for_complete());
   aio_comp->release();
   ASSERT_EQ(payload, read_payload);

@@ -12,6 +12,7 @@
 #include "librbd/ImageState.h"
 #include "librbd/internal.h"
 #include "librbd/Operations.h"
+#include "librbd/ReadResult.h"
 #include "librbd/journal/Types.h"
 #include "tools/rbd_mirror/ImageSync.h"
 #include "tools/rbd_mirror/Threads.h"
@@ -32,7 +33,7 @@ void scribble(librbd::ImageCtx *image_ctx, int num_ops, size_t max_size)
     uint64_t len = 1 + rand() % max_size;
 
     if (rand() % 4 == 0) {
-      ASSERT_EQ((int)len, image_ctx->aio_work_queue->discard(off, len));
+      ASSERT_EQ((int)len, image_ctx->aio_work_queue->discard(off, len, image_ctx->skip_partial_discard));
     } else {
       std::string str(len, '1');
       ASSERT_EQ((int)len, image_ctx->aio_work_queue->write(off, len,
@@ -129,9 +130,9 @@ TEST_F(TestImageSync, Simple) {
   for (uint64_t offset = 0; offset < m_remote_image_ctx->size;
        offset += object_size) {
     ASSERT_LE(0, m_remote_image_ctx->aio_work_queue->read(
-                   offset, object_size, read_remote_bl.c_str(), 0));
+                   offset, object_size, librbd::ReadResult(&read_remote_bl), 0));
     ASSERT_LE(0, m_local_image_ctx->aio_work_queue->read(
-                   offset, object_size, read_local_bl.c_str(), 0));
+                   offset, object_size, librbd::ReadResult(&read_remote_bl), 0));
     ASSERT_TRUE(read_remote_bl.contents_equal(read_local_bl));
   }
 }
@@ -199,9 +200,9 @@ TEST_F(TestImageSync, SnapshotStress) {
 
     for (uint64_t offset = 0; offset < remote_size; offset += object_size) {
       ASSERT_LE(0, m_remote_image_ctx->aio_work_queue->read(
-                     offset, object_size, read_remote_bl.c_str(), 0));
+                     offset, object_size, librbd::ReadResult(&read_remote_bl), 0));
       ASSERT_LE(0, m_local_image_ctx->aio_work_queue->read(
-                     offset, object_size, read_local_bl.c_str(), 0));
+                     offset, object_size, librbd::ReadResult(&read_local_bl), 0));
       ASSERT_TRUE(read_remote_bl.contents_equal(read_local_bl));
     }
   }

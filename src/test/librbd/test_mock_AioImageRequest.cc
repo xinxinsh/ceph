@@ -220,12 +220,15 @@ TEST_F(TestMockAioImageRequest, AioDiscardJournalAppendDisabled) {
 
   InSequence seq;
   expect_is_journal_appending(mock_journal, false);
-  expect_object_request_send(mock_image_ctx, mock_aio_object_request, 0);
+  if (!ictx->skip_partial_discard) {
+    expect_object_request_send(mock_image_ctx, mock_aio_object_request, 0);
+  }
 
   C_SaferCond aio_comp_ctx;
   AioCompletion *aio_comp = AioCompletion::create_and_start(
     &aio_comp_ctx, ictx, AIO_TYPE_DISCARD);
-  MockAioImageDiscard mock_aio_image_discard(mock_image_ctx, aio_comp, 0, 1);
+  MockAioImageDiscard mock_aio_image_discard(mock_image_ctx, aio_comp, 0, 1
+			                                       ictx->skip_partial_discard);
   {
     RWLock::RLocker owner_locker(mock_image_ctx.owner_lock);
     mock_aio_image_discard.send();
@@ -255,6 +258,37 @@ TEST_F(TestMockAioImageRequest, AioFlushJournalAppendDisabled) {
   {
     RWLock::RLocker owner_locker(mock_image_ctx.owner_lock);
     mock_aio_image_flush.send();
+  }
+  ASSERT_EQ(0, aio_comp_ctx.wait());
+}
+
+TEST_F(TestMockIoImageRequest, AioWriteSameJournalAppendDisabled) {
+  REQUIRE_FEATURE(RBD_FEATURE_JOURNALING);
+
+  librbd::ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+
+  MockObjectRequest mock_aio_object_request;
+  MockTestImageCtx mock_image_ctx(*ictx);
+  MockJournal mock_journal;
+  mock_image_ctx.journal = &mock_journal;
+
+  InSequence seq;
+  expect_is_journal_appending(mock_journal, false);
+  expect_write_to_cache(mock_image_ctx, ictx->get_object_name(0),
+                        0, 1, 0, 0);
+
+  C_SaferCond aio_comp_ctx;
+  AioCompletion *aio_comp = AioCompletion::create_and_start(
+    &aio_comp_ctx, ictx, AIO_TYPE_WRITESAME);
+
+  bufferlist bl;
+  bl.append("1");
+  MockImageWriteSameRequest mock_aio_image_writesame(mock_image_ctx, aio_comp,
+                                                     0, 1, std::move(bl), 0);
+  {
+    RWLock::RLocker owner_locker(mock_image_ctx.owner_lock);
+    mock_aio_image_writesame.send();
   }
   ASSERT_EQ(0, aio_comp_ctx.wait());
 }

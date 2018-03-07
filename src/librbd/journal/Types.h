@@ -35,7 +35,8 @@ enum EventType {
   EVENT_TYPE_RENAME         = 10,
   EVENT_TYPE_RESIZE         = 11,
   EVENT_TYPE_FLATTEN        = 12,
-  EVENT_TYPE_DEMOTE         = 13
+  EVENT_TYPE_DEMOTE         = 13,
+  EVENT_TYPE_AIO_WRITESAME   = 14
 };
 
 struct AioDiscardEvent {
@@ -43,11 +44,12 @@ struct AioDiscardEvent {
 
   uint64_t offset;
   size_t length;
+  bool skip_partial_discard;
 
-  AioDiscardEvent() : offset(0), length(0) {
+  AioDiscardEvent() : offset(0), length(0), skip_partial_discard(false) {
   }
-  AioDiscardEvent(uint64_t _offset, size_t _length)
-    : offset(_offset), length(_length) {
+  AioDiscardEvent(uint64_t _offset, size_t _length, bool _skip_partial_discard)
+    : offset(_offset), length(_length), skip_partial_discard(_skip_partial_discard) {
   }
 
   void encode(bufferlist& bl) const;
@@ -69,6 +71,25 @@ struct AioWriteEvent {
   AioWriteEvent() : offset(0), length(0) {
   }
   AioWriteEvent(uint64_t _offset, size_t _length, const bufferlist &_data)
+    : offset(_offset), length(_length), data(_data) {
+  }
+
+  void encode(bufferlist& bl) const;
+  void decode(__u8 version, bufferlist::iterator& it);
+  void dump(Formatter *f) const;
+};
+
+struct AioWriteSameEvent {
+  static const EventType TYPE = EVENT_TYPE_AIO_WRITESAME;
+
+  uint64_t offset;
+  uint64_t length;
+  bufferlist data;
+
+  AioWriteSameEvent() : offset(0), length(0) {
+  }
+  AioWriteSameEvent(uint64_t _offset, uint64_t _length,
+                    const bufferlist &_data)
     : offset(_offset), length(_length), data(_data) {
   }
 
@@ -294,6 +315,7 @@ typedef boost::variant<AioDiscardEvent,
                        ResizeEvent,
                        FlattenEvent,
                        DemoteEvent,
+                       AioWriteSameEvent,
                        UnknownEvent> Event;
 
 struct EventEntry {

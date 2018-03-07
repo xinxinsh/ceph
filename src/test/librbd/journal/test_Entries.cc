@@ -126,6 +126,9 @@ TEST_F(TestJournalEntries, AioWrite) {
   ASSERT_TRUE(journaler != NULL);
 
   std::string buffer(512, '1');
+  bufferlist write_bl;
+  write_bl.append(buffer);
+
   C_SaferCond cond_ctx;
   librbd::AioCompletion *c = librbd::AioCompletion::create(&cond_ctx);
   c->get();
@@ -172,7 +175,7 @@ TEST_F(TestJournalEntries, AioDiscard) {
   C_SaferCond cond_ctx;
   librbd::AioCompletion *c = librbd::AioCompletion::create(&cond_ctx);
   c->get();
-  ictx->aio_work_queue->aio_discard(c, 123, 234);
+  ictx->aio_work_queue->aio_discard(c, 123, 234, cct->_conf->rbd_skip_partial_discard);
   ASSERT_EQ(0, c->wait_for_complete());
   c->put();
 

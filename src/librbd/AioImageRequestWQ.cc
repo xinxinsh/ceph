@@ -31,8 +31,8 @@ AioImageRequestWQ::AioImageRequestWQ(ImageCtx *image_ctx, const string &name,
   tp->add_work_queue(this);
 }
 
-ssize_t AioImageRequestWQ::read(uint64_t off, uint64_t len, char *buf,
-                                int op_flags) {
+ssize_t AioImageRequestWQ::read(uint64_t off, uint64_t len,
+                             ReadResult &&read_result, int op_flags) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "read: ictx=" << &m_image_ctx << ", off=" << off << ", "
                  << "len = " << len << dendl;
@@ -42,7 +42,7 @@ ssize_t AioImageRequestWQ::read(uint64_t off, uint64_t len, char *buf,
 
   C_SaferCond cond;
   AioCompletion *c = AioCompletion::create(&cond);
-  aio_read(c, off, len, buf, NULL, op_flags, false);
+  aio_read(c, off, len, std::move(read_result), op_flags, false);
   return cond.wait();
 }
 
@@ -71,7 +71,7 @@ ssize_t AioImageRequestWQ::write(uint64_t off, uint64_t len, const char *buf,
   return len;
 }
 
-int AioImageRequestWQ::discard(uint64_t off, uint64_t len) {
+int AioImageRequestWQ::discard(uint64_t off, uint64_t len, bool skip_partial_discard) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "discard: ictx=" << &m_image_ctx << ", off=" << off << ", "
                  << "len = " << len << dendl;
@@ -86,7 +86,32 @@ int AioImageRequestWQ::discard(uint64_t off, uint64_t len) {
 
   C_SaferCond cond;
   AioCompletion *c = AioCompletion::create(&cond);
-  aio_discard(c, off, len, false);
+  aio_discard(c, off, len, skip_partial_discard, false);
+
+  r = cond.wait();
+  if (r < 0) {
+    return r;
+  }
+  return len;
+}
+
+ssize_t AioImageRequestWQ::writesame(uint64_t off, uint64_t len, bufferlist &&bl,
+                                  int op_flags) {
+  CephContext *cct = m_image_ctx.cct;
+  ldout(cct, 20) << "writesame ictx=" << &m_image_ctx << ", off=" << off << ", "
+                 << "len = " << len << ", data_len " << bl.length() << dendl;
+
+  m_image_ctx.snap_lock.get_read();
+  int r = clip_io(util::get_image_ctx(&m_image_ctx), off, &len);
+  m_image_ctx.snap_lock.put_read();
+  if (r < 0) {
+    lderr(cct) << "invalid IO request: " << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  C_SaferCond cond;
+  AioCompletion *c = AioCompletion::create(&cond);
+  aio_writesame(c, off, len, std::move(bl), op_flags, false);
 
   r = cond.wait();
   if (r < 0) {
@@ -96,9 +121,9 @@ int AioImageRequestWQ::discard(uint64_t off, uint64_t len) {
 }
 
 void AioImageRequestWQ::aio_read(AioCompletion *c, uint64_t off, uint64_t len,
-                                 char *buf, bufferlist *pbl, int op_flags,
-                                 bool native_async) {
-  c->init_time(&m_image_ctx, librbd::AIO_TYPE_READ);
+                              ReadResult &&read_result, int op_flags,
+                              bool native_async) {
+  c->init_time(&m_image_ctx, AIO_TYPE_READ);
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "aio_read: ictx=" << &m_image_ctx << ", "
                  << "completion=" << c << ", off=" << off << ", "
@@ -124,10 +149,10 @@ void AioImageRequestWQ::aio_read(AioCompletion *c, uint64_t off, uint64_t len,
 
   if (m_image_ctx.non_blocking_aio || writes_blocked() || !writes_empty() ||
       lock_required) {
-    queue(new AioImageRead<>(m_image_ctx, c, off, len, buf, pbl, op_flags));
+    queue(new AioImageRead<>(m_image_ctx, c, {{off, len}}, std::move(read_result), op_flags));
   } else {
     c->start_op();
-    AioImageRequest<>::aio_read(&m_image_ctx, c, off, len, buf, pbl, op_flags);
+    AioImageRequest<>::aio_read(&m_image_ctx, c, {{off, len}}, std::move(read_result), op_flags);
     finish_in_flight_op();
   }
 }
@@ -160,7 +185,8 @@ void AioImageRequestWQ::aio_write(AioCompletion *c, uint64_t off, uint64_t len,
 }
 
 void AioImageRequestWQ::aio_discard(AioCompletion *c, uint64_t off,
-                                    uint64_t len, bool native_async) {
+                                    uint64_t len, bool skip_partial_discard,
+																		bool native_async) {
   c->init_time(&m_image_ctx, librbd::AIO_TYPE_DISCARD);
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "aio_discard: ictx=" << &m_image_ctx << ", "
@@ -177,10 +203,10 @@ void AioImageRequestWQ::aio_discard(AioCompletion *c, uint64_t off,
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
   if (m_image_ctx.non_blocking_aio || writes_blocked()) {
-    queue(new AioImageDiscard<>(m_image_ctx, c, off, len));
+    queue(new AioImageDiscard<>(m_image_ctx, c, off, len, skip_partial_discard));
   } else {
     c->start_op();
-    AioImageRequest<>::aio_discard(&m_image_ctx, c, off, len);
+    AioImageRequest<>::aio_discard(&m_image_ctx, c, off, len, skip_partial_discard);
     finish_in_flight_op();
   }
 }
@@ -204,6 +230,36 @@ void AioImageRequestWQ::aio_flush(AioCompletion *c, bool native_async) {
     queue(new AioImageFlush<>(m_image_ctx, c));
   } else {
     AioImageRequest<>::aio_flush(&m_image_ctx, c);
+    finish_in_flight_op();
+  }
+}
+
+void AioImageRequestWQ::aio_writesame(AioCompletion *c, uint64_t off, uint64_t len,
+                                      bufferlist &&bl, int op_flags,
+                                      bool native_async) {
+  c->init_time(&m_image_ctx, AIO_TYPE_WRITESAME);
+  CephContext *cct = m_image_ctx.cct;
+  ldout(cct, 20) << "aio_writesame: ictx=" << &m_image_ctx << ", "
+                 << "completion=" << c << ", off=" << off << ", "
+                 << "len=" << len << ", data_len = " << bl.length() << ", "
+                 << "flags=" << op_flags << dendl;
+
+  if (native_async && m_image_ctx.event_socket.is_valid()) {
+    c->set_event_notify(true);
+  }
+
+  if (!start_in_flight_op(c)) {
+    return;
+  }
+
+  RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+  if (m_image_ctx.non_blocking_aio || writes_blocked()) {
+    queue(new AioImageWriteSame<>(m_image_ctx, c, off, len, std::move(bl),
+                                  op_flags));
+  } else {
+    c->start_op();
+    AioImageRequest<>::aio_writesame(&m_image_ctx, c, off, len, std::move(bl),
+                                     op_flags);
     finish_in_flight_op();
   }
 }

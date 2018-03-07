@@ -71,16 +71,21 @@ private:
 void AioDiscardEvent::encode(bufferlist& bl) const {
   ::encode(offset, bl);
   ::encode(length, bl);
+  ::encode(skip_partial_discard, bl);
 }
 
 void AioDiscardEvent::decode(__u8 version, bufferlist::iterator& it) {
   ::decode(offset, it);
   ::decode(length, it);
+  if (version >= 5) {
+    ::decode(skip_partial_discard, it);
+  }
 }
 
 void AioDiscardEvent::dump(Formatter *f) const {
   f->dump_unsigned("offset", offset);
   f->dump_unsigned("length", length);
+  f->dump_bool("skip_partial_discard", skip_partial_discard);
 }
 
 void AioWriteEvent::encode(bufferlist& bl) const {
@@ -96,6 +101,23 @@ void AioWriteEvent::decode(__u8 version, bufferlist::iterator& it) {
 }
 
 void AioWriteEvent::dump(Formatter *f) const {
+  f->dump_unsigned("offset", offset);
+  f->dump_unsigned("length", length);
+}
+
+void AioWriteSameEvent::encode(bufferlist& bl) const {
+  ::encode(offset, bl);
+  ::encode(length, bl);
+  ::encode(data, bl);
+}
+
+void AioWriteSameEvent::decode(__u8 version, bufferlist::iterator& it) {
+  ::decode(offset, it);
+  ::decode(length, it);
+  ::decode(data, it);
+}
+
+void AioWriteSameEvent::dump(Formatter *f) const {
   f->dump_unsigned("offset", offset);
   f->dump_unsigned("length", length);
 }
@@ -229,7 +251,7 @@ EventType EventEntry::get_event_type() const {
 }
 
 void EventEntry::encode(bufferlist& bl) const {
-  ENCODE_START(2, 1, bl);
+  ENCODE_START(3, 1, bl);
   boost::apply_visitor(EncodeVisitor(bl), event);
   ENCODE_FINISH(bl);
 }
@@ -284,6 +306,9 @@ void EventEntry::decode(bufferlist::iterator& it) {
   case EVENT_TYPE_DEMOTE:
     event = DemoteEvent();
     break;
+  case EVENT_TYPE_AIO_WRITESAME:
+    event = AioWriteSameEvent();
+    break;
   default:
     event = UnknownEvent();
     break;
@@ -299,7 +324,7 @@ void EventEntry::dump(Formatter *f) const {
 
 void EventEntry::generate_test_instances(std::list<EventEntry *> &o) {
   o.push_back(new EventEntry(AioDiscardEvent()));
-  o.push_back(new EventEntry(AioDiscardEvent(123, 345)));
+  o.push_back(new EventEntry(AioDiscardEvent(123, 345, false)));
 
   bufferlist bl;
   bl.append(std::string(32, '1'));
@@ -574,6 +599,9 @@ std::ostream &operator<<(std::ostream &out, const EventType &type) {
     break;
   case EVENT_TYPE_DEMOTE:
     out << "Demote";
+    break;
+  case EVENT_TYPE_AIO_WRITESAME:
+    out << "AioWriteSame";
     break;
   default:
     out << "Unknown (" << static_cast<uint32_t>(type) << ")";

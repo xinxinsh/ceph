@@ -30,6 +30,7 @@
 #include "librbd/Operations.h"
 #include "librbd/Utils.h"
 #include "librbd/internal.h"
+#include "librbd/ReadResult.h"
 #include "tools/rbd_mirror/types.h"
 #include "tools/rbd_mirror/ImageReplayer.h"
 #include "tools/rbd_mirror/ImageSyncThrottler.h"
@@ -312,7 +313,7 @@ public:
     char *result = (char *)malloc(len + 1);
 
     ASSERT_NE(static_cast<char *>(NULL), result);
-    read = ictx->aio_work_queue->read(off, len, result, 0);
+    read = ictx->aio_work_queue->read(off, len, librbd::ReadResult{result, len+1}, 0);
     printf("read: %d\n", (int)read);
     ASSERT_EQ(len, static_cast<size_t>(read));
     result[len] = '\0';

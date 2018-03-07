@@ -9,6 +9,7 @@
 #include "librbd/ImageState.h"
 #include "librbd/internal.h"
 #include "librbd/Operations.h"
+#include "librbd/ReadResult.h"
 #include "test/librados_test_stub/MockTestMemIoCtxImpl.h"
 #include "test/librbd/mock/MockImageCtx.h"
 #include "tools/rbd_mirror/Threads.h"
@@ -482,7 +483,7 @@ TEST_F(TestMockImageSyncObjectCopyRequest, Trim) {
   // trim the object
   uint64_t trim_offset = rand() % one.range_end();
   ASSERT_LE(0, m_remote_image_ctx->aio_work_queue->discard(
-    trim_offset, one.range_end() - trim_offset));
+    trim_offset, one.range_end() - trim_offset, m_remote_image_ctx->skip_partial_discard));
   ASSERT_EQ(0, create_snap("sync"));
 
   librbd::MockTestImageCtx mock_remote_image_ctx(*m_remote_image_ctx);
@@ -525,7 +526,7 @@ TEST_F(TestMockImageSyncObjectCopyRequest, Remove) {
 
   // remove the object
   uint64_t object_size = 1 << m_remote_image_ctx->order;
-  ASSERT_LE(0, m_remote_image_ctx->aio_work_queue->discard(0, object_size));
+  ASSERT_LE(0, m_remote_image_ctx->aio_work_queue->discard(0, object_size,  m_remote_image_ctx->skip_partial_discard));
   ASSERT_EQ(0, create_snap("sync"));
   librbd::MockTestImageCtx mock_remote_image_ctx(*m_remote_image_ctx);
   librbd::MockTestImageCtx mock_local_image_ctx(*m_local_image_ctx);
