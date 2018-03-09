@@ -73,6 +73,16 @@ public:
 			                                      const ceph::bufferlist &data,
 			                                      const ::SnapContext &snapc,
 			                                      Context *completion, int op_flags);
+	static AioObjectRequest* create_compare_and_write(ImageCtxT *ictx,
+	                                               const std::string &oid,
+	                                               uint64_t object_no,
+	                                               uint64_t object_off,
+	                                               const ceph::bufferlist &cmp_data,
+	                                               const ceph::bufferlist &write_data,
+	                                               const ::SnapContext &snapc,
+	                                               uint64_t *mismatch_offset, int op_flags,
+	                                               Context *completion);
+	 
 
   AioObjectRequest(ImageCtx *ictx, const std::string &oid,
                    uint64_t objectno, uint64_t off, uint64_t len,
@@ -440,6 +450,44 @@ protected:
 
 private:
   ceph::bufferlist m_write_data;
+  int m_op_flags;
+};
+
+class AioObjectCompareAndWrite : public AbstractAioObjectWrite {
+public:
+  typedef std::vector<std::pair<uint64_t, uint64_t> > Extents;
+
+  AioObjectCompareAndWrite(ImageCtx *ictx, const std::string &oid,
+                           uint64_t object_no, uint64_t object_off,
+                           const ceph::bufferlist &cmp_bl,
+                           const ceph::bufferlist &write_bl,
+                           const ::SnapContext &snapc,
+                           uint64_t *mismatch_offset, int op_flags,
+                           Context *completion)
+  : AbstractAioObjectWrite(ictx, oid, object_no, object_off,
+                           cmp_bl.length(), snapc, completion, false),
+    m_cmp_bl(cmp_bl), m_write_bl(write_bl),
+    m_mismatch_offset(mismatch_offset), m_op_flags(op_flags) {
+  }
+
+  const char *get_write_type() const override {
+    return "compare_and_write";
+  }
+
+  void pre_object_map_update(uint8_t *new_state) override {
+    *new_state = OBJECT_EXISTS;
+  }
+
+  void complete(int r) override;
+protected:
+  void add_write_ops(librados::ObjectWriteOperation *wr) override;
+
+  void send_write() override;
+
+private:
+  ceph::bufferlist m_cmp_bl;
+  ceph::bufferlist m_write_bl;
+  uint64_t *m_mismatch_offset;
   int m_op_flags;
 };
 

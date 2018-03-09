@@ -59,6 +59,7 @@ public:
   virtual int xattr_set(const std::string& oid, const std::string &name,
                         bufferlist& bl);
   virtual int zero(const std::string& oid, uint64_t off, uint64_t len);
+  virtual int cmpext(const std::string& oid, uint64_t off, bufferlist& cmp_bl);
 
 protected:
   TestMemRadosClient::Pool *get_pool() {

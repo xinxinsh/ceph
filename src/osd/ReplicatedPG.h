@@ -1425,6 +1425,10 @@ protected:
   int do_xattr_cmp_u64(int op, __u64 v1, bufferlist& xattr);
   int do_xattr_cmp_str(int op, string& v1s, bufferlist& xattr);
 
+  int do_extent_cmp(OpContext *ctx, OSDOp& osd_op);
+public:
+	int finish_extent_cmp(OSDOp& osd_op, const bufferlist &read_bl);
+protected:
   int do_writesame(OpContext *ctx, OSDOp& osd_op);
 
   bool pgls_filter(PGLSFilter *filter, hobject_t& sobj, bufferlist& outdata);

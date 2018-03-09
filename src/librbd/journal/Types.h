@@ -13,6 +13,7 @@
 #include <boost/none.hpp>
 #include <boost/optional.hpp>
 #include <boost/variant.hpp>
+#include <boost/mpl/vector.hpp>
 
 namespace ceph {
 class Formatter;
@@ -36,7 +37,8 @@ enum EventType {
   EVENT_TYPE_RESIZE         = 11,
   EVENT_TYPE_FLATTEN        = 12,
   EVENT_TYPE_DEMOTE         = 13,
-  EVENT_TYPE_AIO_WRITESAME   = 14
+  EVENT_TYPE_AIO_WRITESAME   = 14,
+  EVENT_TYPE_AIO_COMPARE_AND_WRITE = 15
 };
 
 struct AioDiscardEvent {
@@ -91,6 +93,28 @@ struct AioWriteSameEvent {
   AioWriteSameEvent(uint64_t _offset, uint64_t _length,
                     const bufferlist &_data)
     : offset(_offset), length(_length), data(_data) {
+  }
+
+  void encode(bufferlist& bl) const;
+  void decode(__u8 version, bufferlist::iterator& it);
+  void dump(Formatter *f) const;
+};
+
+struct AioCompareAndWriteEvent {
+  static const EventType TYPE = EVENT_TYPE_AIO_COMPARE_AND_WRITE;
+
+  uint64_t offset;
+  uint64_t length;
+  bufferlist cmp_data;
+  bufferlist write_data;
+
+  static uint32_t get_fixed_size();
+
+  AioCompareAndWriteEvent() : offset(0), length(0) {
+  }
+  AioCompareAndWriteEvent(uint64_t _offset, uint64_t _length,
+                          const bufferlist &_cmp_data, const bufferlist &_write_data)
+    : offset(_offset), length(_length), cmp_data(_cmp_data), write_data(_write_data) {
   }
 
   void encode(bufferlist& bl) const;
@@ -316,9 +340,13 @@ typedef boost::variant<AioDiscardEvent,
                        FlattenEvent,
                        DemoteEvent,
                        AioWriteSameEvent,
+                       AioCompareAndWriteEvent,
                        UnknownEvent> Event;
 
 struct EventEntry {
+	static uint32_t get_fixed_size() {
+	  return EVENT_FIXED_SIZE;
+	}
   EventEntry() : event(UnknownEvent()) {
   }
   EventEntry(const Event &_event) : event(_event) {
@@ -333,6 +361,8 @@ struct EventEntry {
   void dump(Formatter *f) const;
 
   static void generate_test_instances(std::list<EventEntry *> &o);
+private:
+  static const uint32_t EVENT_FIXED_SIZE = 14; /// version encoding, type
 };
 
 // Journal Client data structures
