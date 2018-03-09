@@ -3707,12 +3707,106 @@ int ReplicatedPG::do_xattr_cmp_str(int op, string& v1s, bufferlist& xattr)
   }
 }
 
+struct FillInVerifyExtent : public Context {
+  ceph_le64 *r;
+  int32_t *rval;
+  bufferlist *outdatap;
+  boost::optional<uint32_t> maybe_crc;
+  uint64_t size;
+  OSDService *osd;
+  hobject_t soid;
+  __le32 flags;
+  FillInVerifyExtent(ceph_le64 *r, int32_t *rv, bufferlist *blp,
+		     boost::optional<uint32_t> mc, uint64_t size,
+		     OSDService *osd, hobject_t soid, __le32 flags) :
+    r(r), rval(rv), outdatap(blp), maybe_crc(mc),
+    size(size), osd(osd), soid(soid), flags(flags) {}
+  void finish(int len) {
+    *rval = len;
+    *r = len;
+    if (len < 0)
+      return;
+    // whole object?  can we verify the checksum?
+    if (maybe_crc && *r == size) {
+      uint32_t crc = outdatap->crc32c(-1);
+      if (maybe_crc != crc) {
+        osd->clog->error() << std::hex << " full-object read crc 0x" << crc
+			   << " != expected 0x" << *maybe_crc
+			   << std::dec << " on " << soid << "\n";
+        if (!(flags & CEPH_OSD_OP_FLAG_FAILOK)) {
+	  *rval = -EIO;
+	  *r = 0;
+	}
+      }
+    }
+  }
+};
+
+struct C_ExtentCmpRead : public Context {
+  ReplicatedPG *primary_log_pg;
+  OSDOp &osd_op;
+  ceph_le64 read_length;
+  bufferlist read_bl;
+  Context *fill_extent_ctx;
+
+  C_ExtentCmpRead(ReplicatedPG *primary_log_pg, OSDOp &osd_op,
+		  boost::optional<uint32_t> maybe_crc, uint64_t size,
+		  OSDService *osd, hobject_t soid, __le32 flags)
+    : primary_log_pg(primary_log_pg), osd_op(osd_op),
+      fill_extent_ctx(new FillInVerifyExtent(&read_length, &osd_op.rval,
+					     &read_bl, maybe_crc, size,
+					     osd, soid, flags)) {
+  }
+  ~C_ExtentCmpRead() override {
+    delete fill_extent_ctx;
+  }
+
+  void finish(int r) override {
+    if (r == -ENOENT) {
+      osd_op.rval = 0;
+      read_bl.clear();
+      delete fill_extent_ctx;
+    } else {
+      fill_extent_ctx->complete(r);
+    }
+    fill_extent_ctx = nullptr;
+
+    if (osd_op.rval >= 0) {
+      osd_op.rval = primary_log_pg->finish_extent_cmp(osd_op, read_bl);
+    }
+  }
+};
+
 int ReplicatedPG::do_extent_cmp(OpContext *ctx, OSDOp& osd_op)
 {
   ceph_osd_op& op = osd_op.op;
+  int result = 0;
+
+  if (pool.info.require_rollback()) {
+    // If there is a data digest and it is possible we are reading
+    // entire object, pass the digest.
+    auto& oi = ctx->new_obs.oi;
+    boost::optional<uint32_t> maybe_crc;
+    if (oi.is_data_digest() && op.extent.offset == 0 &&
+        op.extent.length >= oi.size) {
+      maybe_crc = oi.data_digest;
+    }
+
+    // async read
+    auto& soid = oi.soid;
+    auto extent_cmp_ctx = new C_ExtentCmpRead(this, osd_op, maybe_crc, oi.size,
+					      osd, soid, op.flags);
+    ctx->pending_async_reads.push_back({
+      {op.extent.offset, op.extent.length, op.flags},
+      {&extent_cmp_ctx->read_bl, extent_cmp_ctx}});
+
+    dout(10) << __func__ << ": async_read noted for " << soid << dendl;
+
+    return -EINPROGRESS;
+  }
+
   vector<OSDOp> read_ops(1);
   OSDOp& read_op = read_ops[0];
-  int result = 0;
 
   read_op.op.op = CEPH_OSD_OP_SYNC_READ;
   read_op.op.extent.offset = op.extent.offset;
@@ -3725,19 +3819,24 @@ int ReplicatedPG::do_extent_cmp(OpContext *ctx, OSDOp& osd_op)
     derr << "do_extent_cmp do_osd_ops failed " << result << dendl;
     return result;
   }
+ 
+	result = finish_extent_cmp(read_op, read_op.outdata);
 
+  return result;
+}
 
+int ReplicatedPG::finish_extent_cmp(OSDOp& osd_op, const bufferlist &read_bl) {
   for (uint64_t p = 0; p < osd_op.indata.length(); p++) {
-		if (p >= read_op.outdata.length()) {
+		if (p >= read_bl.length()) {
 		  if (osd_op.indata[p] != 0)
 		    return (-MAX_ERRNO - p);
 		} else {
-		  if (read_op.outdata[p] != osd_op.indata[p]) {
+		  if (read_bl[p] != osd_op.indata[p]) {
 	      return (-MAX_ERRNO - p);
 			}
 		}
 	}
-  return result;
+	return 0;
 }
 
 int ReplicatedPG::do_writesame(OpContext *ctx, OSDOp& osd_op)
@@ -4069,41 +4168,6 @@ static int check_offset_and_length(uint64_t offset, uint64_t length, uint64_t ma
 
   return 0;
 }
-
-struct FillInVerifyExtent : public Context {
-  ceph_le64 *r;
-  int32_t *rval;
-  bufferlist *outdatap;
-  boost::optional<uint32_t> maybe_crc;
-  uint64_t size;
-  OSDService *osd;
-  hobject_t soid;
-  __le32 flags;
-  FillInVerifyExtent(ceph_le64 *r, int32_t *rv, bufferlist *blp,
-		     boost::optional<uint32_t> mc, uint64_t size,
-		     OSDService *osd, hobject_t soid, __le32 flags) :
-    r(r), rval(rv), outdatap(blp), maybe_crc(mc),
-    size(size), osd(osd), soid(soid), flags(flags) {}
-  void finish(int len) {
-    *rval = len;
-    *r = len;
-    if (len < 0)
-      return;
-    // whole object?  can we verify the checksum?
-    if (maybe_crc && *r == size) {
-      uint32_t crc = outdatap->crc32c(-1);
-      if (maybe_crc != crc) {
-        osd->clog->error() << std::hex << " full-object read crc 0x" << crc
-			   << " != expected 0x" << *maybe_crc
-			   << std::dec << " on " << soid << "\n";
-        if (!(flags & CEPH_OSD_OP_FLAG_FAILOK)) {
-	  *rval = -EIO;
-	  *r = 0;
-	}
-      }
-    }
-  }
-};
 
 struct ToSparseReadResult : public Context {
   bufferlist& data_bl;
