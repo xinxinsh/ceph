@@ -75,7 +75,7 @@ Context *AcquireRequest<I>::handle_flush_notifies(int *ret_val) {
   ldout(cct, 10) << __func__ << dendl;
 
   assert(*ret_val == 0);
-  send_get_locker();
+	send_lock();
   return nullptr;
 }
 
@@ -108,7 +108,7 @@ Context *AcquireRequest<I>::handle_get_locker(int *ret_val) {
     return m_on_finish;
   }
 
-  send_lock();
+  send_break_lock();
   return nullptr;
 }
 
@@ -146,7 +146,7 @@ Context *AcquireRequest<I>::handle_lock(int *ret_val) {
     return m_on_finish;
   }
 
-  send_break_lock();
+  send_get_locker();
   return nullptr;
 }
 
@@ -392,7 +392,7 @@ Context *AcquireRequest<I>::handle_break_lock(int *ret_val) {
     return m_on_finish;
   }
 
-  send_get_locker();
+  send_lock();
   return nullptr;
 }
 
